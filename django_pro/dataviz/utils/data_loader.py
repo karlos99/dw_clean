@@ -743,6 +743,96 @@ def _fetch_sat_data(students: list[dict], sat_infos: list[dict]):
                 student[info['col_name']] = str(value).strip()
 
 
+def _fetch_ib_data(students: list[dict], selected_ib_cols: list[str]):
+    """Bulk-fetch IB exam results (PL, Category, Level) and merge into *students* in-place."""
+    if not students or not selected_ib_cols:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    student_map = {str(s.get('ssid') or '').strip(): s for s in students if str(s.get('ssid') or '').strip()}
+
+    try:
+        from dataexploration.column_utils import parse_ib_column_key
+        rows = _analytics_rows(
+            "SELECT ssid, school_year, subject, level, category, grade FROM analytics_ib_results WHERE ssid = ANY(%s)",
+            [ssids],
+        )
+        if rows is None:
+            with connections['default'].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.ssid, r.school_year, r.subject, r.level, r.category, r.grade, r.exam_results
+                    FROM "dataLoader_ibexamresult" r
+                    JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
+                    WHERE r.ssid = ANY(%s) AND il.is_published = true
+                    """,
+                    [ssids],
+                )
+                rows = []
+                for r in cursor.fetchall():
+                    s_id, sy, subj, lvl, cat, gr, ex_res = r[0], r[1], r[2], r[3], r[4], r[5], r[6]
+                    if ex_res and isinstance(ex_res, list):
+                        for ex in ex_res:
+                            rows.append({
+                                'ssid': s_id,
+                                'school_year': sy,
+                                'subject': ex.get('subject') or subj,
+                                'level': ex.get('level') or lvl,
+                                'category': cat,
+                                'grade': ex.get('grade') or gr,
+                            })
+                    elif subj:
+                        rows.append({
+                            'ssid': s_id,
+                            'school_year': sy,
+                            'subject': subj,
+                            'level': lvl,
+                            'category': cat,
+                            'grade': gr,
+                        })
+
+        by_key = {}
+        for r in rows:
+            ssid = str(r.get('ssid') or '').strip()
+            yr = str(r.get('school_year') or '').strip()
+            subj = str(r.get('subject') or '').strip()
+            lvl = str(r.get('level') or '').strip().upper()
+            s_slug = re.sub(r'[^A-Za-z0-9_]+', '_', subj).strip('_').lower()
+            if lvl:
+                by_key[(ssid, yr, s_slug, lvl)] = r
+            by_key[(ssid, yr, s_slug, None)] = r
+
+        for col in selected_ib_cols:
+            parsed = parse_ib_column_key(col)
+            if not parsed:
+                continue
+            p_year = parsed['year']
+            p_level = parsed['level'].upper() if parsed.get('level') else None
+            p_kind = parsed['kind']
+            p_subj_slug = parsed['subj_slug'].lower()
+
+            for ssid, stu in student_map.items():
+                row = by_key.get((ssid, p_year, p_subj_slug, p_level))
+                if not row and p_level is None:
+                    row = by_key.get((ssid, p_year, p_subj_slug, None))
+
+                val = '\u2014'
+                if row:
+                    if p_kind == 'PL':
+                        val = str(row.get('grade') or '\u2014')
+                    elif p_kind == 'CAT':
+                        val = str(row.get('category') or '\u2014')
+                    elif p_kind == 'LVL':
+                        val = str(row.get('level') or '\u2014')
+                stu[col] = val
+
+    except Exception:
+        pass
+
+
+
 def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
                      tested_school_codes: list[str] | None = None):
     """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).
@@ -1047,17 +1137,20 @@ def _enrich_rows_test_mark(
     filters: dict,
     ap_cols: list[str] | None = None,
     award_cols: list[str] | None = None,
+    ib_cols: list[str] | None = None,
 ) -> str | None:
-    """Bulk-fetch test/mark/AP columns and merge into rows in-place."""
+    """Bulk-fetch test/mark/AP/IB columns and merge into rows in-place."""
     ap_cols = ap_cols or []
     award_cols = award_cols or []
-    if not rows or (not test_cols and not mark_cols and not ap_cols and not award_cols):
+    ib_cols = ib_cols or []
+    if not rows or (not test_cols and not mark_cols and not ap_cols and not award_cols and not ib_cols):
         return None
 
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
     need_ap = bool(ap_cols)
     need_award = bool(award_cols)
+    need_ib = bool(ib_cols)
     tested_school_filter = filters.get('tested_school')
     if tested_school_filter and not isinstance(tested_school_filter, list):
         tested_school_filter = [tested_school_filter]
@@ -1141,11 +1234,13 @@ def _enrich_rows_test_mark(
             elif need_mark:
                 _fetch_mark_data(QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
 
-        # AP/survey prefer ClickHouse analytics tables, with PostgreSQL fallback.
+        # AP/IB/survey prefer ClickHouse analytics tables, with PostgreSQL fallback.
         if need_ap:
             _fetch_ap_exam_data(rows, ap_exam_infos)
         if need_award:
             _fetch_ap_award_data(rows, award_infos)
+        if need_ib:
+            _fetch_ib_data(rows, ib_cols)
     except Exception as exc:
         return str(exc)
     return None
@@ -1196,6 +1291,7 @@ def enrich_drill_rows(
     mark_cols: list[str] = []
     ap_cols: list[str] = []
     award_cols: list[str] = []
+    ib_cols: list[str] = []
 
     for c, rc in zip(needed_columns, resolved_needed):
         bare = c.split('.')[-1]
@@ -1206,6 +1302,8 @@ def enrich_drill_rows(
             award_cols.append(rc)
         elif rc.startswith('ap_'):
             ap_cols.append(rc)
+        elif rc.startswith('ib_'):
+            ib_cols.append(rc)
         elif rc.startswith('test_'):
             test_cols.append(rc)
         elif rc.startswith('mark_'):
@@ -1218,8 +1316,9 @@ def enrich_drill_rows(
     need_mark = bool(mark_cols)
     need_ap = bool(ap_cols)
     need_award = bool(award_cols)
+    need_ib = bool(ib_cols)
 
-    if not missing_base and not need_test and not need_mark and not need_ap and not need_award:
+    if not missing_base and not need_test and not need_mark and not need_ap and not need_award and not need_ib:
         return rows, _build_enriched_column_list(rows, needed_columns), None
 
     if need_test:
@@ -1229,7 +1328,7 @@ def enrich_drill_rows(
     if need_mark:
         if not _rows_have_value(rows, 'stu_annual_key') and 'stu_annual_key' not in missing_base:
             missing_base.append('stu_annual_key')
-    if (need_ap or need_award):
+    if (need_ap or need_award or need_ib):
         if not _rows_have_value(rows, 'ssid') and 'ssid' not in missing_base:
             missing_base.append('ssid')
 
@@ -1238,8 +1337,8 @@ def enrich_drill_rows(
         if err:
             return rows, [], err
 
-    if need_test or need_mark or need_ap or need_award:
-        err = _enrich_rows_test_mark(rows, test_cols, mark_cols, filters, ap_cols=ap_cols, award_cols=award_cols)
+    if need_test or need_mark or need_ap or need_award or need_ib:
+        err = _enrich_rows_test_mark(rows, test_cols, mark_cols, filters, ap_cols=ap_cols, award_cols=award_cols, ib_cols=ib_cols)
         if err:
             return rows, [], err
 
@@ -1458,6 +1557,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
     mark_cols:  list[str] = []
     ap_cols:    list[str] = []
     award_cols: list[str] = []
+    ib_cols:    list[str] = []
     for c in requested:
         if (c in _CS_COLUMNS or c in _ENROLL_FIELDS or c in _VIRTUAL_CS_COLUMNS) and _SAFE_IDENT_RE.match(c):
             base_cols.append(c)
@@ -1465,6 +1565,8 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             award_cols.append(c)
         elif c.startswith('ap_'):
             ap_cols.append(c)
+        elif c.startswith('ib_'):
+            ib_cols.append(c)
         elif c.startswith('test_'):
             test_cols.append(c)
         elif c.startswith('mark_'):
@@ -1478,6 +1580,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         mark_cols = [resolve_relative_column_key(c) for c in mark_cols]
         ap_cols = [resolve_relative_column_key(c) for c in ap_cols]
         award_cols = [resolve_relative_column_key(c) for c in award_cols]
+        ib_cols = [resolve_relative_column_key(c) for c in ib_cols]
     except Exception:
         pass
 
@@ -1486,13 +1589,14 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
     need_mark = bool(mark_cols)
     need_ap = bool(ap_cols)
     need_award = bool(award_cols)
+    need_ib = bool(ib_cols)
     if need_test and 'student_id' not in base_cols:
         base_cols.append('student_id')
     if need_test and 'school_year' not in base_cols:
         base_cols.append('school_year')
     if need_mark and 'stu_annual_key' not in base_cols:
         base_cols.append('stu_annual_key')
-    if (need_ap or need_award) and 'ssid' not in base_cols:
+    if (need_ap or need_award or need_ib) and 'ssid' not in base_cols:
         base_cols.append('ssid')
     if cursor:
         if 'stu_annual_key' not in base_cols:
@@ -1808,12 +1912,12 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             cache.set(cache_key, res, 1800)
             return res
 
-        # Phase 2: test/mark/AP bulk fetch
-        if rows and (need_test or need_mark or need_ap or need_award):
+        # Phase 2: test/mark/AP/IB bulk fetch
+        if rows and (need_test or need_mark or need_ap or need_award or need_ib):
             enrich_filters = dict(filters)
             if tested_school_filter:
                 enrich_filters['tested_school'] = tested_school_filter
-            err = _enrich_rows_test_mark(rows, test_cols, mark_cols, enrich_filters, ap_cols=ap_cols, award_cols=award_cols)
+            err = _enrich_rows_test_mark(rows, test_cols, mark_cols, enrich_filters, ap_cols=ap_cols, award_cols=award_cols, ib_cols=ib_cols)
             if err:
                 return {'error': err, 'rows': [], 'columns': []}
 
@@ -1823,7 +1927,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
                     if all(_matches_dynamic_filter(row.get(filter_key), filter_value) for filter_key, filter_value in dynamic_filters.items())
                 ]
 
-        # Build final ordered column list (base + test + mark + AP)
+        # Build final ordered column list (base + test + mark + AP + IB)
         all_cols = list(db_cols)
         for tc in test_cols:
             if tc not in all_cols:
@@ -1834,6 +1938,9 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         for ac in ap_cols + award_cols:
             if ac not in all_cols:
                 all_cols.append(ac)
+        for ic in ib_cols:
+            if ic not in all_cols:
+                all_cols.append(ic)
 
         col_types: dict = {}
         for col in all_cols:

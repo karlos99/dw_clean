@@ -27,6 +27,8 @@ from ..column_utils import (
     _fetch_marks_live_from_alt,
     group_marks_by_ssid_course,
     markall_course_filter_fn,
+    build_markall_course_rank_key,
+    order_student_courses_for_markall,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
     parse_sat_column_key, sat_column_db_field,
 )
@@ -1237,6 +1239,10 @@ def _load_students(request):
             [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
         ))
+        selected_ib_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
+        ))
         sat_infos = []
         for _col in selected_sat_cols:
             _parsed = parse_sat_column_key(_col)
@@ -1252,7 +1258,7 @@ def _load_students(request):
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
             and not is_mtss_column(c)
             and not is_incident_column(c)
             and c in COLUMN_DEFINITIONS
@@ -1459,7 +1465,7 @@ def _load_students(request):
                 if parsed and parsed['kind'] is None:
                     year = parsed['year']
                     subject = _markall_subject_actual(year, parsed['subject_norm'])
-                    n = markall_max.get((year, subject), 0)
+                    n = max(markall_max.get((year, subject), 0), 1)
                     for i in range(1, n + 1):
                         new_selected.append(f"{c}_{i}_COURSE")
                         new_selected.append(f"{c}_{i}_MARKS")
@@ -1538,7 +1544,7 @@ def _load_students(request):
                 yk = _apall_year_key(c)
                 if yk:
                     year = yk.replace('_', '-')
-                    n = apall_max.get(year, 0)
+                    n = max(apall_max.get(year, 0), 1)
                     for i in range(1, n + 1):
                         new_selected.append(f"apall_{yk}_{i}_SUBJECT")
                         new_selected.append(f"apall_{yk}_{i}_PL")
@@ -1787,6 +1793,40 @@ def _load_students(request):
                         )
                         order_by_expr = "_sort._v"
                         params.append(sat_info['year'])
+            elif sort_by.startswith('ib_'):
+                from dataexploration.column_utils import parse_ib_column_key
+                _parsed = parse_ib_column_key(sort_by)
+                if _parsed:
+                    target_field = 'grade' if _parsed['kind'] == 'PL' else ('category' if _parsed['kind'] == 'CAT' else 'level')
+                    sub_params = [_parsed['year']]
+                    lvl_clause = ""
+                    if _parsed.get('level'):
+                        lvl_clause = " AND level = %s" if not list_uses_pg else " AND r.level = %s"
+                        sub_params.append(_parsed['level'])
+
+                    if list_uses_pg:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT r.ssid AS _k, r.{target_field} AS _v"
+                            ' FROM "dataLoader_ibexamresult" r'
+                            ' INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id'
+                            f" WHERE r.school_year = %s AND il.is_published = true{lvl_clause}"
+                            " AND lower(regexp_replace(r.subject, '[^A-Za-z0-9_]+', '_', 'g')) LIKE lower(%s)"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                    else:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT ssid AS _k, any({target_field}) AS _v"
+                            " FROM analytics_ib_results"
+                            f" WHERE school_year = %s{lvl_clause}"
+                            " AND lower(replaceRegexpAll(subject, '[^A-Za-z0-9_]+', '_')) LIKE lower(%s)"
+                            " GROUP BY ssid"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                    sub_params.append(f"%{_parsed['subj_slug'].lower()}%")
+                    order_by_expr = "nullIf(_sort._v, '')"
+                    params.extend(sub_params)
             elif is_mtss_column(sort_by):
                 mtss_field = canonical_mtss_column(sort_by)
                 if mtss_field:
@@ -1837,7 +1877,7 @@ def _load_students(request):
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
-            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
+            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_'))
             or course_prog_sort
             or mtss_sort
             or incident_sort
@@ -2019,15 +2059,19 @@ def _load_students(request):
                             course_filter_fn=markall_course_filter_fn(subject, excludes),
                             periods=selected_periods,
                         )
+                        rank_fn = build_markall_course_rank_key(
+                            students, by_ssid, by_student_id, course_picker=excludes,
+                        )
                         for student in students:
                             ssid_key = str(student.get('ssid') or '').strip()
                             sid_key = str(student.get('student_id') or '').strip()
                             courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
+                            ordered_courses = order_student_courses_for_markall(courses, rank_fn)
                             for i in range(1, n + 1):
                                 course_key = f"{umbrella}_{i}_COURSE"
                                 marks_key = f"{umbrella}_{i}_MARKS"
-                                if i <= len(courses):
-                                    course_name = list(courses.keys())[i - 1]
+                                if i <= len(ordered_courses):
+                                    course_name = ordered_courses[i - 1]
                                     periods = sorted(
                                         courses[course_name],
                                         key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
@@ -2079,6 +2123,17 @@ def _load_students(request):
             try:
                 from dataviz.utils.data_loader import _fetch_sat_data
                 _fetch_sat_data(students, sat_infos)
+            except Exception:
+                pass
+
+        # Fetch IB exam results in bulk
+        if selected_ib_cols and students:
+            try:
+                from dataviz.utils.data_loader import _fetch_ib_data
+                _fetch_ib_data(students, selected_ib_cols)
+                for student in students:
+                    for _col in selected_ib_cols:
+                        student.setdefault(_col, '\u2014')
             except Exception:
                 pass
 
@@ -2938,6 +2993,85 @@ def _load_students(request):
                             check_blank_query, option_params + [ap_info['year']]),
                     ))
 
+            # Add filter options for IB exam columns (PL, Level, Category)
+            for col_key in selected_ib_cols:
+                from dataexploration.column_utils import parse_ib_column_key
+                parsed = parse_ib_column_key(col_key)
+                if not parsed:
+                    continue
+
+                if isinstance(filters, dict) and col_key in filters:
+                    other_filters = {k: v for k, v in filters.items() if k != col_key}
+                else:
+                    other_filters = filters
+
+                cache_key = _get_filter_cache_key(col_key, other_filters)
+                cached_values = cache.get(cache_key)
+                if cached_values is not None:
+                    filter_options[col_key] = cached_values
+                    continue
+
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
+                apply_column_filters(
+                    option_where, option_params, other_filters, test_col_map, mark_col_map,
+                    db_columns, enroll_columns, needs_enroll, False, False,
+                    ap_exam_infos, ap_award_infos,
+                    incident_sql_backend=_incident_sql_backend(other_filters),
+                )
+                option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                target_field = 'grade' if parsed['kind'] == 'PL' else ('category' if parsed['kind'] == 'CAT' else 'level')
+                sub_clauses = [
+                    'r.school_year = %s',
+                    'il.is_published = true',
+                    f'r.{target_field} IS NOT NULL',
+                    f"r.{target_field} <> ''",
+                ]
+                sub_params = [parsed['year']]
+                if parsed.get('level'):
+                    sub_clauses.append('r.level = %s')
+                    sub_params.append(parsed['level'])
+                sub_clauses.append("REGEXP_REPLACE(r.subject, '[^A-Za-z0-9_]+', '_', 'g') ILIKE %s")
+                sub_params.append(f"%{parsed['subj_slug']}%")
+
+                options_query = f"""
+                    SELECT DISTINCT r.{target_field} AS v
+                    FROM "dataLoader_ibexamresult" r
+                    INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
+                    INNER JOIN current_student cs ON r.ssid = cs.ssid
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND {' AND '.join(sub_clauses)}
+                    ORDER BY v ASC
+                    LIMIT 30
+                """
+                options_params = option_params + sub_params
+
+                check_blank_query = f"""
+                    SELECT 1
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {option_where_sql}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM "dataLoader_ibexamresult" r
+                        INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
+                        WHERE r.ssid = cs.ssid
+                          AND {' AND '.join(sub_clauses)}
+                    )
+                    LIMIT 1
+                """
+                check_params = option_params + sub_params
+
+                option_tasks.append((
+                    col_key, cache_key,
+                    _make_options_with_blank_task(
+                        options_query, options_params,
+                        check_blank_query, check_params,
+                        use_pg=True,
+                    ),
+                ))
+
             for col_key in selected_incident_cols:
                 if not incident_value_sql_expr(col_key, backend='pg', student_alias='cs'):
                     continue
@@ -3069,7 +3203,7 @@ def _load_students(request):
     # sets when a student can have more than one AP exam that year.
     for year in apall_years:
         yk = year.replace('-', '_')
-        n = apall_max.get(year, 0)
+        n = max(apall_max.get(year, 0), 1)
         for i in range(1, n + 1):
             suffix = f" {i}" if n > 1 else ""
             dynamic_definitions[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix}\n{year}"
@@ -3077,7 +3211,7 @@ def _load_students(request):
 
     # Definitions for the Marks "All Marks" wide-pair columns
     for (year, subject), umbrella in markall_years.items():
-        n = markall_max.get((year, subject), 0)
+        n = max(markall_max.get((year, subject), 0), 1)
         for i in range(1, n + 1):
             dynamic_definitions[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject})\n{year}"
             dynamic_definitions[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject})\n{year}"

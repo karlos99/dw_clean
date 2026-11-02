@@ -789,3 +789,139 @@ class SATSettings(models.Model):
                 percentile_metrics=[m for m, _ in SAT_PERCENTILE_METRICS],
             )
         return obj
+
+
+class IBImportStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    PARTIAL = 'PARTIAL', 'Partially Completed'
+
+
+class IBImportLog(models.Model):
+    """Tracks each International Baccalaureate (IB) results import operation."""
+    name = models.CharField(max_length=255, help_text="User-provided name for this import")
+    school_year = models.CharField(max_length=9, help_text="School year (e.g., '2023-2024')")
+    filename = models.CharField(max_length=255, help_text="Original filename uploaded")
+    file_hash = models.CharField(max_length=64, blank=True, help_text="SHA256 hash for duplicate detection")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='ib_data_imports'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=IBImportStatus.choices,
+        default=IBImportStatus.PENDING
+    )
+
+    total_candidates = models.PositiveIntegerField(default=0, help_text="Total IB candidates in CSV")
+    results_detected = models.PositiveIntegerField(default=0, help_text="Total subject exam results found in CSV")
+    results_created = models.PositiveIntegerField(default=0, help_text="New IB results inserted into DB")
+    results_skipped = models.PositiveIntegerField(default=0, help_text="IB results that already existed")
+    students_matched = models.PositiveIntegerField(default=0)
+    students_unmatched = models.PositiveIntegerField(default=0)
+    records_processed = models.PositiveIntegerField(default=0, help_text="Candidates processed")
+
+    manual_overrides = models.JSONField(
+        default=dict,
+        help_text="Manually-entered SSID overrides (e.g., {'personal_code': 'ssid'})"
+    )
+    error_count = models.PositiveIntegerField(default=0)
+    error_log = models.JSONField(default=list, help_text="List of error messages")
+    warnings = models.JSONField(default=list, help_text="List of warning messages")
+
+    # Publishing: only published imports are available in the Data Explorer
+    is_published = models.BooleanField(
+        default=False,
+        help_text="When enabled, this import's IB results are available in Data Exploration",
+    )
+    published_at = models.DateTimeField(null=True, blank=True, help_text="When this import was published")
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='published_ib_imports',
+    )
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        verbose_name = 'IB Import Log'
+        verbose_name_plural = 'IB Import Logs'
+
+    def __str__(self):
+        return f"{self.name} - {self.uploaded_at.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def compute_file_hash(file_content):
+        if isinstance(file_content, str):
+            file_content = file_content.encode('utf-8')
+        return hashlib.sha256(file_content).hexdigest()
+
+
+class IBExamResult(models.Model):
+    """Individual candidate record per school year containing multiple IB exam results in JSON."""
+    import_log = models.ForeignKey(
+        IBImportLog, on_delete=models.CASCADE, related_name='results'
+    )
+    record_key = models.CharField(
+        max_length=120, unique=True, db_index=True,
+        help_text="Stable dedupe key: personal_code|school_year"
+    )
+    ssid = models.CharField(max_length=50, db_index=True, blank=True, help_text="Matched State Student ID")
+    personal_code = models.CharField(max_length=50, db_index=True, help_text="IB Candidate personal code e.g. knp351")
+    registration_number = models.CharField(max_length=50, blank=True, help_text="Registration number e.g. 0001")
+    candidate_name = models.CharField(max_length=255, blank=True, help_text="Candidate name from file")
+    school_code = models.CharField(max_length=50, blank=True, default='001237', help_text="IB school code")
+    school_name = models.CharField(max_length=255, blank=True, default='La Quinta HS', help_text="School name")
+    school_year = models.CharField(max_length=9, db_index=True, help_text="School year e.g. 2023-2024")
+    session_year = models.CharField(max_length=4, blank=True, help_text="Session calendar year e.g. 2024")
+    session_month = models.CharField(max_length=20, blank=True, default='MAY')
+    category = models.CharField(max_length=50, blank=True, db_index=True, help_text="DIPLOMA, ANTICIPATED, COURSE")
+
+    # Primary/legacy single-exam fields (optional/blank=True for compatibility)
+    subject = models.CharField(max_length=150, blank=True, default='', db_index=True, help_text="Primary subject")
+    level = models.CharField(max_length=20, blank=True, default='', db_index=True, help_text="HL, SL, EE, TK")
+    language = models.CharField(max_length=50, blank=True, default='', help_text="Exam language e.g. ENGLISH")
+    predicted_grade = models.CharField(max_length=10, blank=True, default='')
+    grade = models.CharField(max_length=10, blank=True, default='', db_index=True, help_text="Primary final grade / PL")
+
+    # JSON column storing all exam results for candidate
+    # [{'subject': ..., 'exam': ..., 'level': ..., 'grade': ..., 'predicted_grade': ..., 'language': ...}]
+    exam_results = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="All exam results: [{'subject': ..., 'exam': ..., 'level': ..., 'grade': ..., 'predicted_grade': ..., 'language': ...}]"
+    )
+
+    # Diploma summary fields (if available for candidate)
+    ee_tok_points = models.CharField(max_length=10, blank=True)
+    total_points = models.CharField(max_length=10, blank=True)
+    result_code = models.CharField(max_length=100, blank=True, help_text="Diploma awarded / Diploma not awarded")
+    diploma_requirements_code = models.CharField(max_length=255, blank=True)
+
+    match_method = models.CharField(max_length=50, blank=True)
+    match_confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['candidate_name', 'personal_code']
+        indexes = [
+            models.Index(fields=['ssid', 'school_year']),
+            models.Index(fields=['personal_code', 'school_year']),
+        ]
+        verbose_name = 'IB Exam Result'
+        verbose_name_plural = 'IB Exam Results'
+
+    def __str__(self):
+        return f"{self.candidate_name} ({self.personal_code}) - {self.school_year} [{len(self.exam_results)} exams]"
+
+    @property
+    def exam_count(self) -> int:
+        return len(self.exam_results) if self.exam_results else 0
+

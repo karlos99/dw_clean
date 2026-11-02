@@ -23,6 +23,7 @@ from .models import (
     APExamCode, APAwardType, APImportLog, APStudentAward, APExamResult, APImportStatus,
     SATImportLog, SATResult, SATSettings, SATImportStatus,
     SAT_PERCENTILE_REGIONS, SAT_PERCENTILE_METRICS,
+    IBImportLog, IBExamResult, IBImportStatus,
 )
 from .utils.column_analyzer import analyze_csv, AnalysisResult
 from .utils.response_loader import ResponseLoader, LoaderConfig, run_survey_clickhouse_sync_async
@@ -30,14 +31,18 @@ from .utils.response_loader import ResponseLoader, LoaderConfig, run_survey_clic
 
 # School year choices - generate dynamically
 def get_school_year_choices():
-    """Generate school year choices (current year +/- 2 years)."""
+    """Generate school year choices combining enrolled years in DB and current range."""
     from datetime import date
+    from studata.models import StudentEnroll
+    try:
+        db_years = set(StudentEnroll.objects.values_list('school_year', flat=True).distinct())
+    except Exception:
+        db_years = set()
     current_year = date.today().year
-    choices = []
-    for year in range(current_year - 2, current_year + 2):
-        sy = f"{year}-{year + 1}"
-        choices.append((sy, sy))
-    return choices
+    for year in range(current_year - 3, current_year + 2):
+        db_years.add(f"{year}-{year + 1}")
+    sorted_years = sorted([y for y in db_years if y], reverse=True)
+    return [(sy, sy) for sy in sorted_years]
 
 
 def _match_rate(matched, unmatched):
@@ -150,6 +155,31 @@ def _normalize_sat_import(obj):
     }
 
 
+def _normalize_ib_import(obj):
+    return {
+        'type': 'ib',
+        'type_label': 'IB',
+        'type_badge': 'bg-amber-100 text-amber-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Results',
+        'metric_value': obj.results_created,
+        'metric_note': f"+{obj.results_skipped} skipped" if obj.results_skipped else '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:ib_import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:ib_import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:ib_delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:ib_toggle_publish', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-amber-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
 # Registry of data loaders shown on the dashboard. New assessment/survey
 # loaders can be added here without touching the template layout.
 def _build_loader_cards():
@@ -159,6 +189,8 @@ def _build_loader_cards():
     ap_published = APImportLog.objects.filter(is_published=True).count()
     sat_count = SATImportLog.objects.count()
     sat_published = SATImportLog.objects.filter(is_published=True).count()
+    ib_count = IBImportLog.objects.count()
+    ib_published = IBImportLog.objects.filter(is_published=True).count()
 
     return [
         {
@@ -199,6 +231,18 @@ def _build_loader_cards():
             'count': sat_count,
             'published': sat_published,
         },
+        {
+            'key': 'ib',
+            'name': 'IB Exams',
+            'description': 'International Baccalaureate (IB) results with subject, level, category, and grade (PL).',
+            'upload_url': reverse('dataLoader:ib_upload'),
+            'accent': 'amber',
+            'button_css': 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500',
+            'icon_bg': 'bg-amber-100',
+            'icon_css': 'text-amber-600',
+            'count': ib_count,
+            'published': ib_published,
+        },
     ]
 
 
@@ -220,16 +264,20 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
         sat_imports = list(
             SATImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
         )
+        ib_imports = list(
+            IBImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
 
         recent = (
             [_normalize_survey_import(o) for o in survey_imports]
             + [_normalize_ap_import(o) for o in ap_imports]
             + [_normalize_sat_import(o) for o in sat_imports]
+            + [_normalize_ib_import(o) for o in ib_imports]
         )
         recent.sort(key=lambda r: r['uploaded_at'], reverse=True)
 
         type_filter = self.request.GET.get('type', '').strip().lower()
-        if type_filter in ('survey', 'ap', 'sat'):
+        if type_filter in ('survey', 'ap', 'sat', 'ib'):
             recent = [r for r in recent if r['type'] == type_filter]
 
         paginator = Paginator(recent, self.page_size)
@@ -240,22 +288,32 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
         context['recent_imports'] = page_obj.object_list
         context['is_paginated'] = page_obj.has_other_pages()
         context['total_import_count'] = (
-            ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count()
+            ImportLog.objects.count()
+            + APImportLog.objects.count()
+            + SATImportLog.objects.count()
+            + IBImportLog.objects.count()
         )
         context['published_import_count'] = (
             ImportLog.objects.filter(ready_for_exploration=True).count()
             + APImportLog.objects.filter(is_published=True).count()
             + SATImportLog.objects.filter(is_published=True).count()
+            + IBImportLog.objects.filter(is_published=True).count()
         )
         context['survey_definitions'] = SurveyDefinition.objects.filter(
             is_active=True
         ).order_by('-school_year')
         context['type_filter'] = type_filter
         context['type_counts'] = {
-            'all': ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count(),
+            'all': (
+                ImportLog.objects.count()
+                + APImportLog.objects.count()
+                + SATImportLog.objects.count()
+                + IBImportLog.objects.count()
+            ),
             'survey': ImportLog.objects.count(),
             'ap': APImportLog.objects.count(),
             'sat': SATImportLog.objects.count(),
+            'ib': IBImportLog.objects.count(),
         }
         return context
 
@@ -1911,3 +1969,444 @@ def _invalidate_sat_caches():
         cache.delete_pattern('dv_sat_cols*')
     except Exception:
         pass
+
+
+# ── International Baccalaureate (IB) Data Loader views ──
+
+def _invalidate_ib_caches():
+    """Invalidate cached IB column structures so publish changes reflect immediately."""
+    from django.core.cache import cache
+    try:
+        cache.delete_pattern('*ib_columns*')
+        cache.delete_pattern('*dv_ib_cols*')
+        cache.delete_pattern('*dataexp:column_structures_html*')
+    except Exception:
+        pass
+
+
+class IBUploadView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/ib_upload.html'
+
+    def get(self, request):
+        context = {
+            'school_year_choices': get_school_year_choices(),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        name = request.POST.get('name', '').strip()
+        school_year = request.POST.get('school_year', '').strip()
+        csv_file = request.FILES.get('csv_file')
+
+        errors = []
+        if not name:
+            errors.append("Upload name is required")
+        if not school_year:
+            errors.append("School year is required")
+        if not csv_file:
+            errors.append("CSV file is required")
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return redirect('dataLoader:ib_upload')
+
+        try:
+            file_content = csv_file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            csv_file.seek(0)
+            try:
+                file_content = csv_file.read().decode('latin-1')
+            except Exception as e:
+                messages.error(request, f"Could not decode CSV file: {e}")
+                return redirect('dataLoader:ib_upload')
+
+        from .utils.ib_column_analyzer import analyze_ib_csv, normalize_ib_csv_content
+
+        # Preprocess and merge corrupt/split header rows and candidate lines
+        file_content = normalize_ib_csv_content(file_content)
+        file_hash = hashlib.sha256(file_content.encode()).hexdigest()
+
+        tmp_dir = os.path.join(tempfile.gettempdir(), 'ib_uploads')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f"{file_hash}.csv")
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(file_content)
+
+        try:
+            analysis = analyze_ib_csv(file_content, csv_file.name)
+        except Exception as e:
+            messages.error(request, f"Could not analyze IB CSV: {e}")
+            return redirect('dataLoader:ib_upload')
+
+        request.session['ib_upload_data'] = {
+            'name': name,
+            'school_year': school_year,
+            'filename': csv_file.name,
+            'file_hash': file_hash,
+            'tmp_path': tmp_path,
+            'analysis': {
+                'total_candidates': analysis.total_candidates,
+                'total_results': analysis.total_results,
+                'school_code': analysis.school_code,
+                'unique_subjects': analysis.unique_subjects,
+                'unique_levels': analysis.unique_levels,
+                'unique_categories': analysis.unique_categories,
+                'warnings': analysis.warnings,
+                'sample_candidates': [
+                    {
+                        'personal_code': c.personal_code,
+                        'registration_number': c.registration_number,
+                        'name': c.name,
+                        'category': c.category,
+                        'school_code': c.school_code,
+                        'subject_count': c.subject_count,
+                        'subjects_summary': c.subjects_summary,
+                        'total_points': c.total_points,
+                        'result': c.result,
+                    }
+                    for c in analysis.sample_candidates
+                ],
+            }
+        }
+
+        return redirect('dataLoader:ib_preview')
+
+
+class IBPreviewView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/ib_preview.html'
+
+    def get(self, request):
+        upload_data = request.session.get('ib_upload_data')
+        if not upload_data:
+            messages.warning(request, "No upload data found. Please upload a file first.")
+            return redirect('dataLoader:ib_upload')
+
+        from .utils.ib_student_matcher import IBStudentMatcher
+        from .utils.ib_column_analyzer import parse_ib_csv_rows
+
+        school_year = upload_data['school_year']
+        matcher = IBStudentMatcher(school_year)
+        analysis = upload_data['analysis']
+
+        tmp_path = upload_data.get('tmp_path', '')
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        else:
+            messages.error(request, "Uploaded file expired. Please upload again.")
+            return redirect('dataLoader:ib_upload')
+
+        candidates, results, _ = parse_ib_csv_rows(content)
+
+        matched_count = 0
+        unmatched_students = []
+
+        for cand in candidates:
+            p_code = cand['personal_code']
+            name = cand['name']
+            match_res = matcher.match(p_code, name)
+            if match_res.matched and match_res.ssid:
+                matched_count += 1
+            else:
+                unmatched_students.append({
+                    'personal_code': p_code,
+                    'registration_number': cand.get('registration_number', ''),
+                    'name': name,
+                    'category': cand.get('category', ''),
+                    'reason': match_res.reason,
+                    'best_guess': match_res.student_name,
+                })
+
+        context = {
+            'upload_data': upload_data,
+            'analysis': analysis,
+            'matched_count': matched_count,
+            'unmatched_count': len(unmatched_students),
+            'unmatched_students': unmatched_students[:200],
+            'total_candidates': analysis.get('total_candidates', 0),
+            'total_results': analysis.get('total_results', 0),
+            'total_lqhs_students': matcher.total_students_loaded,
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        upload_data = request.session.get('ib_upload_data')
+        if not upload_data:
+            messages.error(request, "Upload data expired. Please upload again.")
+            return redirect('dataLoader:ib_upload')
+
+        manual_overrides = {}
+        from .utils.ib_student_matcher import IBStudentMatcher
+        matcher = IBStudentMatcher(upload_data['school_year'])
+
+        for key, value in request.POST.items():
+            if key.startswith('ssid_override_') and value.strip():
+                p_code = key.replace('ssid_override_', '')
+                input_val = value.strip()
+                override_name = request.POST.get(f'name_override_{p_code}', '').strip()
+
+                if not input_val.isdigit():
+                    found = matcher.search_students_global(query=input_val, limit=1)
+                    if found:
+                        override_name = f"{found[0]['last_name']}, {found[0]['first_name']}"
+                        input_val = found[0]['ssid']
+
+                manual_overrides[p_code] = {'ssid': input_val, 'student_name': override_name} if override_name else input_val
+
+        ib_import_log = IBImportLog.objects.create(
+            name=upload_data['name'],
+            school_year=upload_data['school_year'],
+            filename=upload_data['filename'],
+            file_hash=upload_data['file_hash'],
+            uploaded_by=request.user,
+            status=IBImportStatus.PENDING,
+            manual_overrides=manual_overrides,
+        )
+
+        from .utils.ib_response_loader import run_ib_import_async
+
+        tmp_path = upload_data.get('tmp_path', '')
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+        else:
+            file_content = ''
+
+        run_ib_import_async(
+            import_log_id=ib_import_log.pk,
+            file_content=file_content,
+            analysis_data=upload_data['analysis'],
+            user_id=request.user.pk,
+        )
+
+        del request.session['ib_upload_data']
+
+        messages.info(request, "IB import started! Progress will update automatically.")
+        return redirect('dataLoader:ib_import_progress', pk=ib_import_log.pk)
+
+
+@project_admin_required
+def ib_student_search(request):
+    """AJAX endpoint to search students by name for manual matching."""
+    first_name = request.GET.get('first_name', '').strip()
+    last_name = request.GET.get('last_name', '').strip()
+    school_year = request.GET.get('school_year', '').strip()
+    query = request.GET.get('q', '').strip()
+    is_global = request.GET.get('global', '').lower() in ['1', 'true', 'yes']
+
+    if not school_year and not is_global:
+        return JsonResponse({'error': 'School year is required for local search'}, status=400)
+
+    from .utils.ib_student_matcher import IBStudentMatcher
+    matcher = IBStudentMatcher(school_year or '2023-2024')
+    if is_global:
+        results = matcher.search_students_global(first_name=first_name, last_name=last_name, query=query)
+    else:
+        results = matcher.search_students(first_name=first_name, last_name=last_name, query=query)
+
+    return JsonResponse({'students': results})
+
+
+class IBImportDetailView(ProjectAdminRequiredMixin, DetailView):
+    model = IBImportLog
+    template_name = 'dataLoader/ib_import_detail.html'
+    context_object_name = 'import_log'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        import_log = self.object
+
+        # Sample results
+        results_qs = IBExamResult.objects.filter(
+            import_log=import_log
+        )[:100]
+        context['ib_results'] = results_qs
+
+        # Distinct subjects in this import (from exam_results JSON or fallback subject)
+        subjects_set = set()
+        for r in IBExamResult.objects.filter(import_log=import_log):
+            if r.exam_results and isinstance(r.exam_results, list):
+                for ex in r.exam_results:
+                    if ex.get('subject'):
+                        subjects_set.add(ex['subject'])
+            elif r.subject:
+                subjects_set.add(r.subject)
+        context['subjects'] = sorted(list(subjects_set))
+
+        # Unmatched candidates in this import (results with blank ssid)
+        unmatched_results = (
+            IBExamResult.objects.filter(import_log=import_log, ssid='')
+            .values('personal_code', 'candidate_name', 'category', 'match_method')
+            .distinct()
+        )
+        context['unmatched_candidates'] = list(unmatched_results)
+
+        match_rate = 0
+        total = import_log.students_matched + import_log.students_unmatched
+        if total > 0:
+            match_rate = round((import_log.students_matched / total) * 100)
+        context['match_rate'] = match_rate
+
+        return context
+
+
+class IBImportProgressView(ProjectAdminRequiredMixin, DetailView):
+    model = IBImportLog
+    template_name = 'dataLoader/ib_import_progress.html'
+    context_object_name = 'import_log'
+
+
+@project_admin_required
+def ib_import_status(request, pk):
+    import_log = get_object_or_404(IBImportLog, pk=pk)
+
+    progress = 0
+    if import_log.total_candidates > 0:
+        progress = int((import_log.records_processed / import_log.total_candidates) * 100)
+
+    return JsonResponse({
+        'status': import_log.status,
+        'status_display': import_log.get_status_display(),
+        'records_processed': import_log.records_processed,
+        'total_candidates': import_log.total_candidates,
+        'results_detected': import_log.results_detected,
+        'results_created': import_log.results_created,
+        'results_skipped': import_log.results_skipped,
+        'students_matched': import_log.students_matched,
+        'students_unmatched': import_log.students_unmatched,
+        'error_count': import_log.error_count,
+        'progress': progress,
+        'is_complete': import_log.status in [
+            IBImportStatus.COMPLETED, IBImportStatus.FAILED, IBImportStatus.PARTIAL
+        ],
+    })
+
+
+@project_admin_required
+def ib_delete_import(request, pk):
+    ib_import_log = get_object_or_404(IBImportLog, pk=pk)
+
+    if request.method == 'POST':
+        name = ib_import_log.name
+        was_published = ib_import_log.is_published
+        result_count = IBExamResult.objects.filter(import_log=ib_import_log).count()
+        ib_import_log.delete()
+
+        _invalidate_ib_caches()
+        if was_published:
+            from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+            run_ib_clickhouse_sync_async()
+
+        messages.success(
+            request,
+            f"Deleted IB import '{name}' and {result_count:,} IB exam results."
+        )
+        return redirect('dataLoader:dashboard')
+
+    result_count = IBExamResult.objects.filter(import_log=ib_import_log).count()
+
+    return render(request, 'dataLoader/ib_delete_confirm.html', {
+        'import_log': ib_import_log,
+        'result_count': result_count,
+    })
+
+
+@project_admin_required
+def ib_toggle_publish(request, pk):
+    """Toggle whether an IB import is published (available in Data Exploration)."""
+    ib_import_log = get_object_or_404(IBImportLog, pk=pk)
+
+    if request.method != 'POST':
+        return redirect('dataLoader:ib_import_detail', pk=pk)
+
+    if ib_import_log.status != IBImportStatus.COMPLETED:
+        messages.error(request, "Only completed IB imports can be published.")
+        return redirect('dataLoader:ib_import_detail', pk=pk)
+
+    if ib_import_log.is_published:
+        ib_import_log.is_published = False
+        ib_import_log.published_at = None
+        ib_import_log.published_by = None
+        ib_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{ib_import_log.name}' unpublished from Data Exploration.")
+    else:
+        ib_import_log.is_published = True
+        ib_import_log.published_at = timezone.now()
+        ib_import_log.published_by = request.user
+        ib_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{ib_import_log.name}' is now available in Data Exploration.")
+
+    _invalidate_ib_caches()
+
+    from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+    run_ib_clickhouse_sync_async()
+
+    return redirect('dataLoader:ib_import_detail', pk=pk)
+
+
+@project_admin_required
+def ib_save_manual_overrides(request, pk):
+    """Save manual SSID or Name overrides for unmatched students in an existing IB import."""
+    ib_import_log = get_object_or_404(IBImportLog, pk=pk)
+
+    if request.method != 'POST':
+        return redirect('dataLoader:ib_import_detail', pk=pk)
+
+    overrides = ib_import_log.manual_overrides or {}
+    updated_count = 0
+
+    from .utils.ib_student_matcher import IBStudentMatcher
+    matcher = IBStudentMatcher(ib_import_log.school_year)
+
+    for key, value in request.POST.items():
+        if key.startswith('override_') and value.strip():
+            p_code = key.replace('override_', '')
+            input_val = value.strip()
+            override_ssid = input_val
+            override_name = request.POST.get(f'name_override_{p_code}', '').strip()
+
+            # If user entered a name rather than an SSID, search globally
+            if not override_ssid.isdigit():
+                found = matcher.search_students_global(query=override_ssid, limit=1)
+                if found:
+                    override_name = f"{found[0]['last_name']}, {found[0]['first_name']}"
+                    override_ssid = found[0]['ssid']
+
+            overrides[p_code] = {'ssid': override_ssid, 'student_name': override_name} if override_name else override_ssid
+
+            # Update the candidate result record for this personal code
+            rows_updated = IBExamResult.objects.filter(
+                import_log=ib_import_log,
+                personal_code=p_code,
+            ).update(
+                ssid=override_ssid,
+                match_method='manual_override',
+                match_confidence=1.0,
+            )
+            if rows_updated:
+                updated_count += 1
+
+    ib_import_log.manual_overrides = overrides
+
+    # Recalculate matched / unmatched
+    total_cand = ib_import_log.total_candidates
+    unmatched_count = (
+        IBExamResult.objects.filter(import_log=ib_import_log, ssid='')
+        .values('personal_code')
+        .distinct()
+        .count()
+    )
+    ib_import_log.students_unmatched = unmatched_count
+    ib_import_log.students_matched = max(0, total_cand - unmatched_count)
+    ib_import_log.save(update_fields=['manual_overrides', 'students_matched', 'students_unmatched'])
+
+    _invalidate_ib_caches()
+
+    if ib_import_log.is_published:
+        from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+        run_ib_clickhouse_sync_async()
+
+    messages.success(request, f"Saved manual overrides for {updated_count} student(s).")
+    return redirect('dataLoader:ib_import_detail', pk=pk)
+

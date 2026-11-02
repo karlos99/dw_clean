@@ -300,6 +300,96 @@ def markall_course_filter_fn(subject, course_picker=None, excludes=None):
     return _fn
 
 
+_SECONDARY_COURSE_WORDS = (
+    'support', 'lab', 'intervention', 'workshop', 'tutorial',
+    'aide', 'study hall', 'homeroom', 'advisory'
+)
+
+
+def is_secondary_course(name):
+    """True if course represents a support, lab, intervention or advisory period."""
+    low = (name or '').lower()
+    return any(w in low for w in _SECONDARY_COURSE_WORDS)
+
+
+def course_similarity_key(name):
+    """Compute normalized similarity key for grouping similar courses.
+
+    Normalizes Roman numerals (I -> 1, II -> 2, etc.), course tags (HP/CP/Honors/AP/Pre-AP/ERWC),
+    grade prefixes, and punctuation so that similar courses (e.g. 'Algebra 1', 'Algebra 1 HP', 'Algebra I')
+    share the same similarity key.
+    """
+    if not name:
+        return ''
+    s = str(name).strip().lower()
+    s = re.sub(r'\biv\b', '4', s)
+    s = re.sub(r'\biii\b', '3', s)
+    s = re.sub(r'\bii\b', '2', s)
+    s = re.sub(r'\bi\b', '1', s)
+    s = re.sub(r'\([^)]*\)', '', s)
+    s = re.sub(r'\bgrade\s*(\d+)\b', r'\1', s)
+    s = re.sub(r'\bgr\s*(\d+)\b', r'\1', s)
+    s = re.sub(r'\b(pre-ap|ap|ib myp|ib|college)\b', '', s)
+    s = re.sub(r'\b(hp|cp|honors|honor|regular|advanced|prep)\b', '', s)
+    s = re.sub(r'\b(erwc)\b', '', s)
+    s = re.sub(r'\b(sl\s*[12]|hl\s*[12])\b', '', s)
+    s = re.sub(r'\balg\b', 'algebra', s)
+    s = re.sub(r'\bgeom\b', 'geometry', s)
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    return ' '.join(s.split()) or str(name).strip().lower()
+
+
+def build_markall_course_rank_key(students, by_ssid, by_student_id, course_picker=None):
+    """Build a deterministic sort-key function for courses across a cohort of students.
+
+    Aligns similar courses to the same columns:
+    1. Primary academic courses rank ahead of secondary support/lab/intervention courses.
+    2. Explicitly selected courses in 'only' mode take priority in user-selected order.
+    3. More common course similarity clusters across the cohort rank earlier.
+    4. Deterministic tie-breaker by course name.
+    """
+    from collections import Counter
+    sim_counts = Counter()
+    for s in students or []:
+        sid = str(s.get('ssid') or '').strip()
+        lid = str(s.get('student_id') or '').strip()
+        c_dict = (by_ssid.get(sid) if by_ssid else None) or (by_student_id.get(lid) if by_student_id else None)
+        if c_dict:
+            for c in c_dict.keys():
+                sim_counts[course_similarity_key(c)] += 1
+
+    picker = _normalise_markall_course_picker(course_picker)
+    picker_prio = {}
+    if picker.get('mode') == 'only':
+        for idx, c in enumerate(picker.get('courses') or []):
+            sim_k = course_similarity_key(c)
+            if sim_k not in picker_prio:
+                picker_prio[sim_k] = idx
+
+    def course_sort_key(course_name):
+        sim_k = course_similarity_key(course_name)
+        sec = 1 if is_secondary_course(course_name) else 0
+        pick_rank = picker_prio.get(sim_k, 9999)
+        freq = -sim_counts.get(sim_k, 0)
+        return (sec, pick_rank, freq, sim_k, course_name)
+
+    return course_sort_key
+
+
+def order_student_courses_for_markall(courses_dict, rank_key_fn=None):
+    """Return ordered list of course names for a student.
+
+    When multiple courses are present, aligns similar courses to earlier slots
+    using rank_key_fn. If student has 0 or 1 course, returns as-is.
+    """
+    if not courses_dict:
+        return []
+    courses = list(courses_dict.keys())
+    if len(courses) <= 1 or not rank_key_fn:
+        return courses
+    return sorted(courses, key=rank_key_fn)
+
+
 def export_cell(value, blank='\u2014'):
     """Return a CSV cell value with blank/sentinel values shown as the blank marker.
 
@@ -839,14 +929,167 @@ def get_ap_columns(column_filters=None):
     return columns
 
 
+# ── IB (International Baccalaureate) columns ─────────────────────────────────
+
+def ib_column_key(year, subject, *args, **kwargs):
+    """
+    Build a stable column key for IB exam results (PL, CAT, LVL).
+    Can be called as:
+      ib_column_key(year, subject, kind='PL')
+      ib_column_key(year, subject, 'PL')
+      ib_column_key(year, subject, level, kind='PL')  # legacy
+      ib_column_key(year, subject, level, 'PL')       # legacy
+    """
+    level = kwargs.get('level', None)
+    kind = kwargs.get('kind', None)
+
+    if args:
+        if len(args) == 1:
+            if args[0] in {'PL', 'CAT', 'LVL'}:
+                kind = args[0]
+            else:
+                level = args[0]
+        elif len(args) >= 2:
+            level = args[0]
+            kind = args[1]
+
+    if not kind:
+        kind = 'PL'
+
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    subj_slug = re.sub(r'[^A-Za-z0-9_]+', '_', (subject or '')).strip('_') or 'Unknown'
+    if level:
+        lvl_slug = re.sub(r'[^A-Za-z0-9_]+', '_', (level or '')).strip('_') or 'Unknown'
+        return f"ib_{year_key}_{subj_slug}_{lvl_slug}_{kind}"
+    return f"ib_{year_key}_{subj_slug}_{kind}"
+
+
+def parse_ib_column_key(col_key: str):
+    """Parse an ``ib_<year>_<subject>[_<level>]_<kind>`` column key."""
+    if not isinstance(col_key, str) or not col_key.startswith('ib_'):
+        return None
+    tail = col_key[len('ib_'):]
+    parts = tail.split('_')
+    if len(parts) < 3:
+        return None
+    if parts[0].isdigit() and parts[1].isdigit():
+        year = f"{parts[0]}-{parts[1]}"
+        kind = parts[-1]
+        # If second to last part is a known level, parse as legacy key with level
+        if len(parts) >= 4 and parts[-2].upper() in {'HL', 'SL', 'EE', 'TK'}:
+            level = parts[-2]
+            subj_slug = '_'.join(parts[2:-2])
+        else:
+            level = None
+            subj_slug = '_'.join(parts[2:-1])
+        return {
+            'year': year,
+            'subj_slug': subj_slug,
+            'level': level,
+            'kind': kind,
+        }
+    return None
+
+
+def get_ib_columns(column_filters=None):
+    """Get dynamic IB exam columns organized by year.
+
+    Returns structure:
+        {
+            year: {
+                'subjects': {
+                    subject: {
+                        'subject': subject,
+                        'PL': column_key_pl,
+                        'CAT': column_key_cat,
+                        'LVL': column_key_lvl,
+                    }
+                },
+                'all_results': umbrella_key,
+            }
+        }
+    Only published IB imports contribute.
+    """
+    cache_key = _generate_cache_key("ib_columns", column_filters, "")
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+    columns = {}
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT r.school_year, r.subject, r.level, r.exam_results
+                FROM "dataLoader_ibexamresult" r
+                JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
+                WHERE il.is_published = true AND r.ssid <> ''
+                ORDER BY r.school_year DESC
+                """
+            )
+            raw_subjects = set()
+            for year, subject, level, exam_results in cursor.fetchall():
+                year_val = (year or '').strip() or 'Unknown'
+                if exam_results and isinstance(exam_results, list):
+                    for ex in exam_results:
+                        s_val = (ex.get('subject') or subject or '').strip()
+                        if s_val:
+                            raw_subjects.add((year_val, s_val))
+                elif subject:
+                    raw_subjects.add((year_val, subject.strip()))
+
+            for year_val, subject_val in sorted(raw_subjects, key=lambda t: (t[0], t[1]), reverse=True):
+                pl_key = ib_column_key(year_val, subject_val, kind='PL')
+                pl_label = f"{subject_val}\nPerformance Level (PL)\n{year_val}"
+                COLUMN_DEFINITIONS[pl_key] = pl_label
+                new_definitions[pl_key] = pl_label
+
+                cat_key = ib_column_key(year_val, subject_val, kind='CAT')
+                cat_label = f"{subject_val}\nCategory\n{year_val}"
+                COLUMN_DEFINITIONS[cat_key] = cat_label
+                new_definitions[cat_key] = cat_label
+
+                lvl_key = ib_column_key(year_val, subject_val, kind='LVL')
+                lvl_label = f"{subject_val}\nLevel\n{year_val}"
+                COLUMN_DEFINITIONS[lvl_key] = lvl_label
+                new_definitions[lvl_key] = lvl_label
+
+                bucket = columns.setdefault(year_val, {'subjects': {}})
+                bucket['subjects'][subject_val] = {
+                    'subject': subject_val,
+                    'PL': pl_key,
+                    'CAT': cat_key,
+                    'LVL': lvl_key,
+                }
+
+            # All Results umbrella per year
+            for year_val in columns:
+                all_results_key = f"iball_{year_val.replace('-', '_')}"
+                all_label = f"All IB Results\n{year_val}"
+                COLUMN_DEFINITIONS[all_results_key] = all_label
+                new_definitions[all_results_key] = all_label
+                columns[year_val]['all_results'] = all_results_key
+
+    except Exception:
+        pass
+
+    cache.set(cache_key, (columns, new_definitions), timeout=3600)
+    return columns
+
+
 def _append_cs_filter_clause(where_clauses, params, col, raw_val):
     """Apply a Data Explorer base-column filter against current_student (cs)."""
-    # Dynamic assessment/mark/AP filter keys describe test/mark rows, not
+    # Dynamic assessment/mark/AP/IB filter keys describe test/mark rows, not
     # current_student columns. They are never usable as a base-student filter
     # (and some, like the "All Marks" umbrella, are bookkeeping only), so skip
     # them entirely — otherwise they fall through to a bogus cs.<col> predicate.
     if isinstance(col, str) and col.startswith(
-        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')
+        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'iball_')
     ):
         return
 
@@ -943,7 +1186,7 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
             where_clauses.append(f"({' OR '.join(conditions)})")
         return
 
-    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_')):
+    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_', 'ib_')):
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
 

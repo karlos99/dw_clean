@@ -854,6 +854,52 @@ class SATColumnKeyTests(SimpleTestCase):
 		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
 
 
+class IBColumnKeyTests(SimpleTestCase):
+	def test_ib_column_key_round_trip(self):
+		from dataexploration.column_utils import ib_column_key, parse_ib_column_key
+		pl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='PL')
+		self.assertEqual(pl_key, 'ib_2024_2025_VISUAL_ARTS_PL')
+		self.assertEqual(
+			parse_ib_column_key(pl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'PL'},
+		)
+
+		lvl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='LVL')
+		self.assertEqual(lvl_key, 'ib_2024_2025_VISUAL_ARTS_LVL')
+		self.assertEqual(
+			parse_ib_column_key(lvl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'LVL'},
+		)
+
+		cat_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='CAT')
+		self.assertEqual(cat_key, 'ib_2024_2025_VISUAL_ARTS_CAT')
+		self.assertEqual(
+			parse_ib_column_key(cat_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'CAT'},
+		)
+
+	def test_ib_column_key_legacy_with_level(self):
+		from dataexploration.column_utils import parse_ib_column_key
+		legacy_key = 'ib_2024_2025_VISUAL_ARTS_SL_PL'
+		self.assertEqual(
+			parse_ib_column_key(legacy_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': 'SL', 'kind': 'PL'},
+		)
+
+	def test_ib_filter_generates_valid_where_clause(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'ib_2024_2025_VISUAL_ARTS_PL': ['2', '3']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('dataLoader_ibexamresult', where_clauses[0])
+		self.assertIn('cs.ssid IN', where_clauses[0])
+
+
 class SurveyDataResolutionTests(SimpleTestCase):
 	def test_get_survey_data_for_students_cross_year_and_ssid(self):
 		from dataexploration.survey_utils import get_survey_data_for_students, _generate_survey_column_key
@@ -2696,4 +2742,54 @@ class StudentIncidentsTests(TestCase):
 		self.assertEqual(students[1]['incidents_major'], 0)
 		self.assertEqual(students[1]['incidents_minor'], 0)
 		self.assertEqual(students[1]['suspension_days'], 0)
+
+
+class MarkallCourseAlignmentTests(SimpleTestCase):
+	def test_course_similarity_key_groups_variants(self):
+		from dataexploration.column_utils import course_similarity_key
+		self.assertEqual(course_similarity_key('Algebra 1'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra 1 HP'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra I'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra 1 (H)'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Geometry'), 'geometry')
+		self.assertEqual(course_similarity_key('Geometry HP'), 'geometry')
+		self.assertEqual(course_similarity_key('Pre-AP English I'), 'english 1')
+		self.assertEqual(course_similarity_key('English I CP'), 'english 1')
+		self.assertNotEqual(course_similarity_key('English 9'), course_similarity_key('English 10'))
+
+	def test_order_student_courses_aligns_similar_and_single_courses(self):
+		from dataexploration.column_utils import (
+			build_markall_course_rank_key,
+			order_student_courses_for_markall,
+		)
+		students = [
+			{'ssid': '1'},
+			{'ssid': '2'},
+			{'ssid': '3'},
+			{'ssid': '4'},
+		]
+		by_ssid = {
+			'1': {'Math Support': [('Q1', 'P')], 'Algebra 1': [('Q1', 'A')]},
+			'2': {'Algebra 1 HP': [('Q1', 'A+')], 'Math Support': [('Q1', 'P')]},
+			'3': {'Geometry': [('Q1', 'B+')]},
+			'4': {'Algebra 1': [('Q1', 'A')], 'Geometry': [('Q1', 'B')]},
+		}
+		rank_fn = build_markall_course_rank_key(students, by_ssid, {})
+		
+		# Student 1: Algebra 1 should be placed first, Math Support second
+		s1_courses = order_student_courses_for_markall(by_ssid['1'], rank_fn)
+		self.assertEqual(s1_courses, ['Algebra 1', 'Math Support'])
+
+		# Student 2: Algebra 1 HP should be placed first, Math Support second
+		s2_courses = order_student_courses_for_markall(by_ssid['2'], rank_fn)
+		self.assertEqual(s2_courses, ['Algebra 1 HP', 'Math Support'])
+
+		# Student 3: Geometry (only 1 course) stays in column 1 (first slot)
+		s3_courses = order_student_courses_for_markall(by_ssid['3'], rank_fn)
+		self.assertEqual(s3_courses, ['Geometry'])
+
+		# Student 4: Algebra 1 (more frequent) first, Geometry second
+		s4_courses = order_student_courses_for_markall(by_ssid['4'], rank_fn)
+		self.assertEqual(s4_courses, ['Algebra 1', 'Geometry'])
+
 

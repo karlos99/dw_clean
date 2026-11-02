@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}IB Import Detail - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">IB Import Detail</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ import_log.name }}</h1>
+                <p class="mt-1 text-slate-500">{{ import_log.school_year }} — {{ import_log.filename }}</p>
+                <p class="text-sm text-slate-400">Uploaded {{ import_log.uploaded_at|date:"M d, Y H:i" }}</p>
+            </div>
+            <div>
+                {% if import_log.status == 'COMPLETED' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
+                {% elif import_log.status == 'FAILED' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
+                {% elif import_log.status == 'PROCESSING' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-blue-100 text-blue-800">Processing</span>
+                {% elif import_log.status == 'PARTIAL' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-amber-100 text-amber-800">Partial</span>
+                {% else %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 text-slate-800">{{ import_log.get_status_display }}</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Candidates</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.total_candidates }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">LQHS Match Rate</p>
+            <p class="text-2xl font-bold {% if match_rate >= 90 %}text-green-600{% elif match_rate >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">
+                {{ match_rate }}%
+            </p>
+            <p class="text-xs text-slate-400">{{ import_log.students_matched }} matched / {{ import_log.students_unmatched }} unmatched</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Results Created</p>
+            <p class="text-2xl font-bold text-amber-600">{{ import_log.results_created }}</p>
+            {% if import_log.results_skipped > 0 %}
+            <p class="text-xs text-slate-400">{{ import_log.results_skipped }} skipped (duplicates)</p>
+            {% endif %}
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Errors</p>
+            <p class="text-2xl font-bold {% if import_log.error_count %}text-red-600{% else %}text-slate-900{% endif %}">{{ import_log.error_count }}</p>
+        </div>
+    </div>
+
+    <!-- Unmatched Candidates Manual Override Form (if any unmatched remain) -->
+    {% if unmatched_candidates %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8 p-6">
+        <h2 class="text-lg font-semibold text-slate-900 mb-2">Unmatched Candidates ({{ unmatched_candidates|length }})</h2>
+        <p class="text-xs text-slate-500 mb-4">
+            These candidates do not have a matched State Student ID (SSID). You can enter SSIDs manually and save them.
+        </p>
+        <form method="post" action="{% url 'dataLoader:ib_save_manual_overrides' import_log.pk %}">
+            {% csrf_token %}
+            <div class="overflow-x-auto max-h-96">
+                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead class="bg-slate-50 sticky top-0">
+                        <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Code</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Candidate Name</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Manual SSID / Student Name</th>
+                            <th class="px-4 py-2 text-center text-xs font-medium text-slate-500 uppercase w-28">Global Search</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        {% for cand in unmatched_candidates %}
+                        <tr class="hover:bg-slate-50"
+                            x-data="{
+                                searching: false,
+                                isGlobal: true,
+                                loading: false,
+                                searchTerm: '{{ cand.candidate_name|escapejs }}',
+                                results: [],
+                                matchedDisplay: '',
+                                doSearch() {
+                                    if (!this.searchTerm.trim()) return;
+                                    this.loading = true;
+                                    const url = '{% url 'dataLoader:ib_student_search' %}?q=' + encodeURIComponent(this.searchTerm) + '&school_year={{ import_log.school_year|urlencode }}' + (this.isGlobal ? '&global=true' : '');
+                                    fetch(url)
+                                        .then(r => r.json())
+                                        .then(data => {
+                                            this.results = data.students || [];
+                                            this.loading = false;
+                                        })
+                                        .catch(() => { this.loading = false; });
+                                },
+                                selectStudent(r) {
+                                    document.getElementById('override_{{ cand.personal_code }}').value = r.ssid;
+                                    document.getElementById('name_override_{{ cand.personal_code }}').value = r.last_name + ', ' + r.first_name;
+                                    this.matchedDisplay = r.last_name + ', ' + r.first_name + ' (SSID: ' + r.ssid + ' - ' + r.school_name + ')';
+                                    this.searching = false;
+                                },
+                                clearMatch() {
+                                    document.getElementById('override_{{ cand.personal_code }}').value = '';
+                                    document.getElementById('name_override_{{ cand.personal_code }}').value = '';
+                                    this.matchedDisplay = '';
+                                }
+                            }">
+                            <td class="px-4 py-2 font-mono text-slate-900">{{ cand.personal_code }}</td>
+                            <td class="px-4 py-2 font-medium text-slate-900">
+                                <div>{{ cand.candidate_name }}</div>
+                                <template x-if="matchedDisplay">
+                                    <div class="mt-1 flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                        <svg class="w-3 h-3 text-emerald-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                        </svg>
+                                        <span class="truncate" x-text="matchedDisplay"></span>
+                                        <button type="button" @click="clearMatch()" class="text-emerald-900 hover:text-red-600 font-bold ml-1">×</button>
+                                    </div>
+                                </template>
+                            </td>
+                            <td class="px-4 py-2 text-slate-600">{{ cand.category }}</td>
+                            <td class="px-4 py-2">
+                                <input type="text"
+                                       name="override_{{ cand.personal_code }}"
+                                       id="override_{{ cand.personal_code }}"
+                                       placeholder="SSID or Name"
+                                       class="w-40 px-2.5 py-1 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-amber-500">
+                                <input type="hidden"
+                                       name="name_override_{{ cand.personal_code }}"
+                                       id="name_override_{{ cand.personal_code }}"
+                                       value="">
+                            </td>
+                            <td class="px-4 py-2 text-center relative">
+                                <button type="button"
+                                        @click="searching = !searching; if(searching && results.length === 0) { doSearch(); }"
+                                        class="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-100 rounded hover:bg-amber-200 inline-flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                                    </svg>
+                                    <span>Find</span>
+                                </button>
+
+                                <div x-show="searching"
+                                     @click.away="searching = false"
+                                     class="absolute right-0 top-full mt-2 w-96 max-w-lg bg-white p-3 rounded-lg shadow-xl border border-slate-200 text-xs z-50 text-left">
+                                    <div class="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
+                                        <span class="font-semibold text-slate-800">Match Student Globally by Name</span>
+                                        <button type="button" @click="searching = false" class="text-slate-400 hover:text-slate-600 font-bold text-sm">×</button>
+                                    </div>
+
+                                    <div class="flex gap-1.5 mb-2">
+                                        <input type="text"
+                                               x-model="searchTerm"
+                                               @keydown.enter.prevent="doSearch()"
+                                               placeholder="Search name, SSID, or ID..."
+                                               class="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-amber-500">
+                                        <button type="button"
+                                                @click="doSearch()"
+                                                class="px-2.5 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 font-medium">
+                                            Search
+                                        </button>
+                                    </div>
+
+                                    <div class="flex items-center justify-between text-slate-600 mb-2 px-1">
+                                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" x-model="isGlobal" @change="doSearch()" class="rounded text-amber-600 focus:ring-amber-500 text-xs">
+                                            <span class="font-medium text-slate-700">Global Search (All Schools & Years)</span>
+                                        </label>
+                                        <template x-if="loading">
+                                            <span class="text-amber-600 font-medium animate-pulse">Searching...</span>
+                                        </template>
+                                    </div>
+
+                                    <div class="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded">
+                                        <template x-if="!loading && results.length === 0">
+                                            <div class="p-3 text-center text-slate-400 italic">
+                                                No students found matching "<span x-text="searchTerm"></span>".
+                                            </div>
+                                        </template>
+                                        <template x-for="r in results" :key="r.ssid + '-' + (r.school_year || '')">
+                                            <div class="p-2 hover:bg-amber-50 cursor-pointer flex items-center justify-between gap-2 transition"
+                                                 @click="selectStudent(r)">
+                                                <div class="truncate">
+                                                    <div class="font-semibold text-slate-900 flex items-center gap-1.5">
+                                                        <span x-text="r.last_name + ', ' + r.first_name + (r.middle_name ? ' ' + r.middle_name : '')"></span>
+                                                        <template x-if="r.is_lqhs">
+                                                            <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">LQHS</span>
+                                                        </template>
+                                                        <template x-if="!r.is_lqhs">
+                                                            <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-600" x-text="r.school_name"></span>
+                                                        </template>
+                                                    </div>
+                                                    <div class="text-[11px] text-slate-500">
+                                                        SSID: <span class="font-mono font-medium text-slate-700" x-text="r.ssid"></span>
+                                                        <span class="mx-1">•</span>
+                                                        <span x-text="r.school_year || ''"></span>
+                                                        <template x-if="r.grade">
+                                                            <span> • Gr <span x-text="r.grade"></span></span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <button type="button"
+                                                        class="px-2 py-1 text-[11px] font-semibold text-white bg-amber-600 rounded hover:bg-amber-700 shrink-0">
+                                                    Match
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button type="submit"
+                        class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm font-medium transition">
+                    Save Overrides
+                </button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <!-- Results Table -->
+    {% if ib_results %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+        <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-slate-900">IB Exam Results (showing first 100)</h2>
+            <span class="text-xs text-slate-500">Subject, Level, Category, and Grade (PL)</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Student Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">SSID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Code</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Exam Results [Subject (Level) = Grade (PL)]</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-20">Exams</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Session</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200 text-sm">
+                    {% for result in ib_results %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-3 font-medium text-slate-900">
+                            <div>{{ result.candidate_name }}</div>
+                            {% if result.result_code or result.total_points %}
+                            <div class="mt-1 flex flex-wrap gap-1 text-[11px]">
+                                {% if result.result_code %}
+                                <span class="px-1.5 py-0.2 rounded font-medium {% if 'not' in result.result_code|lower %}bg-amber-100 text-amber-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                                    {{ result.result_code }}
+                                </span>
+                                {% endif %}
+                                {% if result.total_points %}
+                                <span class="px-1.5 py-0.2 rounded font-medium bg-slate-100 text-slate-700">
+                                    {{ result.total_points }} pts
+                                </span>
+                                {% endif %}
+                                {% if result.ee_tok_points %}
+                                <span class="px-1.5 py-0.2 rounded font-medium bg-purple-100 text-purple-700">
+                                    EE/TOK: {{ result.ee_tok_points }}
+                                </span>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 font-mono text-slate-500">{{ result.ssid|default:"—" }}</td>
+                        <td class="px-4 py-3 font-mono text-slate-500">{{ result.personal_code }}</td>
+                        <td class="px-4 py-3 text-slate-600">{{ result.category }}</td>
+                        <td class="px-4 py-3">
+                            {% if result.exam_results %}
+                            <div class="flex flex-wrap gap-1.5 max-w-xl">
+                                {% for exam in result.exam_results %}
+                                <div class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-100 border border-slate-200 text-xs">
+                                    <span class="font-medium text-slate-800">{{ exam.subject }}</span>
+                                    <span class="px-1 py-0.2 rounded text-[10px] font-bold
+                                                 {% if exam.level == 'HL' %}bg-indigo-100 text-indigo-800
+                                                 {% elif exam.level == 'SL' %}bg-blue-100 text-blue-800
+                                                 {% elif exam.level == 'EE' %}bg-purple-100 text-purple-800
+                                                 {% else %}bg-slate-200 text-slate-700{% endif %}">
+                                        {{ exam.level }}
+                                    </span>
+                                    <span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full font-bold text-[11px]
+                                                 {% if exam.grade == '7' or exam.grade == '6' or exam.grade == 'A' %}bg-emerald-100 text-emerald-800
+                                                 {% elif exam.grade == '5' or exam.grade == '4' or exam.grade == 'B' or exam.grade == 'C' %}bg-blue-100 text-blue-800
+                                                 {% elif exam.grade == '3' or exam.grade == 'D' %}bg-amber-100 text-amber-800
+                                                 {% else %}bg-slate-200 text-slate-700{% endif %}">
+                                        {{ exam.grade|default:"—" }}
+                                    </span>
+                                    {% if exam.predicted_grade %}
+                                    <span class="text-[10px] text-slate-400" title="Predicted Grade">({{ exam.predicted_grade }})</span>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% elif result.subject %}
+                            <div class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-100 text-xs">
+                                <span class="font-medium">{{ result.subject }}</span>
+                                <span class="px-1 rounded bg-blue-100 text-blue-800 text-[10px]">{{ result.level }}</span>
+                                <span class="font-bold text-emerald-700">{{ result.grade }}</span>
+                            </div>
+                            {% else %}
+                            <span class="text-slate-400 italic">No exams recorded</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700">
+                                {{ result.exam_count|default:"1" }}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{{ result.session_month }} {{ result.session_year }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Errors Log -->
+    {% if import_log.error_log %}
+    <div class="bg-red-50 border border-red-200 rounded-md p-4 mb-8">
+        <h3 class="text-sm font-medium text-red-800 mb-2">Errors ({{ import_log.error_count }})</h3>
+        <ul class="list-disc pl-5 text-sm text-red-700 space-y-1">
+            {% for error in import_log.error_log|slice:":20" %}
+            <li>{{ error.personal_code }}: {{ error.error }}</li>
+            {% endfor %}
+            {% if import_log.error_log|length > 20 %}
+            <li class="text-red-500">... and {{ import_log.error_log|length|add:"-20" }} more errors</li>
+            {% endif %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Actions / Publish Bar -->
+    <div class="flex justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+            <a href="{% url 'dataLoader:ib_delete_import' import_log.pk %}"
+               class="px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50 transition duration-200">
+                Delete Import
+            </a>
+            {% if import_log.status == 'COMPLETED' %}
+            <form method="post" action="{% url 'dataLoader:ib_toggle_publish' import_log.pk %}" class="inline">
+                {% csrf_token %}
+                <button type="submit"
+                        class="inline-flex items-center gap-2 px-4 py-2 rounded-md border transition duration-200
+                               {% if import_log.is_published %}bg-amber-600 border-amber-600 text-white hover:bg-amber-700
+                               {% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">
+                    <span class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors
+                                 {% if import_log.is_published %}bg-amber-500{% else %}bg-slate-300{% endif %}">
+                        <span class="inline-block h-3 w-3 transform rounded-full bg-white transition
+                                     {% if import_log.is_published %}translate-x-3.5{% else %}translate-x-0.5{% endif %}"></span>
+                    </span>
+                    {% if import_log.is_published %}Published — available in Data Exploration{% else %}Publish to Data Exploration{% endif %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+        <a href="{% url 'dataLoader:dashboard' %}"
+           class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-200 font-medium">
+            Back to Dashboard
+        </a>
+    </div>
+</div>
+{% endblock %}
+

@@ -31,6 +31,8 @@ from ..column_utils import (
     group_marks_by_ssid_course,
     get_sat_columns,
     markall_course_filter_fn,
+    build_markall_course_rank_key,
+    order_student_courses_for_markall,
     parse_markall_key,
     markall_key as _markall_key,
     parse_sat_column_key,
@@ -399,6 +401,10 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
     ))
+    selected_ib_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
+    ))
     selected_survey_cols = [
         c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
     ]
@@ -417,7 +423,7 @@ def export_students_csv(request):
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
         and not is_mtss_column(c)
         and not is_incident_column(c)
         and c in COLUMN_DEFINITIONS
@@ -732,6 +738,16 @@ def export_students_csv(request):
                     else:
                         dynamic_labels[info['col_name']] = f"{info['award']} {info['year']}"
 
+                if selected_ib_cols:
+                    from dataexploration.column_utils import parse_ib_column_key
+                    for _col in selected_ib_cols:
+                        _parsed = parse_ib_column_key(_col)
+                        if _parsed:
+                            kind_label = 'Grade (PL)' if _parsed['kind'] == 'PL' else ('Category' if _parsed['kind'] == 'CAT' else 'Level')
+                            subj_disp = _parsed['subj_slug'].replace('_', ' ')
+                            lvl_disp = f" ({_parsed['level']})" if _parsed.get('level') else ""
+                            dynamic_labels[_col] = f"{subj_disp}{lvl_disp} {kind_label} {_parsed['year']}"
+
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
                 base_params = []
@@ -939,7 +955,7 @@ def export_students_csv(request):
                         if parsed and parsed['kind'] is None:
                             year = parsed['year']
                             subject = _markall_subject_actual(year, parsed['subject_norm'])
-                            n = markall_max.get((year, subject), 0)
+                            n = max(markall_max.get((year, subject), 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"{c}_{i}_COURSE")
                                 new_selected.append(f"{c}_{i}_MARKS")
@@ -949,7 +965,7 @@ def export_students_csv(request):
 
                 # Definitions for the Marks "All Marks" wide-pair columns
                 for (year, subject), umbrella in markall_years.items():
-                    n = markall_max.get((year, subject), 0)
+                    n = max(markall_max.get((year, subject), 0), 1)
                     for i in range(1, n + 1):
                         dynamic_labels[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject}) {year}"
                         dynamic_labels[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject}) {year}"
@@ -1021,7 +1037,7 @@ def export_students_csv(request):
                         yk = _apall_year_key(c)
                         if yk:
                             year = yk.replace('_', '-')
-                            n = apall_max.get(year, 0)
+                            n = max(apall_max.get(year, 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"apall_{yk}_{i}_SUBJECT")
                                 new_selected.append(f"apall_{yk}_{i}_PL")
@@ -1032,7 +1048,7 @@ def export_students_csv(request):
                 # Definitions for the AP "All Results" wide-pair columns
                 for year in apall_years:
                     yk = year.replace('-', '_')
-                    n = apall_max.get(year, 0)
+                    n = max(apall_max.get(year, 0), 1)
                     for i in range(1, n + 1):
                         suffix = f" {i}" if n > 1 else ""
                         dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
@@ -1179,6 +1195,17 @@ def export_students_csv(request):
                         except Exception:
                             pass
 
+                    # Fetch IB exam values for this chunk
+                    if selected_ib_cols:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_ib_data
+                            _fetch_ib_data(chunk_students, selected_ib_cols)
+                            for _student in chunk_students:
+                                for _col in selected_ib_cols:
+                                    _student.setdefault(_col, '')
+                        except Exception:
+                            pass
+
                     # Fetch AP "All Results" wide-pair data for this chunk
                     if apall_years:
                         try:
@@ -1260,15 +1287,19 @@ def export_students_csv(request):
                                         course_filter_fn=markall_course_filter_fn(subject, picker),
                                         periods=selected_periods,
                                     )
+                                    rank_fn = build_markall_course_rank_key(
+                                        chunk_students, by_ssid, by_student_id, course_picker=picker,
+                                    )
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()
                                         sid_key = str(student.get('student_id') or '').strip()
                                         courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
+                                        ordered_courses = order_student_courses_for_markall(courses, rank_fn)
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"
-                                            if i <= len(courses):
-                                                course_name = list(courses.keys())[i - 1]
+                                            if i <= len(ordered_courses):
+                                                course_name = ordered_courses[i - 1]
                                                 periods = sorted(
                                                     courses[course_name],
                                                     key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
