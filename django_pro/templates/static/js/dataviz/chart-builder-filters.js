@@ -10,10 +10,9 @@ function chartBuilderFilterMethods() {
         : this.sourceType === 'columns'
           ? (this.explorerCols || [])
           : (this.columns || []);
-      const extra = cols.filter(c =>
-        (this.isDateColumn(c) || this.isNumericColumn(c)) && !base.includes(c)
-      );
-      this.filterColsList = [...base, ...extra].sort();
+      const filterableCols = (cols || []).filter(c => c && !['student_name'].includes(c));
+      const all = new Set([...base, ...filterableCols]);
+      this.filterColsList = Array.from(all).sort();
     },
 
     toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },

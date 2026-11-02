@@ -20,7 +20,7 @@ from ..catalog_columns import (
     merge_course_program_columns,
 )
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
-from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns
+from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, get_ib_columns
 from ..survey_utils import get_survey_columns
 from ..utils import get_user_roles, _apply_de_school_filter
 
@@ -45,6 +45,24 @@ RACE_LIST_COL = 'race_list'
 L_RACE_JSON_KEY = 'l_race'
 DSUSD_FEP_COL = 'dsusd_fep'
 DSUSD_FEP_JSON_KEY = 'DSUSD_FEP'
+
+# Performance & Behavior (column picker order: attendance, suspension, major/minor).
+PERFORMANCE_BEHAVIOR_COLUMNS = (
+    'atendace_rate',
+    'suspension_indicator',
+    'incidents_major',
+    'incidents_minor',
+    'suspension_days',
+)
+
+
+def _expand_performance_behavior_allowlist(allowed_set: set) -> None:
+    """Keep Major/Minor incident columns in the picker when older allowlists omit them."""
+    _incident_cols = ('incidents_major', 'incidents_minor', 'suspension_days')
+    if allowed_set.intersection({'atendace_rate', 'suspension_indicator'}):
+        allowed_set.update(_incident_cols)
+    if allowed_set.intersection(_incident_cols):
+        allowed_set.update(_incident_cols)
 
 
 def get_saved_default_columns():
@@ -102,6 +120,7 @@ def get_enabled_columns():
     if course_program_columns_enabled():
         from ..catalog_columns import course_program_allowlist_keys
         allowed_set.update(course_program_allowlist_keys())
+    _expand_performance_behavior_allowlist(allowed_set)
 
     filtered_cats = {}
     base_defs, base_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
@@ -269,7 +288,7 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
         return None, None
     if col == 'atendace_rate' and 'attendance_rate' in db_columns:
         return "cs.attendance_rate", "atendace_rate"
-    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+    if col in {'birth_date', 'us_enter_date', 'fep_date', 'enter_date', 'leave_date'}:
         if col in db_columns:
             return f"cs.{col}", col
         if use_enroll and enroll_columns and col in enroll_columns:
@@ -327,9 +346,10 @@ def manage_default_columns(request):
             )
             
             from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+            col_defs, col_cats = get_enabled_columns()
             return render(request, 'dataexploration/manage_default_columns.html', {
-                'column_categories': COLUMN_CATEGORIES,
-                'column_definitions': COLUMN_DEFINITIONS,
+                'column_categories': col_cats,
+                'column_definitions': col_defs,
                 'test_structure': test_structure,
                 'selected_columns': columns,
                 'year_labels': get_year_labels_map(list(test_structure.keys())),
@@ -338,9 +358,10 @@ def manage_default_columns(request):
             })
         except Exception as e:
             from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+            col_defs, col_cats = get_enabled_columns()
             return render(request, 'dataexploration/manage_default_columns.html', {
-                'column_categories': COLUMN_CATEGORIES,
-                'column_definitions': COLUMN_DEFINITIONS,
+                'column_categories': col_cats,
+                'column_definitions': col_defs,
                 'test_structure': test_structure,
                 'selected_columns': default_columns,
                 'year_labels': get_year_labels_map(list(test_structure.keys())),
@@ -349,9 +370,10 @@ def manage_default_columns(request):
             })
 
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+    col_defs, col_cats = get_enabled_columns()
     context = {
-        'column_categories': COLUMN_CATEGORIES,
-        'column_definitions': COLUMN_DEFINITIONS,
+        'column_categories': col_cats,
+        'column_definitions': col_defs,
         'test_structure': test_structure,
         'selected_columns': default_columns,
         'year_labels': get_year_labels_map(list(test_structure.keys())),
@@ -447,6 +469,27 @@ def strip_course_program_filters(filters):
     }
 
 
+def build_marks_period_index(marks_structure):
+    """Return ``{year: {subject: [period, ...]}}`` for the All Marks picker.
+
+    Periods are the union across the subject's courses, sorted with ``Live``
+    last to match the mark-column ordering used elsewhere.
+    """
+    index = {}
+    for year, subjects in (marks_structure or {}).items():
+        for subject, courses in (subjects or {}).items():
+            periods = set()
+            for course_periods in (courses or {}).values():
+                periods.update(p for p in (course_periods or {}) if p)
+            if not periods:
+                continue
+            index.setdefault(year, {})[subject] = sorted(
+                periods,
+                key=lambda p: (1, str(p)) if str(p).lower() == 'live' else (0, str(p)),
+            )
+    return index
+
+
 def load_column_structures(request):
     """Load dynamic column structures for the selector via HTMX."""
     import json
@@ -470,6 +513,11 @@ def load_column_structures(request):
     # does not invalidate the multi-MB column tree and force a slow unscoped
     # rebuild of the assessments and marks trees.
     base_column_filters = strip_course_program_filters(base_column_filters)
+    if isinstance(base_column_filters, dict):
+        base_column_filters = {
+            k: v for k, v in base_column_filters.items()
+            if k in {'school_year', 'status'}
+        }
 
     # Lazy mark-course fragment: the selector renders a course's period
     # checkboxes on first expand rather than emitting every period up front.
@@ -504,7 +552,7 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:v4:"
+        "dataexp:column_structures_html:v7:"
         + hashlib.md5(json.dumps({
             'column_filters': base_column_filters,
             'where': where_clauses,
@@ -529,16 +577,19 @@ def load_column_structures(request):
     survey_structure = get_survey_columns()
     ap_structure = get_ap_columns()
     sat_structure = get_sat_columns()
+    ib_structure = get_ib_columns()
     
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
-    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
+    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys()) + list(ib_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
+        'marks_periods': build_marks_period_index(marks_structure),
         'survey_structure': survey_structure.get('structure', {}),
         'ap_structure': ap_structure,
         'sat_structure': sat_structure,
+        'ib_structure': ib_structure,
         'column_definitions': COLUMN_DEFINITIONS,
         'year_labels': get_year_labels_map(all_years),
         'year_to_alias': get_year_alias_map(),

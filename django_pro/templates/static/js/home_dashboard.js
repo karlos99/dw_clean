@@ -68,6 +68,15 @@
         return d.innerHTML;
     }
 
+    function getChartShortLocation(fullName) {
+        if (!fullName) return 'Chart';
+        var parts = fullName.replace(/\\/g, '/').split('/').map(function(p) { return p.trim(); }).filter(Boolean);
+        if (parts.length > 1) {
+            return parts[parts.length - 2] + ' / ' + parts[parts.length - 1];
+        }
+        return parts[0] || fullName;
+    }
+
     function buildWidget(data, opts) {
         opts = opts || {};
         var w = opts.w || data.gs_w || 6;
@@ -98,11 +107,12 @@
             : '<div class="home-slot-tools absolute top-1.5 right-1.5 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">' +
               '<button type="button" class="home-slot-remove w-6 h-6 rounded-md bg-white/90 shadow-sm ring-1 ring-slate-200 hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none" aria-label="Remove chart">&times;</button></div>';
 
+        var displayTitle = getChartShortLocation(data.title);
         el.innerHTML =
             '<div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col relative group">' +
             tools +
             '  <div class="home-slot-location flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl' + (showLocation ? '' : ' hidden') + '">' +
-            '    <span class="flex items-center gap-1.5 min-w-0 text-xs font-semibold text-slate-700 truncate" title="' + esc(data.title) + '">' + lockIcon + '<span class="truncate">' + esc(data.title) + '</span></span>' +
+            '    <span class="flex items-center gap-1.5 min-w-0 text-xs font-semibold text-slate-700 truncate" title="' + esc(data.title) + '">' + lockIcon + '<span class="truncate">' + esc(displayTitle) + '</span></span>' +
             '    ' + requiredBadge +
             '  </div>' +
             '  <div class="home-slot-body flex-1 min-h-0 p-2">' +
@@ -386,9 +396,10 @@
         dropPreviewEl.style.height = previewHeight + 'px';
     }
 
-    function createGhost(name, type) {
+    function createGhost(name, type, dir) {
         var g = document.createElement('div');
         g.className = 'fixed z-50 pointer-events-none bg-white/95 backdrop-blur shadow-2xl border-2 border-blue-500 rounded-xl p-3 w-64 ring-4 ring-blue-500/10 flex flex-col gap-2 transition-transform';
+        var dirBadge = dir ? '<span class="text-[9px] px-1 py-0.2 rounded bg-slate-100 text-slate-500 font-medium truncate">' + esc(dir) + '</span>' : '';
         g.innerHTML =
             '<div class="flex items-center gap-2.5">' +
             '  <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 ring-1 ring-blue-200">' +
@@ -396,7 +407,10 @@
             '  </div>' +
             '  <div class="min-w-0 flex-1">' +
             '    <div class="text-xs font-bold text-slate-800 truncate">' + esc(name) + '</div>' +
-            '    <div class="text-[10px] text-blue-600 font-medium capitalize">' + esc(type || 'Chart') + '</div>' +
+            '    <div class="flex items-center gap-1.5 mt-0.5">' +
+            '      <span class="text-[10px] text-blue-600 font-medium capitalize">' + esc(type || 'Chart') + '</span>' +
+            '      ' + dirBadge +
+            '    </div>' +
             '  </div>' +
             '</div>' +
             '<div class="flex items-center justify-between text-[10px] text-slate-500 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">' +
@@ -440,8 +454,9 @@
             if (!id) return;
             dragState = {
                 id: id,
-                name: item.dataset.chartName || 'Chart',
+                name: item.dataset.chartDisplayName || item.dataset.chartName || 'Chart',
                 type: item.dataset.chartType || 'Chart',
+                dir: item.dataset.chartDir || '',
                 startX: e.clientX,
                 startY: e.clientY,
                 ghost: null,
@@ -456,7 +471,7 @@
                 var dy = e.clientY - dragState.startY;
                 if (Math.abs(dx) + Math.abs(dy) < 6) return;
                 dragState.active = true;
-                dragState.ghost = createGhost(dragState.name, dragState.type);
+                dragState.ghost = createGhost(dragState.name, dragState.type, dragState.dir);
                 document.body.classList.add('select-none', 'is-dragging-chart');
                 hideChartPreview();
             }
@@ -503,8 +518,10 @@
                 var items = ucList.querySelectorAll('.uc-item');
                 var visibleCount = 0;
                 items.forEach(function (it) {
-                    var title = (it.dataset.chartName || '').toLowerCase();
-                    var match = !query || title.indexOf(query) !== -1;
+                    var title = (it.dataset.chartDisplayName || '').toLowerCase();
+                    var dir = (it.dataset.chartDir || '').toLowerCase();
+                    var full = (it.dataset.chartName || '').toLowerCase();
+                    var match = !query || title.indexOf(query) !== -1 || dir.indexOf(query) !== -1 || full.indexOf(query) !== -1;
                     it.style.display = match ? '' : 'none';
                     if (match) visibleCount++;
                 });
@@ -534,6 +551,10 @@
     /* ── Hover previews ────────────────────────────────────────── */
     var previewEl = document.getElementById('chart-preview');
     var previewBody = document.getElementById('chart-preview-body');
+    var previewTitle = document.getElementById('uc-preview-title');
+    var previewDir = document.getElementById('uc-preview-dir');
+    var previewPlaceBtn = document.getElementById('uc-preview-place-btn');
+    var previewCloseBtn = document.getElementById('uc-preview-close');
     var previewCache = {};
     var previewTimer = null;
     var activePreviewId = null;
@@ -546,16 +567,19 @@
     }
 
     function positionPreview(itemEl) {
+        if (!previewEl || !itemEl) return;
         var r = itemEl.getBoundingClientRect();
-        var w = previewEl.offsetWidth || 420;
-        var h = previewEl.offsetHeight || 260;
-        var left = r.left - w - 12;
-        var top = r.top;
-        if (left < 8 || left + w > window.innerWidth - 8) {
-            left = Math.max(8, r.left);
-            top = Math.min(r.bottom + 8, window.innerHeight - h - 8);
+        var w = previewEl.offsetWidth || 580;
+        var h = previewEl.offsetHeight || 420;
+        var left = r.left - w - 14;
+        var top = r.top - 60;
+        if (left < 16) {
+            left = Math.max(16, r.left - w - 8);
         }
-        if (top < 8) top = 8;
+        if (top + h > window.innerHeight - 16) {
+            top = Math.max(16, window.innerHeight - h - 16);
+        }
+        if (top < 16) top = 16;
         previewEl.style.left = left + 'px';
         previewEl.style.top = top + 'px';
     }
@@ -566,16 +590,54 @@
         if (activePreviewId === chartId && !previewEl.classList.contains('hidden')) return;
         activePreviewId = chartId;
         previewEl.classList.remove('hidden');
+
+        var dispName = itemEl.dataset.chartDisplayName || itemEl.dataset.chartName || 'Chart';
+        var dirName = itemEl.dataset.chartDir || '';
+        if (previewTitle) previewTitle.textContent = dispName;
+        if (previewDir) {
+            if (dirName) {
+                previewDir.textContent = dirName;
+                previewDir.classList.remove('hidden');
+            } else {
+                previewDir.classList.add('hidden');
+            }
+        }
+        if (previewPlaceBtn) {
+            previewPlaceBtn.onclick = function () {
+                hideChartPreview();
+                addChartById(chartId, itemEl.dataset.chartName || dispName);
+            };
+        }
+
         positionPreview(itemEl);
-        previewBody.innerHTML = '<div class="p-6 text-xs text-slate-400">Loading preview…</div>';
+        previewBody.innerHTML = '<div class="p-8 text-xs text-slate-400 text-center">Loading preview…</div>';
+
         loadChartHtml(chartId).then(function (html) {
             if (activePreviewId !== chartId) return;
             previewBody.innerHTML = html;
             positionPreview(itemEl);
-            if (window.initAllCharts) window.initAllCharts();
+
+            // Re-initialize ECharts on the preview container and trigger resize passes
+            var c = previewBody.querySelector('.chart-container');
+            if (c) {
+                c._echartsInited = false;
+                c._echartsObserved = false;
+                if (window.initChart) window.initChart(c);
+                else if (window.initAllCharts) window.initAllCharts();
+            }
+
+            function resizePreview() {
+                var c = previewBody.querySelector('.chart-container');
+                if (c && c._echartsInstance) c._echartsInstance.resize();
+            }
+            requestAnimationFrame(function () {
+                resizePreview();
+                setTimeout(resizePreview, 50);
+                setTimeout(resizePreview, 150);
+            });
         }).catch(function () {
             if (activePreviewId !== chartId) return;
-            previewBody.innerHTML = '<div class="p-4 text-xs text-red-500">Could not load preview.</div>';
+            previewBody.innerHTML = '<div class="p-6 text-xs text-red-500 text-center">Could not load preview.</div>';
         });
     }
 
@@ -584,7 +646,7 @@
         previewTimer = setTimeout(function () {
             if (previewEl) previewEl.classList.add('hidden');
             activePreviewId = null;
-        }, 200);
+        }, 220);
     }
 
     function wirePreview() {
@@ -598,6 +660,12 @@
         if (previewEl) {
             previewEl.addEventListener('mouseenter', function () { clearTimeout(previewTimer); });
             previewEl.addEventListener('mouseleave', hideChartPreview);
+        }
+        if (previewCloseBtn) {
+            previewCloseBtn.addEventListener('click', function () {
+                if (previewEl) previewEl.classList.add('hidden');
+                activePreviewId = null;
+            });
         }
     }
 

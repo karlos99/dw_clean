@@ -27,7 +27,10 @@ def get_all_ddl():
         CREATE_ANALYTICS_AP_RESULTS,
         CREATE_ANALYTICS_AP_AWARDS,
         CREATE_ANALYTICS_SAT_RESULTS,
+        CREATE_ANALYTICS_IB_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
+        CREATE_ANALYTICS_DBUILDER_AP_RESULTS,
+        CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
         CREATE_ANALYTICS_TEST_METADATA,
         CREATE_ANALYTICS_MARKS_METADATA,
         CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM,
@@ -37,6 +40,7 @@ def get_all_ddl():
         CREATE_ANALYTICS_CCGI_COLLEGE_FINANCIAL,
         CREATE_ANALYTICS_CCGI_COLLEGE_APPLICATION,
         CREATE_ANALYTICS_CCGI_APPLICATION_STATUS,
+        CREATE_ANALYTICS_STUDENT_INCIDENTS,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -48,7 +52,12 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ap_results',
     'analytics_ap_awards',
     'analytics_sat_results',
+    'analytics_ib_results',
     'analytics_survey_responses',
+    # Flat Dataset Builder tables. Separate from the analytics mirrors above
+    # so those schemas stay unchanged.
+    'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey',
     # Small DISTINCT column-discovery tables. These back the unfiltered
     # test/mark column tree without re-scanning the multi-million-row
     # results/student_marks_list fact tables on every page load.
@@ -69,6 +78,7 @@ ANALYTICS_TABLE_NAMES = (
     # In Progress / Not Applied. Includes on-track students with no application
     # so they are not invisible in the system funnel charts.
     'analytics_ccgi_application_status',
+    'analytics_student_incidents',
 )
 
 
@@ -331,7 +341,7 @@ CREATE TABLE IF NOT EXISTS student_incidents (
     stu_annual_key String,
     ssid String,
     student_id Nullable(Int64),
-    incidents_data Nullable(String),
+    incidents Nullable(String),
     updated_at Nullable(DateTime64)
 )
 ENGINE = MergeTree
@@ -500,6 +510,26 @@ ORDER BY (school_year, ssid, test_date)
 SETTINGS index_granularity = 8192
 """
 
+CREATE_ANALYTICS_IB_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_ib_results (
+    ssid String,
+    school_year String,
+    session_year String,
+    personal_code String,
+    candidate_name String,
+    category String,
+    subject String,
+    level String,
+    grade Nullable(String),
+    predicted_grade Nullable(String),
+    school_code String,
+    school_name String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, subject, level)
+SETTINGS index_granularity = 8192
+"""
+
 CREATE_ANALYTICS_SURVEY_RESPONSES = """
 CREATE TABLE IF NOT EXISTS analytics_survey_responses (
     student_id String,
@@ -513,6 +543,42 @@ CREATE TABLE IF NOT EXISTS analytics_survey_responses (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, student_id, survey_type, question_order)
+SETTINGS index_granularity = 8192
+"""
+
+# Dataset Builder read model for published AP exam rows.
+# Filters: school_year (always), exam_name, ssid join.
+# school_year is the low-cardinality prefix; exam_name is next; ssid is the
+# high-cardinality join key and stays last.
+CREATE_ANALYTICS_DBUILDER_AP_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_dbuilder_ap_results (
+    ssid String,
+    school_year LowCardinality(String),
+    exam_name LowCardinality(String),
+    exam_grade LowCardinality(String) DEFAULT ''
+)
+ENGINE = MergeTree
+ORDER BY (school_year, exam_name, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+# Dataset Builder read model for published Panorama responses, one row per
+# student answer. Filters: school_year, survey_window, school, then ssid.
+# survey_window stays a string (Fall/Winter/Spring) rather than Enum so an
+# unexpected window value still loads.
+CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY = """
+CREATE TABLE IF NOT EXISTS analytics_dbuilder_panorama_survey (
+    ssid String,
+    school LowCardinality(String),
+    category LowCardinality(String),
+    question LowCardinality(String),
+    response LowCardinality(String) DEFAULT '',
+    response_value Nullable(UInt8),
+    school_year LowCardinality(String),
+    survey_window LowCardinality(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, survey_window, school, ssid)
 SETTINGS index_granularity = 8192
 """
 
@@ -682,6 +748,36 @@ ORDER BY (school_year, system, application_status, ssid)
 SETTINGS index_granularity = 8192
 """
 
+CREATE_ANALYTICS_STUDENT_INCIDENTS = """
+CREATE TABLE IF NOT EXISTS analytics_student_incidents (
+    ssid String,
+    stu_annual_key String,
+    student_id Nullable(String),
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    severity String,
+    incident_id String,
+    incident_date Nullable(String),
+    violation Nullable(String),
+    ed_code Nullable(String),
+    review_status Nullable(String),
+    description Nullable(String),
+    suspension_days Float64,
+    is_suspended UInt8,
+    school_week Nullable(Int32),
+    week_start_date Nullable(String),
+    week_end_date Nullable(String),
+    week_label Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, severity, incident_id)
+SETTINGS index_granularity = 8192
+"""
+
 CREATE_ANALYTICS_SYNC_META = """
 CREATE TABLE IF NOT EXISTS analytics_sync_meta (
     table_name String,
@@ -742,5 +838,7 @@ COLUMN_MIGRATION_DDL = (
     "ADD COLUMN IF NOT EXISTS csu_gpa Nullable(Float64)",
     "ALTER TABLE analytics_ccgi_application_status "
     "ADD COLUMN IF NOT EXISTS uc_gpa Nullable(Float64)",
+    "ALTER TABLE analytics_dbuilder_panorama_survey "
+    "ADD COLUMN IF NOT EXISTS response_value Nullable(UInt8) AFTER response",
 )
 

@@ -86,18 +86,29 @@ def build_dataset_col_index(dataset) -> dict:
         _tbl, _col = ds_col.split('.', 1)
         if '->' in _col:
             key = _col.split('->', 1)[1].strip("'\"")
-            if key and key not in index:
-                index[key] = ds_col
+            if key:
+                if key not in index:
+                    index[key] = ds_col
+                if key.lower() not in index:
+                    index[key.lower()] = ds_col
         else:
             if _col not in index:
                 index[_col] = ds_col
+            if _col.lower() not in index:
+                index[_col.lower()] = ds_col
     # Inverse of column_mappings: exploration_alias → dataset full col
     col_mappings = getattr(dataset, 'column_mappings', None) or {}
     if not col_mappings:
         col_mappings = generate_column_aliases(dataset.columns or [], {})
     for ds_col, alias in col_mappings.items():
-        if alias and alias not in index:
-            index[alias] = ds_col
+        if alias:
+            if alias not in index:
+                index[alias] = ds_col
+            if alias.lower() not in index:
+                index[alias.lower()] = ds_col
+            norm = alias.replace(' ', '_').lower()
+            if norm not in index:
+                index[norm] = ds_col
     return index
 
 
@@ -205,15 +216,24 @@ TABLE_WHITELIST = {
     'results_with_tests': 'results_with_tests',
     'schedule_list': 'schedule_list',
     'student_marks_list': 'student_marks_list',
+    'student_attendance': 'student_attendance',
+    'student_incidents': 'student_incidents',
     'users_user': 'users_user',
     'relative_year': 'relative_year',
     'analytics_student_profile': 'analytics_student_profile',
     'analytics_student_results': 'analytics_student_results',
     'analytics_student_marks': 'analytics_student_marks',
+    'analytics_student_attendance': 'analytics_student_attendance',
+    'analytics_student_incidents': 'analytics_student_incidents',
     'analytics_ap_results': 'analytics_ap_results',
     'analytics_ap_awards': 'analytics_ap_awards',
     'analytics_sat_results': 'analytics_sat_results',
     'analytics_survey_responses': 'analytics_survey_responses',
+    'analytics_dbuilder_ap_results': 'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey': 'analytics_dbuilder_panorama_survey',
+    'analytics_ccgi_application_status': 'analytics_ccgi_application_status',
+    # Official assessment aggregates (full reload from officialData pipeline).
+    'official_data_db': 'official_data_db',
 }
 
 
@@ -350,6 +370,14 @@ def get_columns_for_table(table_name: str) -> set:
     return final_cols
 
 
+def is_allowed_dataset_column(table_name: str, column_name: str) -> bool:
+    """True when table is allowed and column exists (static or DB-discovered)."""
+    if table_name not in get_allowed_dataset_tables():
+        return False
+    base_col = (column_name or '').split('->', 1)[0]
+    return base_col in get_columns_for_table(table_name)
+
+
 def _persisted_dataset_base_tables(db_tables: dict) -> set[str]:
     """Base tables referenced by saved datasets (may be outside the builder allowlist)."""
     try:
@@ -472,6 +500,13 @@ COLUMN_WHITELIST = {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',
         'grade_range', 'question_order', 'value',
     },
+    'analytics_dbuilder_ap_results': {
+        'ssid', 'school_year', 'exam_name', 'exam_grade',
+    },
+    'analytics_dbuilder_panorama_survey': {
+        'ssid', 'school', 'category', 'question', 'response', 'response_value',
+        'school_year', 'survey_window',
+    },
     'analytics_ccgi_favorite_career': {
         'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
         'school_state_id', 'status', 'school_year', 'career',
@@ -504,6 +539,13 @@ COLUMN_WHITELIST = {
         'school_state_id', 'status', 'school_year',
         'system', 'application_status', 'eligibility',
         'csu_gpa', 'uc_gpa',
+    },
+    'analytics_student_incidents': {
+        'ssid', 'stu_annual_key', 'student_id', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'severity', 'incident_id', 'incident_date', 'violation', 'ed_code',
+        'review_status', 'description', 'suspension_days', 'is_suspended',
+        'school_week', 'week_start_date', 'week_end_date', 'week_label',
     },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',
@@ -591,6 +633,16 @@ def validate_column_identifier(col_str, active_tables, virtual_columns=None):
         raise SQLCompilationError(f"Column '{base_col}' is not in whitelist for table '{table_name}'.")
         
     return table_name, col_name
+
+
+def _safe_validate_column_identifier(col_str, active_tables, virtual_columns=None):
+    """Call validate_column_identifier, tolerating mocks/legacy callers that only accept 2 args when virtual_columns is None."""
+    if virtual_columns:
+        return validate_column_identifier(col_str, active_tables, virtual_columns=virtual_columns)
+    try:
+        return validate_column_identifier(col_str, active_tables)
+    except TypeError:
+        return validate_column_identifier(col_str, active_tables, virtual_columns=virtual_columns)
 
 
 def format_column_expr(tbl, col):
@@ -804,7 +856,7 @@ def compile_dataset_to_sql(
         if sak_col and sak_col not in columns_list:
             columns_list.append(sak_col)
         if sak_col:
-            sak_tbl, sak_name = validate_column_identifier(
+            sak_tbl, sak_name = _safe_validate_column_identifier(
                 sak_col, active_tables, virtual_columns=virtual_columns,
             )
             sak_expr = format_column_expr(sak_tbl, sak_name)
@@ -821,7 +873,7 @@ def compile_dataset_to_sql(
     select_clauses = []
     group_by_exprs = []
     for col_str in columns_list:
-        tbl, col = validate_column_identifier(
+        tbl, col = _safe_validate_column_identifier(
             col_str, active_tables, virtual_columns=virtual_columns,
         )
         expr = format_column_expr(tbl, col)
@@ -875,10 +927,10 @@ def compile_dataset_to_sql(
             cond_right = cond.get('on_right')
             if not cond_left or not cond_right:
                 raise SQLCompilationError(f"Missing columns in join condition for table '{join_table}'.")
-            l_tbl, l_col = validate_column_identifier(
+            l_tbl, l_col = _safe_validate_column_identifier(
                 cond_left, active_tables, virtual_columns=_vc,
             )
-            r_tbl, r_col = validate_column_identifier(
+            r_tbl, r_col = _safe_validate_column_identifier(
                 cond_right, active_tables, virtual_columns=_vc,
             )
             on_clauses.append(f'{format_column_expr(l_tbl, l_col)} = {format_column_expr(r_tbl, r_col)}')
@@ -904,7 +956,7 @@ def compile_dataset_to_sql(
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         
-        tbl, col = validate_column_identifier(
+        tbl, col = _safe_validate_column_identifier(
             col_str, active_tables, virtual_columns=_vc,
         )
 
@@ -1109,7 +1161,7 @@ def compile_dataset_to_sql(
         # value e.g. dfp, one doesn't) it must prefer the populated row, or the
         # chart/drill show a blank DFP for that student.
         for col_str in results_json_cols:
-            _tbl, _col = validate_column_identifier(
+            _tbl, _col = _safe_validate_column_identifier(
                 col_str, active_tables, virtual_columns=_vc,
             )
             _expr = format_column_expr(_tbl, _col)
@@ -1125,7 +1177,7 @@ def compile_dataset_to_sql(
                 direction = 'asc'
             if not col_str:
                 continue
-            tbl, col = validate_column_identifier(
+            tbl, col = _safe_validate_column_identifier(
                 col_str, active_tables, virtual_columns=_vc,
             )
             expr = format_column_expr(tbl, col)
@@ -1273,14 +1325,14 @@ def compile_aggregated_dataset_to_sql(
         for col_str in distinct_over_cols:
             if col_str in all_group_cols:
                 continue
-            tbl, col = validate_column_identifier(
+            tbl, col = _safe_validate_column_identifier(
                 col_str, active_tables, virtual_columns=_vc,
             )
             distinct_exprs.append((format_column_expr(tbl, col), col_str.replace('.', '_')))
 
     group_items = []
     for col_str in all_group_cols:
-        tbl, col = validate_column_identifier(
+        tbl, col = _safe_validate_column_identifier(
             col_str, active_tables, virtual_columns=_vc,
         )
         expr = format_column_expr(tbl, col)
@@ -1300,7 +1352,7 @@ def compile_aggregated_dataset_to_sql(
     if not (aggregation == 'count' and not y_col):
         if not y_col:
             raise SQLCompilationError(f"Aggregation '{aggregation}' requires a value column")
-        y_tbl, y_col_name = validate_column_identifier(
+        y_tbl, y_col_name = _safe_validate_column_identifier(
             y_col, active_tables, virtual_columns=_vc,
         )
         y_expr = format_column_expr(y_tbl, y_col_name)
@@ -1321,7 +1373,7 @@ def compile_aggregated_dataset_to_sql(
         m_expr = None
         m_alias = ''
         if m_col:
-            m_tbl, m_col_name = validate_column_identifier(
+            m_tbl, m_col_name = _safe_validate_column_identifier(
                 m_col, active_tables, virtual_columns=_vc,
             )
             m_expr = format_column_expr(m_tbl, m_col_name)
@@ -1363,10 +1415,10 @@ def compile_aggregated_dataset_to_sql(
         for cond in conditions:
             cond_left = cond.get('on_left')
             cond_right = cond.get('on_right')
-            l_tbl, l_col = validate_column_identifier(
+            l_tbl, l_col = _safe_validate_column_identifier(
                 cond_left, active_tables, virtual_columns=_vc,
             )
-            r_tbl, r_col = validate_column_identifier(
+            r_tbl, r_col = _safe_validate_column_identifier(
                 cond_right, active_tables, virtual_columns=_vc,
             )
             on_clauses.append(f'{format_column_expr(l_tbl, l_col)} = {format_column_expr(r_tbl, r_col)}')
@@ -1387,7 +1439,7 @@ def compile_aggregated_dataset_to_sql(
         col_str = f.get('column')
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
-        tbl, col = validate_column_identifier(
+        tbl, col = _safe_validate_column_identifier(
             col_str, active_tables, virtual_columns=_vc,
         )
         from dataexploration.view_modules.column_management import json_list_key_for_column
@@ -1642,19 +1694,24 @@ def compile_aggregated_dataset_to_sql(
     return sql, params
 
 
-def execute_compiled_query(sql, params):
+def execute_compiled_query(sql, params, *, active_tables=None):
     """
     Executes a compiled SQL query, routing through ClickHouse when available.
     Returns {'columns': [...], 'rows': [...], 'row_count': N, 'error': None}
     """
-    from clickhouse_utils.executor import QueryExecutor
+    from clickhouse_utils.executor import (
+        CLICKHOUSE_SYNCED_TABLES, QueryExecutor, _sql_requires_postgres,
+    )
 
-    executor = QueryExecutor(analytics=True)
+    force_pg = _sql_requires_postgres(sql)
+    if not force_pg and active_tables:
+        force_pg = not set(active_tables).issubset(CLICKHOUSE_SYNCED_TABLES)
+    executor = QueryExecutor(analytics=True, force_postgres=force_pg)
     result = executor.execute(sql, params)
     return result
 
 
-def execute_compiled_query_aliased(sql, params, column_mappings):
+def execute_compiled_query_aliased(sql, params, column_mappings, *, active_tables=None):
     """
     Same as execute_compiled_query(), but builds rows with column_mappings
     applied directly — skipping the intermediate "table.column"-keyed dict
@@ -1664,9 +1721,14 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
     (drill-through, dataset preview) need the raw "table.column" keys and
     must keep using execute_compiled_query() + apply_column_aliases().
     """
-    from clickhouse_utils.executor import QueryExecutor
+    from clickhouse_utils.executor import (
+        CLICKHOUSE_SYNCED_TABLES, QueryExecutor, _sql_requires_postgres,
+    )
 
-    executor = QueryExecutor(analytics=True)
+    force_pg = _sql_requires_postgres(sql)
+    if not force_pg and active_tables:
+        force_pg = not set(active_tables).issubset(CLICKHOUSE_SYNCED_TABLES)
+    executor = QueryExecutor(analytics=True, force_postgres=force_pg)
     result = executor.execute(sql, params)
 
     if result['error']:

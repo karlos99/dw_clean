@@ -534,13 +534,21 @@ def load_students(request):
                 win_norm = _np(test_window).strip('_')
                 key_base = f"{_np(yr)}_{_np(test_name)}_{_np(subject)}_{win_norm}" if win_norm else f"{_np(yr)}_{_np(test_name)}_{_np(subject)}"
                 win_value = (test_window or '').strip() or None
-                for norm_key, metric in ((f"test_{key_base}_SS", 'ss'), (f"test_{key_base}_PL", 'pl'), (f"test_{key_base}_DFP", 'dfp')):
+                for norm_key, metric in (
+                    (f"test_{key_base}_SS", 'ss'),
+                    (f"test_{key_base}_PL", 'pl'),
+                    (f"test_{key_base}_ELPI_LEVEL", 'elpi_level'),
+                    (f"test_{key_base}_ELPI", 'elpi_level'),
+                    (f"test_{key_base}_DFP", 'dfp'),
+                ):
                     ok = normalized_to_original.get(norm_key)
                     if not ok:
                         continue
                     info = {'col_name': ok, 'year': yr, 'test_name': test_name or '', 'subject': subject or '', 'test_window': win_value, 'metric': metric}
                     if metric == 'dfp':
                         info['other_info_key'] = 'dfp'
+                    elif metric == 'elpi_level':
+                        info['other_info_key'] = 'ELPI_level'
                     infos.append(info)
                     col_map[ok] = info
                     col_map[ok.replace('-', '_')] = info
@@ -687,7 +695,7 @@ def load_students(request):
         test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
         mark_cols_info, mark_col_map = _build_mark_columns_from_db(selected_mark_cols)
 
-        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
         needs_enroll = any(c in enroll_fields for c in selected_columns) or (isinstance(filters, dict) and any(k in enroll_fields for k in filters)) or sort_by in enroll_fields
         needs_students = any(c in {'ltel'} for c in selected_columns) or (isinstance(filters, dict) and 'ltel' in filters) or sort_by == 'ltel'
         needs_eht = (isinstance(filters, dict) and 'elem_teacher_name' in filters) or sort_by == 'elem_teacher_name'
@@ -1015,7 +1023,7 @@ def load_students(request):
 
             # Test PL / OI filter options — scoped to students in the current filtered list
             for ti in test_cols_info:
-                if ti['metric'] not in {'pl', 'oi'}:
+                if ti['metric'] not in {'pl', 'oi', 'dfp', 'elpi_level'}:
                     continue
                 col_key = ti['col_name']
                 other_f = _get_other_f(col_key)

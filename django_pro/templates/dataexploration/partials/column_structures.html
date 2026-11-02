@@ -74,6 +74,14 @@
                                         <span class="text-xs text-slate-600">PL</span>
                                     </label>
                                     {% endif %}
+                                    {% if metrics.ELPI_level or metrics.ELPI %}
+                                    <label
+                                        class="flex items-center p-0.5 hover:bg-slate-50 rounded cursor-pointer gap-2 transition-colors">
+                                        <input type="checkbox" data-column="{{ metrics.ELPI_level|default:metrics.ELPI }}"
+                                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
+                                        <span class="text-xs text-slate-600">ELPI Level</span>
+                                    </label>
+                                    {% endif %}
                                     {% if metrics.DFP %}
                                     <label
                                         class="flex items-center p-0.5 hover:bg-slate-50 rounded cursor-pointer gap-2 transition-colors">
@@ -209,6 +217,39 @@
                                 </label>
                                 {% endfor %}
                             </div>
+
+                            {% comment %}Marking-period picker for "All Marks". Checked periods are
+                               stored on the umbrella key as 'period:<name>' values; no values
+                               means every period (backwards compatible).{% endcomment %}
+                            <div data-markall-period-box class="mt-1 pt-1 border-t border-emerald-100">
+                                <div class="flex items-center justify-between gap-2 px-1 flex-wrap">
+                                    <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Marking Periods</span>
+                                    <span class="flex items-center gap-2">
+                                        <button type="button" data-markall-select-all-periods
+                                            class="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline underline-offset-2">All periods</button>
+                                        <span data-markall-period-hint class="text-[10px] text-slate-400"></span>
+                                    </span>
+                                </div>
+                                <div class="ml-1 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 pl-2 border-l border-emerald-100">
+                                    {% if marks_periods %}
+                                    {% with year_periods=marks_periods|get_item:year %}
+                                    {% with subject_periods=year_periods|get_item:subject %}
+                                    {% for period in subject_periods %}
+                                    <label class="flex items-center gap-1 p-0.5 hover:bg-emerald-50 rounded cursor-pointer transition-colors"
+                                           title="{{ period }}">
+                                        <input type="checkbox" data-markall-period="1"
+                                            data-markall-period-name="{{ period }}"
+                                            data-markall-year="{{ year }}" data-markall-subject="{{ subject }}"
+                                            class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-3.5 w-3.5 flex-shrink-0"
+                                            checked>
+                                        <span class="text-xs text-slate-700">{{ period }}</span>
+                                    </label>
+                                    {% endfor %}
+                                    {% endwith %}
+                                    {% endwith %}
+                                    {% endif %}
+                                </div>
+                            </div>
                         </div>
                         {% for course, periods in courses.items %}
                         <div class="pl-2 border-l border-slate-200">
@@ -236,8 +277,8 @@
         {% endfor %}
     </div>
 </div>
-{% if ap_structure %}
-<!-- College Assessments Tree Category (AP) -->
+{% if ap_structure or sat_structure or ib_structure %}
+<!-- College Assessments Tree Category (AP, SAT, IB) -->
 <div class="border-b border-slate-100 pb-2 mt-3">
     <button data-toggle-category="college"
         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded transition-colors border-l-2 border-indigo-500">
@@ -438,6 +479,68 @@
                             </div>
                         </div>
                         {% endif %}
+                    </div>
+                </div>
+                {% endwith %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# IB group — International Baccalaureate data loaded by Data Loader #}
+        {% if ib_structure %}
+        <div class="border-b border-slate-100 pb-1">
+            <button data-toggle-category="ib_group"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                <span class="text-xs font-semibold text-slate-700">IB</span>
+                <span data-caret="closed" class="text-slate-400">▶</span>
+                <span data-caret="open" class="hidden text-slate-400">▼</span>
+            </button>
+
+            <div data-category="ib_group" class="ml-3 mt-1 space-y-1 pl-3 border-l-2 border-amber-100 hidden">
+                {% for year, bucket in ib_structure.items %}
+                {% with alias=year_to_alias|get_item:year|default:'' %}
+                <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
+                    <button data-toggle-category="ib_{{ year|slugify }}"
+                        class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                        <span class="text-sm font-medium text-slate-700"
+                              data-year-header-label="{{ year }}"
+                              data-specific-label="{{ year }}"
+                              data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                            {{ year_labels|get_item:year|default:year }}
+                        </span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+
+                    <div data-category="ib_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {% for subj_key, metrics in bucket.subjects.items %}
+                        <div class="pl-2 border-l border-slate-200">
+                            <button data-toggle-category="ib_{{ year|slugify }}_{{ subj_key|slugify }}"
+                                class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                                <span class="text-xs font-semibold text-slate-700">{{ subj_key }}</span>
+                                <span data-caret="closed" class="text-slate-400">▶</span>
+                                <span data-caret="open" class="hidden text-slate-400">▼</span>
+                            </button>
+                            <div data-category="ib_{{ year|slugify }}_{{ subj_key|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                                    <input type="checkbox" data-column="{{ metrics.PL }}"
+                                        class="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-4 w-4">
+                                    <span class="text-sm text-slate-700">Grade (PL)</span>
+                                </label>
+                                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                                    <input type="checkbox" data-column="{{ metrics.CAT }}"
+                                        class="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-4 w-4">
+                                    <span class="text-sm text-slate-700">Category</span>
+                                </label>
+                                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                                    <input type="checkbox" data-column="{{ metrics.LVL }}"
+                                        class="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-4 w-4">
+                                    <span class="text-sm text-slate-700">Level</span>
+                                </label>
+                            </div>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
                 {% endwith %}

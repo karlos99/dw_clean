@@ -231,3 +231,166 @@ class DraftMenuPreviewTests(TestCase):
         self.assertTrue(user_can_preview_draft_site_page(self.viewer, self.child))
 
 
+class UserSchoolsAndRoleManagementTests(TestCase):
+    def setUp(self):
+        User._school_cache = {}
+        self.sch1 = StudataSchool.objects.create(dw_schoolkey=201, state_id='SCH_A', school_name='Alpha Academy')
+        self.sch2 = StudataSchool.objects.create(dw_schoolkey=202, state_id='SCH_B', school_name='Beta High')
+        self.sch3 = StudataSchool.objects.create(dw_schoolkey=203, state_id='SCH_C', school_name='Gamma Middle')
+
+        self.role_admin, _ = Role.objects.get_or_create(name='Project Admin')
+        self.role_teacher, _ = Role.objects.get_or_create(name='Teacher')
+        self.role_spec, _ = Role.objects.get_or_create(name='Testing Coordinator')
+
+        self.admin_user = User.objects.create_superuser(
+            username='admin_test',
+            email='admin_test@example.com',
+            password='pass',
+            schools=['SCH_A']
+        )
+        self.admin_user.roles.add(self.role_admin)
+
+        self.staff_user = User.objects.create_user(
+            username='staff_test',
+            email='staff_test@example.com',
+            name='Alice Staff',
+            staff_id='STF_123',
+            schools=['SCH_A', 'SCH_B', 'SCH_C']
+        )
+
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def test_assigned_schools_list_multiple(self):
+        schools_list = self.staff_user.assigned_schools_list
+        self.assertEqual(len(schools_list), 3)
+        names = [s['school_name'] for s in schools_list]
+        self.assertIn('Alpha Academy', names)
+        self.assertIn('Beta High', names)
+        self.assertIn('Gamma Middle', names)
+
+    def test_assigned_schools_list_empty(self):
+        u_empty = User.objects.create_user(username='empty_u', email='empty@example.com', schools=[])
+        self.assertEqual(u_empty.assigned_schools_list, [])
+
+    def test_manage_users_roles_tab(self):
+        resp = self.client.get('/users/manage/?tab=roles')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('role_cards', resp.context)
+        card_names = [c['name'] for c in resp.context['role_cards']]
+        self.assertIn('Project Admin', card_names)
+        self.assertIn('Teacher', card_names)
+
+    def test_search_users_for_role(self):
+        resp = self.client.get('/users/manage/users-search/?q=Alice')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('users', data)
+        self.assertEqual(len(data['users']), 1)
+        self.assertEqual(data['users'][0]['email'], 'staff_test@example.com')
+        self.assertEqual(data['users'][0]['staff_id'], 'STF_123')
+
+    def test_add_and_remove_users_from_role(self):
+        # Add staff_user to Teacher role
+        add_url = f'/users/manage/roles/{self.role_teacher.id}/add-users/'
+        resp = self.client.post(
+            add_url,
+            data={'user_ids': [self.staff_user.id]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertTrue(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
+
+        # Remove staff_user from Teacher role
+        remove_url = f'/users/manage/roles/{self.role_teacher.id}/remove-user/{self.staff_user.id}/'
+        resp_rem = self.client.post(remove_url)
+        self.assertEqual(resp_rem.status_code, 200)
+        self.assertTrue(resp_rem.json()['success'])
+        self.assertFalse(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
+
+
+class NavbarConfigSplitPanelTests(TestCase):
+    def setUp(self):
+        from users.models_pages import Page
+        self.admin_user = User.objects.create_superuser(
+            username='admin_pages',
+            email='admin_pages@example.com',
+            password='password123'
+        )
+        self.top_page = Page.objects.create(
+            name='Assessments',
+            slug='assessments',
+            url_path='/assessments/',
+            show_in_menu=True,
+            status='active'
+        )
+        self.child_page = Page.objects.create(
+            name='State Testing',
+            slug='state-testing',
+            url_path='/assessments/state-testing/',
+            parent_page=self.top_page,
+            show_in_menu=True,
+            status='active'
+        )
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def test_navbar_config_split_panel_and_opacity_defaults(self):
+        from users.models_pages import NavbarConfig
+        cfg = NavbarConfig.get()
+        self.assertEqual(cfg.submenu_opacity, 100)
+        self.assertEqual(cfg.submenu_opacity_decimal, 1.0)
+
+        cfg.submenu_style = 'split_panel'
+        cfg.submenu_opacity = 85
+        cfg.save()
+
+        reloaded = NavbarConfig.get()
+        self.assertEqual(reloaded.submenu_style, 'split_panel')
+        self.assertEqual(reloaded.submenu_opacity, 85)
+        self.assertEqual(reloaded.submenu_opacity_decimal, 0.85)
+
+    def test_navbar_settings_post_saves_split_panel_and_opacity(self):
+        from users.models_pages import NavbarConfig
+        resp = self.client.post(
+            '/users/pages/navbar-settings/',
+            data={
+                'navbar_style': 'classic',
+                'label_case': 'uppercase',
+                'submenu_style': 'split_panel',
+                'submenu_opacity': '90',
+                'sticky': 'on'
+            }
+        )
+        self.assertEqual(resp.status_code, 302)
+        cfg = NavbarConfig.get()
+        self.assertEqual(cfg.submenu_style, 'split_panel')
+        self.assertEqual(cfg.submenu_opacity, 90)
+        self.assertTrue(cfg.sticky)
+
+    def test_manage_pages_navbar_tab_renders_split_panel_preview(self):
+        resp = self.client.get('/users/pages/?tab=navbar')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode('utf-8')
+        self.assertIn('Split panel (half-page panel with left categories + right items list)', content)
+        self.assertIn('Submenu Background Opacity', content)
+        self.assertIn('id="submenu_opacity_range"', content)
+        self.assertNotIn('Submenu Explorer', content)
+
+    def test_page_has_accessible_subpages_property(self):
+        from users.models_pages import Page
+        # top_page has child_page, but child_page has no children -> has_accessible_subpages is False
+        self.top_page.accessible_children = [self.child_page]
+        self.child_page.accessible_children = []
+        self.assertFalse(self.top_page.has_accessible_subpages)
+
+        # when grandchild is added to child_page -> has_accessible_subpages is True
+        grandchild = Page(name='Grandchild', slug='grandchild', url_path='/gc/')
+        self.child_page.accessible_children = [grandchild]
+        self.assertTrue(self.top_page.has_accessible_subpages)
+
+
+
+
+
+

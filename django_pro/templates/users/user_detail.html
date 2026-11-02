@@ -1,295 +1,396 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Edit User - {{ user_obj.email }} - DS Data{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    <div class="mb-6">
-        <a href="{% url 'users:manage_users' %}" class="text-blue-600 hover:text-blue-900 text-sm font-medium">
-            ← Back to User Management
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+     x-data="{
+         activeTab: 'roles',
+         schoolSearch: '',
+         rolesSelected: [{% for role in user_obj.roles.all %}{{ role.id }}{% if not forloop.last %},{% endif %}{% endfor %}],
+         toggleRole(rId) {
+             if (this.rolesSelected.includes(rId)) {
+                 this.rolesSelected = this.rolesSelected.filter(id => id !== rId);
+             } else {
+                 this.rolesSelected.push(rId);
+             }
+         },
+         isRoleSelected(rId) {
+             return this.rolesSelected.includes(rId);
+         },
+         selectAllSchools() {
+             document.querySelectorAll('input[name=schools]').forEach(el => el.checked = true);
+             this.updateSchoolCount();
+         },
+         clearAllSchools() {
+             document.querySelectorAll('input[name=schools]').forEach(el => el.checked = false);
+             this.updateSchoolCount();
+         },
+         selectedSchoolCount: {{ user_obj.schools|length }},
+         updateSchoolCount() {
+             this.selectedSchoolCount = document.querySelectorAll('input[name=schools]:checked').length;
+         },
+         selectGrades(type) {
+             const elemGrades = ['PK', 'PS', 'TK', 'KN', '01', '02', '03', '04', '05'];
+             const midGrades = ['06', '07', '08'];
+             const highGrades = ['09', '10', '11', '12'];
+             document.querySelectorAll('input[name=grade_levels]').forEach(el => {
+                 if (type === 'all') el.checked = true;
+                 else if (type === 'none') el.checked = false;
+                 else if (type === 'elem' && elemGrades.includes(el.value)) el.checked = true;
+                 else if (type === 'mid' && midGrades.includes(el.value)) el.checked = true;
+                 else if (type === 'high' && highGrades.includes(el.value)) el.checked = true;
+             });
+         }
+     }">
+
+    <div class="mb-5 flex items-center justify-between">
+        <a href="{% url 'users:manage_users' %}" class="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+            <span>Back to User Management</span>
         </a>
+        <span class="text-xs text-slate-400">User ID #{{ user_obj.id }}</span>
     </div>
 
-    <div class="bg-white shadow-sm ring-1 ring-slate-200 rounded-xl overflow-hidden">
-        <!-- Header -->
-        <div class="px-6 py-5 border-b border-slate-200">
-            <div class="flex items-center">
+    <div class="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden">
+        <!-- ═══ Profile Header Banner ═══ -->
+        <div class="px-8 py-6 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-4">
                 {% if user_obj.avatar %}
-                <img class="h-16 w-16 rounded-full mr-4" src="{{ user_obj.avatar }}" alt="" referrerpolicy="no-referrer">
+                <img class="h-16 w-16 rounded-2xl object-cover ring-2 ring-indigo-400/50 shrink-0" src="{{ user_obj.avatar }}" alt="" referrerpolicy="no-referrer">
                 {% else %}
-                <div class="h-16 w-16 rounded-full bg-slate-200 flex items-center justify-center mr-4">
-                    <span class="text-slate-500 font-medium text-xl">{{ user_obj.name|first|default:"U" }}</span>
+                <div class="h-16 w-16 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-bold text-2xl shadow-sm shrink-0">
+                    {{ user_obj.name|first|default:user_obj.email|first|upper }}
                 </div>
                 {% endif %}
                 <div>
-                    <h1 class="text-2xl font-semibold text-slate-900">{{ user_obj.email }}</h1>
-                    <p class="text-sm text-slate-500">User ID: {{ user_obj.id }}</p>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <h1 class="text-2xl font-bold tracking-tight text-white">{{ user_obj.name|default:user_obj.email }}</h1>
+                        {% if user_obj.is_active %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Active
+                        </span>
+                        {% else %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                            <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Inactive
+                        </span>
+                        {% endif %}
+                    </div>
+                    <div class="text-xs text-slate-300 flex items-center gap-2.5 mt-1.5">
+                        <span>{{ user_obj.email }}</span>
+                        {% if user_obj.staff_id %}
+                        <span class="text-[10px] font-mono bg-slate-800 text-indigo-300 px-2 py-0.5 rounded border border-slate-700">Staff #{{ user_obj.staff_id }}</span>
+                        {% endif %}
+                    </div>
                 </div>
+            </div>
+
+            <!-- Tab Switcher Navigation -->
+            <div class="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 self-start sm:self-auto">
+                <button type="button" @click="activeTab = 'roles'"
+                        :class="activeTab === 'roles' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'text-slate-300 hover:text-white'"
+                        class="px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                    <span>Roles</span>
+                    <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-900/60" x-text="rolesSelected.length"></span>
+                </button>
+
+                <button type="button" @click="activeTab = 'schools'"
+                        :class="activeTab === 'schools' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'text-slate-300 hover:text-white'"
+                        class="px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+                    <span>Schools</span>
+                    <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-900/60" x-text="selectedSchoolCount"></span>
+                </button>
+
+                <button type="button" @click="activeTab = 'grades'"
+                        :class="activeTab === 'grades' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'text-slate-300 hover:text-white'"
+                        class="px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                    <span>Grades & Delegations</span>
+                </button>
+
+                <button type="button" @click="activeTab = 'profile'"
+                        :class="activeTab === 'profile' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'text-slate-300 hover:text-white'"
+                        class="px-3.5 py-2 rounded-lg text-xs transition flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                    <span>Profile</span>
+                </button>
             </div>
         </div>
 
-        <!-- Edit Form -->
-        <form method="post" class="px-6 py-6">
+        <!-- ═══ Edit Form ═══ -->
+        <form method="post" class="p-8">
             {% csrf_token %}
 
             <!-- Messages -->
             {% if messages %}
             <div class="mb-6">
                 {% for message in messages %}
-                <div
-                    class="rounded-md {% if message.tags == 'success' %}bg-green-50 border border-green-200 text-green-800{% elif message.tags == 'error' %}bg-red-50 border border-red-200 text-red-800{% else %}bg-blue-50 border border-blue-200 text-blue-800{% endif %} px-4 py-3 text-sm">
-                    {{ message }}
+                <div class="rounded-xl {% if message.tags == 'success' %}bg-emerald-50 border border-emerald-200 text-emerald-800{% elif message.tags == 'error' %}bg-rose-50 border border-rose-200 text-rose-800{% else %}bg-indigo-50 border border-indigo-200 text-indigo-800{% endif %} px-4 py-3 text-xs font-medium flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    <span>{{ message }}</span>
                 </div>
                 {% endfor %}
             </div>
             {% endif %}
 
-            <div class="space-y-6">
-                <!-- Name -->
-                <div>
-                    <label for="name" class="block text-sm font-medium text-slate-700 mb-2">Full Name</label>
-                    {% if is_school_admin_only %}
-                    <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">{{ user_obj.name|default:"—" }}</p>
-                    {% else %}
-                    <input type="text" name="name" id="name" value="{{ user_obj.name }}"
-                        class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
-                    {% endif %}
-                </div>
-
-                <!-- Email (read-only) -->
-                <div>
-                    <label for="email" class="block text-sm font-medium text-slate-700 mb-2">Email</label>
-                    <input type="email" name="email" id="email" value="{{ user_obj.email }}" disabled
-                        class="block w-full rounded-md border-slate-300 bg-slate-50 text-slate-500 shadow-sm sm:text-sm px-4 py-2 border cursor-not-allowed">
-                    <p class="mt-1 text-xs text-slate-500">Email cannot be changed</p>
-                </div>
-
-                <!-- Job Title -->
-                <div>
-                    <label for="job_title" class="block text-sm font-medium text-slate-700 mb-2">Job Title</label>
-                    {% if is_school_admin_only %}
-                    <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">{{ user_obj.job_title|default:"—" }}</p>
-                    {% else %}
-                    <input type="text" name="job_title" id="job_title" value="{{ user_obj.job_title }}"
-                        class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
-                    {% endif %}
-                </div>
-
-                {% if not is_school_admin_only %}
-                <!-- Staff ID -->
-                <div>
-                    <label for="staff_id" class="block text-sm font-medium text-slate-700 mb-2">Staff ID</label>
-                    <input type="text" name="staff_id" id="staff_id" value="{{ user_obj.staff_id }}"
-                        class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
-                </div>
-                {% endif %}
-
-                <!-- Roles -->
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-2">Roles</label>
-                    <div class="space-y-2 mt-2 max-h-40 overflow-y-auto border border-slate-300 rounded p-2">
-                        {% for role in roles %}
-                        <div class="flex items-center">
-                            <input type="checkbox" name="roles" value="{{ role.id }}" id="role_{{ role.id }}"
-                            {% if role in user_obj.roles.all %}checked{% endif %}
-                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                            <label for="role_{{ role.id }}" class="ml-2 text-sm text-slate-700">
-                                {{ role.name }}
-                            </label>
-                        </div>
-                        {% endfor %}
+            <!-- ═══ TAB 1: Roles ═══ -->
+            <div x-show="activeTab === 'roles'" class="space-y-5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Assigned Platform Roles</h3>
+                        <p class="text-xs text-slate-500">Click any role card to toggle access. Multiple roles can be assigned simultaneously.</p>
+                    </div>
+                    <div class="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-lg">
+                        <span x-text="rolesSelected.length"></span> active roles
                     </div>
                 </div>
 
-                <!-- Schools -->
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-2">School Access</label>
-                    <div class="border border-slate-300 rounded-md p-4 max-h-60 overflow-y-auto">
-                        {% for school in schools %}
-                        <div class="flex items-center mb-2">
-                            <input type="checkbox" name="schools" value="{{ school.state_id }}" id="school_{{ school.dw_schoolkey }}" 
-                            {% if school.state_id in user_obj.schools %}checked{% endif %}
-                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                            <label for="school_{{ school.dw_schoolkey }}" class="ml-2 text-sm text-slate-700">
-                                {{ school.school_name }}
-                            </label>
-                        </div>
-                        {% empty %}
-                        <p class="text-sm text-slate-500">No schools available</p>
-                        {% endfor %}
-                    </div>
-                    <p class="mt-1 text-xs text-slate-500">Select all schools this user can access</p>
-                </div>
-
-                <!-- Grade Levels -->
-                <div x-data="{ 
-                        showGrades: false,
-                        gradeRoles: ['School Gr View', 'Teacher', 'School View'],
-                        updateGradeVisibility() {
-                            const checkedRoles = Array.from(document.querySelectorAll('input[name=roles]:checked'))
-                                .map(cb => cb.closest('div').querySelector('label').textContent.trim());
-                            this.showGrades = checkedRoles.some(role => this.gradeRoles.includes(role));
-                        }
-                     }" 
-                     x-init="updateGradeVisibility()"
-                     @change.window="updateGradeVisibility()">
-                    <div x-show="showGrades" x-transition style="display: none;">
-                        <label class="block text-sm font-medium text-slate-700 mb-2">Grade Level Access</label>
-                        <div class="border border-slate-300 rounded-md p-4 max-h-60 overflow-y-auto">
-                            <div class="grid grid-cols-3 gap-3">
-                                {% for grade in available_grades %}
-                                <div class="flex items-center">
-                                    <input type="checkbox" name="grade_levels" value="{{ grade.0 }}" id="grade_{{ grade.0 }}" 
-                                    {% if grade.0 in user_obj.grade_levels %}checked{% endif %}
-                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                                    <label for="grade_{{ grade.0 }}" class="ml-2 text-sm text-slate-700">
-                                        {{ grade.1 }}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% for role in roles %}
+                    <div @click="toggleRole({{ role.id }})"
+                         :class="isRoleSelected({{ role.id }}) ? 'bg-indigo-50/70 border-indigo-500 shadow-xs ring-1 ring-indigo-400' : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'"
+                         class="border rounded-2xl p-4 transition-all cursor-pointer flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-start justify-between gap-2 mb-2">
+                                <div class="flex items-center gap-2.5">
+                                    <input type="checkbox" name="roles" value="{{ role.id }}" id="page_role_{{ role.id }}"
+                                           :checked="isRoleSelected({{ role.id }})"
+                                           @click.stop="toggleRole({{ role.id }})"
+                                           class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                                    <label for="page_role_{{ role.id }}" class="text-sm font-bold text-slate-900 cursor-pointer">
+                                        {{ role.name }}
                                     </label>
                                 </div>
-                                {% empty %}
-                                <p class="text-sm text-slate-500 col-span-3">No grades available</p>
-                                {% endfor %}
+                                <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full
+                                    {% if role.name == 'Project Admin' %}bg-purple-100 text-purple-800
+                                    {% elif role.name == 'District Admin' %}bg-indigo-100 text-indigo-800
+                                    {% elif role.name == 'District View' %}bg-blue-100 text-blue-800
+                                    {% elif role.name == 'School Admin' %}bg-emerald-100 text-emerald-800
+                                    {% elif role.name == 'School Gr View' %}bg-teal-100 text-teal-800
+                                    {% elif role.name == 'School View' %}bg-cyan-100 text-cyan-800
+                                    {% elif role.name == 'Teacher' %}bg-amber-100 text-amber-800
+                                    {% elif role.name == 'Testing Coordinator' %}bg-rose-100 text-rose-800
+                                    {% else %}bg-orange-100 text-orange-800{% endif %}">
+                                    {% if 'Admin' in role.name %}Admin{% elif 'Teacher' in role.name %}Roster{% elif 'View' in role.name %}Viewer{% else %}Specialist{% endif %}
+                                </span>
                             </div>
+                            <p class="text-xs text-slate-600 pl-7 leading-relaxed">
+                                {{ role.description|default:"Grants standard role-based access across assigned modules and records." }}
+                            </p>
                         </div>
-                        <p class="mt-1 text-xs text-slate-500">Select grade levels this user can access</p>
+
+                        <div class="mt-3 pl-7 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                            <span class="text-slate-400">
+                                {% if role.name == 'Teacher' %}Scheduled Students Only
+                                {% elif 'District' in role.name or role.name == 'Project Admin' %}District-Wide Scope
+                                {% else %}Assigned Schools Scope{% endif %}
+                            </span>
+                            <span x-show="isRoleSelected({{ role.id }})" class="font-bold text-indigo-700">✓ Granted</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- ═══ TAB 2: Schools ═══ -->
+            <div x-show="activeTab === 'schools'" style="display: none;" class="space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Assigned School Campuses</h3>
+                        <p class="text-xs text-slate-500">Select which schools this user is authorized to view or manage.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" @click="selectAllSchools()"
+                                class="px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition">
+                            Select All
+                        </button>
+                        <button type="button" @click="clearAllSchools()"
+                                class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition">
+                            Clear All
+                        </button>
                     </div>
                 </div>
 
-                <!-- Placement & Export Permissions (shown for School Gr View only) -->
-                <div x-data="{ 
-                        showPerms: false,
-                        updatePermVisibility() {
-                            const checkedRoles = Array.from(document.querySelectorAll('input[name=roles]:checked'))
-                                .map(cb => cb.closest('div').querySelector('label').textContent.trim());
-                            this.showPerms = checkedRoles.includes('School Gr View');
-                        }
-                     }" 
-                     x-init="updatePermVisibility()"
-                     @change.window="updatePermVisibility()">
-                    <div x-show="showPerms" x-transition style="display: none;">
-                        <label class="block text-sm font-medium text-slate-700 mb-2">Placement Cards Access (School Gr View)</label>
-                        <p class="text-xs text-slate-500 mb-3">Use these toggles to delegate what this user can do inside Placement Cards.</p>
-                        <div class="border border-slate-300 rounded-md p-4 space-y-4">
-                            <div>
-                                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Student Placement</p>
-                                <div class="flex items-start">
-                                    <input type="checkbox" name="can_move_placement_cards" id="can_move_placement_cards"
-                                        {% if user_obj.preferences.can_move_placement_cards %}checked{% endif %}
-                                        class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                                    <div class="ml-2">
-                                        <label for="can_move_placement_cards" class="text-sm text-slate-700 font-medium">Move Students Between Classrooms</label>
-                                        <p class="text-xs text-slate-500">Can place and unplace students, limited to delegated schools/grades/student scope.</p>
-                                    </div>
-                                </div>
-                            </div>
+                <!-- Live Search Bar -->
+                <div class="relative">
+                    <input type="text"
+                           x-model="schoolSearch"
+                           placeholder="Filter schools list by name…"
+                           class="w-full text-xs rounded-xl border border-slate-300 px-4 py-2.5 pl-10 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </div>
 
-                            <div>
-                                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Exports</p>
-                                <div class="flex items-start">
-                                    <input type="checkbox" name="can_export_classroom_csv" id="can_export_classroom_csv"
-                                        {% if user_obj.preferences.can_export_classroom_csv %}checked{% endif %}
-                                        class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                                    <div class="ml-2">
-                                        <label for="can_export_classroom_csv" class="text-sm text-slate-700 font-medium">Export Classroom CSV</label>
-                                        <p class="text-xs text-slate-500">Can export classroom placement CSV files for allowed classrooms.</p>
-                                    </div>
-                                </div>
-                            </div>
+                <!-- Schools Grid -->
+                <div class="border border-slate-200 rounded-2xl p-4 bg-white max-h-[50vh] overflow-y-auto divide-y divide-slate-100">
+                    {% for school in schools %}
+                    <div x-show="!schoolSearch || '{{ school.school_name|lower|escapejs }}'.includes(schoolSearch.toLowerCase())"
+                         class="py-2.5 px-3 flex items-center justify-between hover:bg-slate-50 rounded-xl transition">
+                        <div class="flex items-center gap-3">
+                            <input type="checkbox" name="schools" value="{{ school.state_id }}" id="page_school_{{ school.dw_schoolkey }}" 
+                                   {% if school.state_id in user_obj.schools %}checked{% endif %}
+                                   @change="updateSchoolCount()"
+                                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <label for="page_school_{{ school.dw_schoolkey }}" class="text-xs font-medium text-slate-800 cursor-pointer flex items-center">
+                                <span>{{ school.school_name }}</span>
+                            </label>
+                        </div>
+                        <span class="text-[10px] font-mono text-slate-400">ID: {{ school.state_id }}</span>
+                    </div>
+                    {% empty %}
+                    <p class="text-xs text-slate-400 p-4 text-center italic">No schools available in database.</p>
+                    {% endfor %}
+                </div>
+            </div>
 
-                            <div>
-                                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Configuration</p>
-                                <div class="flex items-start">
-                                    <input type="checkbox" name="can_manage_placement_configuration" id="can_manage_placement_configuration"
-                                        {% if user_obj.preferences.can_manage_placement_configuration %}checked{% endif %}
-                                        class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                                    <div class="ml-2">
-                                        <label for="can_manage_placement_configuration" class="text-sm text-slate-700 font-medium">View and Edit Placement Configuration</label>
-                                        <p class="text-xs text-slate-500">Shows the Configuration page and allows managing classrooms/questions/tags.</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Teacher Notes</p>
-                                <div class="flex items-start">
-                                    <input type="checkbox" name="can_access_teacher_notes" id="can_access_teacher_notes"
-                                        {% if user_obj.preferences.can_access_teacher_notes %}checked{% endif %}
-                                        class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                                    <div class="ml-2">
-                                        <label for="can_access_teacher_notes" class="text-sm text-slate-700 font-medium">View Teacher Notes Page</label>
-                                        <p class="text-xs text-slate-500">Shows Teacher Notes in menu and allows Teacher Notes PDF export.</p>
-                                    </div>
-                                </div>
-                            </div>
+            <!-- ═══ TAB 3: Grades & Delegations ═══ -->
+            <div x-show="activeTab === 'grades'" style="display: none;" class="space-y-6">
+                <!-- Grade Levels -->
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h4 class="text-sm font-bold text-slate-900">Grade Level Access</h4>
+                            <p class="text-xs text-slate-500">Applies to School Gr View, School View, and Teacher grade boundaries.</p>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-xs">
+                            <button type="button" @click="selectGrades('elem')" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">Elem</button>
+                            <button type="button" @click="selectGrades('mid')" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">Middle</button>
+                            <button type="button" @click="selectGrades('high')" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">High</button>
+                            <button type="button" @click="selectGrades('all')" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-indigo-700 font-bold">All</button>
+                            <button type="button" @click="selectGrades('none')" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500">None</button>
                         </div>
                     </div>
+
+                    <div class="grid grid-cols-3 sm:grid-cols-6 gap-2.5 border border-slate-200 rounded-2xl p-4 bg-white">
+                        {% for grade in available_grades %}
+                        <label class="flex items-center gap-2 p-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" name="grade_levels" value="{{ grade.0 }}" id="page_grade_{{ grade.0 }}" 
+                                   {% if grade.0 in user_obj.grade_levels %}checked{% endif %}
+                                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <span class="text-xs font-semibold text-slate-700">{{ grade.1 }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Delegated Permissions -->
+                <div>
+                    <h4 class="text-sm font-bold text-slate-900 mb-1">Delegated Feature Permissions (Placement Cards)</h4>
+                    <p class="text-xs text-slate-500 mb-3">Authorize delegated capabilities within Placement Cards for School Gr View / Staff.</p>
+
+                    <div class="border border-slate-200 rounded-2xl divide-y divide-slate-100 bg-white">
+                        <label class="p-4 flex items-start gap-3 hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" name="can_move_placement_cards" id="page_can_move"
+                                   {% if user_obj.preferences.can_move_placement_cards %}checked{% endif %}
+                                   class="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div>
+                                <span class="text-xs font-bold text-slate-800 block">Move Students Between Classrooms</span>
+                                <span class="text-[11px] text-slate-500">Can place and drag students into classrooms within delegated school and grade boundaries.</span>
+                            </div>
+                        </label>
+
+                        <label class="p-4 flex items-start gap-3 hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" name="can_export_classroom_csv" id="page_can_export"
+                                   {% if user_obj.preferences.can_export_classroom_csv %}checked{% endif %}
+                                   class="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div>
+                                <span class="text-xs font-bold text-slate-800 block">Export Classroom CSV Rosters</span>
+                                <span class="text-[11px] text-slate-500">Allows generating and downloading classroom placement CSV files.</span>
+                            </div>
+                        </label>
+
+                        <label class="p-4 flex items-start gap-3 hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" name="can_manage_placement_configuration" id="page_can_config"
+                                   {% if user_obj.preferences.can_manage_placement_configuration %}checked{% endif %}
+                                   class="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div>
+                                <span class="text-xs font-bold text-slate-800 block">Manage Placement Configuration</span>
+                                <span class="text-[11px] text-slate-500">Grants permission to configure classrooms, placement questions, and custom student tags.</span>
+                            </div>
+                        </label>
+
+                        <label class="p-4 flex items-start gap-3 hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" name="can_access_teacher_notes" id="page_can_notes"
+                                   {% if user_obj.preferences.can_access_teacher_notes %}checked{% endif %}
+                                   class="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div>
+                                <span class="text-xs font-bold text-slate-800 block">View Teacher Notes & PDF Export</span>
+                                <span class="text-[11px] text-slate-500">Enables viewing confidential teacher notes and exporting notes to PDF.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ TAB 4: Profile ═══ -->
+            <div x-show="activeTab === 'profile'" style="display: none;" class="space-y-5">
+                <h3 class="text-base font-bold text-slate-900 mb-1">User Account Credentials</h3>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div>
+                        <label for="page_name" class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+                        {% if is_school_admin_only %}
+                        <p class="text-xs text-slate-800 px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl">{{ user_obj.name|default:"—" }}</p>
+                        {% else %}
+                        <input type="text" name="name" id="page_name" value="{{ user_obj.name }}"
+                               class="w-full text-xs rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs">
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label for="page_email" class="block text-xs font-semibold text-slate-700 mb-1">Google Email (Login)</label>
+                        <input type="email" name="email" id="page_email" value="{{ user_obj.email }}" disabled
+                               class="w-full text-xs rounded-xl border border-slate-200 bg-slate-100 text-slate-500 px-4 py-2.5 cursor-not-allowed shadow-2xs">
+                    </div>
+
+                    <div>
+                        <label for="page_job_title" class="block text-xs font-semibold text-slate-700 mb-1">Job Title</label>
+                        {% if is_school_admin_only %}
+                        <p class="text-xs text-slate-800 px-4 py-2.5 bg-slate-100 border border-slate-200 rounded-xl">{{ user_obj.job_title|default:"—" }}</p>
+                        {% else %}
+                        <input type="text" name="job_title" id="page_job_title" value="{{ user_obj.job_title }}"
+                               class="w-full text-xs rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs">
+                        {% endif %}
+                    </div>
+
+                    {% if not is_school_admin_only %}
+                    <div>
+                        <label for="page_staff_id" class="block text-xs font-semibold text-slate-700 mb-1">District Staff ID (SIS)</label>
+                        <input type="text" name="staff_id" id="page_staff_id" value="{{ user_obj.staff_id|default:'' }}"
+                               placeholder="e.g. 104523"
+                               class="w-full text-xs rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs">
+                    </div>
+                    {% endif %}
                 </div>
 
                 {% if not is_school_admin_only %}
-                <!-- Active Status -->
-                <div>
-                    <div class="flex items-center">
-                        <input type="checkbox" name="is_active" id="is_active" {% if user_obj.is_active %}checked
-                        {% endif %} class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                        <label for="is_active" class="ml-2 block text-sm font-medium text-slate-700">
-                            Active
-                        </label>
-                    </div>
-                    <p class="mt-1 text-xs text-slate-500 ml-6">Inactive users cannot log in</p>
+                <div class="pt-3 border-t border-slate-100">
+                    <label class="flex items-center gap-3 p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" name="is_active" id="page_is_active" {% if user_obj.is_active %}checked{% endif %}
+                               class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                        <div>
+                            <span class="text-xs font-bold text-slate-900 block">Active Account Status</span>
+                            <span class="text-[11px] text-slate-500">Uncheck to immediately prevent this user from logging into the platform.</span>
+                        </div>
+                    </label>
                 </div>
                 {% endif %}
             </div>
 
-            <!-- Action Buttons -->
-            <div class="mt-8 pt-6 border-t border-slate-200 flex justify-end space-x-3">
-                <a href="{% url 'users:manage_users' %}"
-                    class="px-4 py-2 border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+            <!-- ═══ Save Actions ═══ -->
+            <div class="mt-8 pt-5 border-t border-slate-200 flex items-center justify-between">
+                <a href="{% url 'users:manage_users' %}" class="px-4 py-2.5 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 transition">
                     Cancel
                 </a>
                 <button type="submit"
-                    class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                    Save Changes
+                        class="inline-flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    <span>Save Changes</span>
                 </button>
             </div>
         </form>
-
-        <!-- Additional Information -->
-        <div class="px-6 py-4 bg-slate-50 border-t border-slate-200">
-            <h3 class="text-sm font-medium text-slate-700 mb-3">Account Information</h3>
-            <dl class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-                <div>
-                    <dt class="text-xs text-slate-500">Username</dt>
-                    <dd class="text-sm text-slate-900 mt-1">{{ user_obj.username }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">Date Joined</dt>
-                    <dd class="text-sm text-slate-900 mt-1">{{ user_obj.date_joined|date:"M d, Y" }}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">Last Login</dt>
-                    <dd class="text-sm text-slate-900 mt-1">
-                        {% if user_obj.last_login %}
-                        {{ user_obj.last_login|date:"M d, Y g:i A" }}
-                        {% else %}
-                        Never
-                        {% endif %}
-                    </dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-slate-500">Staff Status</dt>
-                    <dd class="text-sm text-slate-900 mt-1">
-                        {% if user_obj.is_staff %}
-                        <span
-                            class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
-                            Staff
-                        </span>
-                        {% else %}
-                        Regular User
-                        {% endif %}
-                    </dd>
-                </div>
-            </dl>
-        </div>
     </div>
 </div>
 {% endblock %}

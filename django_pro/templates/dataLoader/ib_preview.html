@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Preview IB Test Data - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li><a href="{% url 'dataLoader:ib_upload' %}" class="text-slate-500 hover:text-slate-700">IB Upload</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Preview</li>
+            </ol>
+        </nav>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Preview IB Test Data</h1>
+        <p class="mt-2 text-slate-600">Review the detected candidates, exam results, and student matching results before importing.</p>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Candidates</p>
+            <p class="text-2xl font-bold text-slate-900">{{ total_candidates }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Exam Results</p>
+            <p class="text-2xl font-bold text-amber-600">{{ total_results }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Subjects Detected</p>
+            <p class="text-2xl font-bold text-slate-700">{{ analysis.unique_subjects|length }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">LQHS Match Rate</p>
+            <p class="text-2xl font-bold {% if unmatched_count == 0 %}text-green-600{% elif unmatched_count < total_candidates %}text-amber-600{% else %}text-red-600{% endif %}">
+                {% if total_candidates > 0 %}
+                    {{ matched_count }} / {{ total_candidates }}
+                {% else %}
+                    —
+                {% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Upload Info Details -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-base font-semibold text-slate-900 mb-4">Import Metadata</h2>
+        <dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+                <dt class="text-slate-500">Upload Name</dt>
+                <dd class="font-medium text-slate-900">{{ upload_data.name }}</dd>
+            </div>
+            <div>
+                <dt class="text-slate-500">School Year</dt>
+                <dd class="font-medium text-slate-900">{{ upload_data.school_year }}</dd>
+            </div>
+            <div>
+                <dt class="text-slate-500">Source File</dt>
+                <dd class="font-medium text-slate-900 truncate" title="{{ upload_data.filename }}">{{ upload_data.filename }}</dd>
+            </div>
+            <div>
+                <dt class="text-slate-500">Target Cohort</dt>
+                <dd class="font-medium text-amber-700">La Quinta HS ({{ total_lqhs_students }} students enrolled)</dd>
+            </div>
+        </dl>
+    </div>
+
+    <!-- Subjects and Levels Detected -->
+    {% if analysis.unique_subjects %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-base font-semibold text-slate-900 mb-3">Detected Subjects ({{ analysis.unique_subjects|length }})</h2>
+        <div class="flex flex-wrap gap-2 mb-4">
+            {% for subj in analysis.unique_subjects %}
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                {{ subj }}
+            </span>
+            {% endfor %}
+        </div>
+        <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+            <div>
+                <span class="font-semibold text-slate-700">Levels:</span>
+                {% for lvl in analysis.unique_levels %}
+                <span class="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-mono ml-1">{{ lvl }}</span>
+                {% endfor %}
+            </div>
+            <div>
+                <span class="font-semibold text-slate-700">Categories:</span>
+                {% for cat in analysis.unique_categories %}
+                <span class="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-mono ml-1">{{ cat }}</span>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Unmatched Students Section -->
+    <form method="post" id="preview-form">
+        {% csrf_token %}
+        {% if unmatched_students %}
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+            <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-900">
+                        Unmatched Candidates ({{ unmatched_count }})
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-1">
+                        These candidates could not be auto-matched to a student enrolled in La Quinta HS for {{ upload_data.school_year }}. Enter SSIDs manually below if desired.
+                    </p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Personal Code</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Candidate Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Reason</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">SSID / Student Name</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-28">Global Search</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-slate-200">
+                        {% for student in unmatched_students %}
+                        <tr class="hover:bg-slate-50"
+                            x-data="{
+                                searching: false,
+                                isGlobal: true,
+                                loading: false,
+                                searchTerm: '{{ student.name|escapejs }}',
+                                results: [],
+                                matchedDisplay: '',
+                                doSearch() {
+                                    if (!this.searchTerm.trim()) return;
+                                    this.loading = true;
+                                    const url = '{% url 'dataLoader:ib_student_search' %}?q=' + encodeURIComponent(this.searchTerm) + '&school_year={{ upload_data.school_year|urlencode }}' + (this.isGlobal ? '&global=true' : '');
+                                    fetch(url)
+                                        .then(r => r.json())
+                                        .then(data => {
+                                            this.results = data.students || [];
+                                            this.loading = false;
+                                        })
+                                        .catch(() => { this.loading = false; });
+                                },
+                                selectStudent(r) {
+                                    document.getElementById('ssid_{{ student.personal_code }}').value = r.ssid;
+                                    document.getElementById('name_{{ student.personal_code }}').value = r.last_name + ', ' + r.first_name;
+                                    this.matchedDisplay = r.last_name + ', ' + r.first_name + ' (SSID: ' + r.ssid + ' - ' + r.school_name + ')';
+                                    this.searching = false;
+                                },
+                                clearMatch() {
+                                    document.getElementById('ssid_{{ student.personal_code }}').value = '';
+                                    document.getElementById('name_{{ student.personal_code }}').value = '';
+                                    this.matchedDisplay = '';
+                                }
+                            }">
+                            <td class="px-4 py-3 whitespace-nowrap text-sm font-mono text-slate-900">{{ student.personal_code }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">
+                                <div>{{ student.name }}</div>
+                                <template x-if="matchedDisplay">
+                                    <div class="mt-1 flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                        <svg class="w-3 h-3 text-emerald-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                        </svg>
+                                        <span class="truncate" x-text="matchedDisplay"></span>
+                                        <button type="button" @click="clearMatch()" class="text-emerald-900 hover:text-red-600 font-bold ml-1">×</button>
+                                    </div>
+                                </template>
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-600">{{ student.category }}</td>
+                            <td class="px-4 py-3 text-xs text-amber-700">{{ student.reason }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <input type="text"
+                                       name="ssid_override_{{ student.personal_code }}"
+                                       id="ssid_{{ student.personal_code }}"
+                                       placeholder="Enter SSID or Name"
+                                       class="w-40 px-2.5 py-1 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                                <input type="hidden"
+                                       name="name_override_{{ student.personal_code }}"
+                                       id="name_{{ student.personal_code }}"
+                                       value="">
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-center relative">
+                                <button type="button"
+                                        @click="searching = !searching; if(searching && results.length === 0) { doSearch(); }"
+                                        class="px-3 py-1 text-xs font-medium text-amber-700 bg-amber-100 rounded-md hover:bg-amber-200 transition inline-flex items-center gap-1">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                                    </svg>
+                                    <span>Find</span>
+                                </button>
+
+                                <div x-show="searching"
+                                     @click.away="searching = false"
+                                     class="absolute right-0 top-full mt-2 w-96 max-w-lg bg-white p-3 rounded-lg shadow-xl border border-slate-200 text-xs z-50 text-left">
+                                    <div class="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
+                                        <span class="font-semibold text-slate-800">Match Student Globally by Name</span>
+                                        <button type="button" @click="searching = false" class="text-slate-400 hover:text-slate-600 font-bold text-sm">×</button>
+                                    </div>
+
+                                    <div class="flex gap-1.5 mb-2">
+                                        <input type="text"
+                                               x-model="searchTerm"
+                                               @keydown.enter.prevent="doSearch()"
+                                               placeholder="Search name, SSID, or ID..."
+                                               class="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-amber-500 focus:border-amber-500">
+                                        <button type="button"
+                                                @click="doSearch()"
+                                                class="px-2.5 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 font-medium">
+                                            Search
+                                        </button>
+                                    </div>
+
+                                    <div class="flex items-center justify-between text-slate-600 mb-2 px-1">
+                                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" x-model="isGlobal" @change="doSearch()" class="rounded text-amber-600 focus:ring-amber-500 text-xs">
+                                            <span class="font-medium text-slate-700">Global Search (All Schools & Years)</span>
+                                        </label>
+                                        <template x-if="loading">
+                                            <span class="text-amber-600 font-medium animate-pulse">Searching...</span>
+                                        </template>
+                                    </div>
+
+                                    <div class="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded">
+                                        <template x-if="!loading && results.length === 0">
+                                            <div class="p-3 text-center text-slate-400 italic">
+                                                No students found matching "<span x-text="searchTerm"></span>". Try another spelling.
+                                            </div>
+                                        </template>
+                                        <template x-for="r in results" :key="r.ssid + '-' + (r.school_year || '')">
+                                            <div class="p-2 hover:bg-amber-50 cursor-pointer flex items-center justify-between gap-2 transition"
+                                                 @click="selectStudent(r)">
+                                                <div class="truncate">
+                                                    <div class="font-semibold text-slate-900 flex items-center gap-1.5">
+                                                        <span x-text="r.last_name + ', ' + r.first_name + (r.middle_name ? ' ' + r.middle_name : '')"></span>
+                                                        <template x-if="r.is_lqhs">
+                                                            <span class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">LQHS</span>
+                                                        </template>
+                                                        <template x-if="!r.is_lqhs">
+                                                            <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-600" x-text="r.school_name"></span>
+                                                        </template>
+                                                    </div>
+                                                    <div class="text-[11px] text-slate-500">
+                                                        SSID: <span class="font-mono font-medium text-slate-700" x-text="r.ssid"></span>
+                                                        <span class="mx-1">•</span>
+                                                        <span x-text="r.school_year || ''"></span>
+                                                        <template x-if="r.grade">
+                                                            <span> • Gr <span x-text="r.grade"></span></span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <button type="button"
+                                                        class="px-2 py-1 text-[11px] font-semibold text-white bg-amber-600 rounded hover:bg-amber-700 shrink-0">
+                                                    Match
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+            <div class="flex items-center">
+                <svg class="h-8 w-8 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <div>
+                    <h3 class="text-lg font-medium text-green-800">All candidates matched successfully</h3>
+                    <p class="text-sm text-green-600">{{ matched_count }} out of {{ total_candidates }} candidates were matched to La Quinta HS students.</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Sample Candidates Preview -->
+        {% if analysis.sample_candidates %}
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+            <div class="px-6 py-4 border-b border-slate-200">
+                <h2 class="text-base font-semibold text-slate-900">Sample Candidates Detected (First 10)</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Code</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Exams</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Exam List</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Total Pts</th>
+                            <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase">Result</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        {% for sc in analysis.sample_candidates %}
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-4 py-2 font-mono text-slate-700">{{ sc.personal_code }}</td>
+                            <td class="px-4 py-2 font-medium text-slate-900">{{ sc.name }}</td>
+                            <td class="px-4 py-2 text-slate-600">{{ sc.category }}</td>
+                            <td class="px-4 py-2 text-slate-700">{{ sc.subject_count }}</td>
+                            <td class="px-4 py-2 text-xs text-slate-600">{{ sc.subjects_summary }}</td>
+                            <td class="px-4 py-2 text-slate-700">{{ sc.total_points|default:"—" }}</td>
+                            <td class="px-4 py-2 text-slate-700">{{ sc.result|default:"—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Warnings -->
+        {% if analysis.warnings %}
+        <div class="bg-amber-50 border border-amber-200 rounded-md p-4 mb-8">
+            <h3 class="text-sm font-medium text-amber-800">Warnings</h3>
+            <ul class="mt-2 list-disc pl-5 text-sm text-amber-700">
+                {% for warning in analysis.warnings %}
+                <li>{{ warning }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- Confirm Button -->
+        <div class="flex justify-end space-x-3">
+            <a href="{% url 'dataLoader:ib_upload' %}"
+               class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+                Back
+            </a>
+            <button type="submit"
+                    class="px-6 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 transition duration-200 font-medium">
+                Confirm &amp; Start Import
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+

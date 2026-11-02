@@ -692,6 +692,21 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
 		self.assertEqual(params, [['Y']])
 
+	def test_list_query_uses_postgres_for_incident_sort_with_filters(self):
+		from dataexploration.view_modules.filter_sql import list_query_uses_postgres
+
+		self.assertTrue(
+			list_query_uses_postgres({'area_of_concern': ['Behavior']}, sort_by='incidents_major'),
+		)
+		self.assertTrue(
+			list_query_uses_postgres({'plan_type': ['Tier 2']}, sort_by='incidents_minor'),
+		)
+		self.assertTrue(
+			list_query_uses_postgres({'suspension_days': ['>=1']}, sort_by='student_name'),
+		)
+		self.assertFalse(list_query_uses_postgres({}, sort_by='incidents_major'))
+		self.assertFalse(list_query_uses_postgres({'area_of_concern': ['Behavior']}, sort_by='student_name'))
+
 	def test_mtss_filter_uses_subquery_not_physical_cs_column(self):
 		from dataexploration.column_utils import _append_cs_filter_clause
 
@@ -730,7 +745,46 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		)
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('cs.grade', where_clauses[0])
-		self.assertEqual(params, [['03']])
+		self.assertEqual(params, [['03', '3']])
+
+	def test_expand_grade_match_values_includes_zero_padded(self):
+		from dataexploration.view_modules.filter_sql import expand_grade_match_values
+
+		self.assertEqual(expand_grade_match_values('3'), ['3', '03'])
+		self.assertIn('9', expand_grade_match_values('09'))
+
+	def test_de_student_status_all_status_excludes_no_show(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, '')
+		self.assertIn('IS NULL OR', where[0])
+		self.assertEqual(params[0], 'No_show')
+		self.assertIn('= ANY', where[1])
+		self.assertEqual(params[1], ['Active', 'Inactive'])
+
+	def test_de_student_status_active_only(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, 'Active')
+		self.assertEqual(params, ['No_show', 'Active'])
+
+	def test_de_student_status_list_override_skips_all_scope(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, None, apply_all_when_unset=False)
+		self.assertEqual(len(where), 1)
+		self.assertEqual(params, ['No_show'])
+
+	def test_sanitize_de_status_filter_values(self):
+		from dataexploration.view_modules.filter_sql import sanitize_de_status_filter_values
+
+		self.assertEqual(
+			sanitize_de_status_filter_values(['Active', 'No_show', 'Inactive', 'Other']),
+			['Active', 'Inactive'],
+		)
 
 	def test_race_list_filter_uses_l_race_json_overlap(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -798,6 +852,52 @@ class SATColumnKeyTests(SimpleTestCase):
 		self.assertIsNone(parse_sat_column_key('ap_2025_2026_Math_PL'))
 		self.assertIsNone(parse_sat_column_key('sat_bogus'))
 		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
+
+
+class IBColumnKeyTests(SimpleTestCase):
+	def test_ib_column_key_round_trip(self):
+		from dataexploration.column_utils import ib_column_key, parse_ib_column_key
+		pl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='PL')
+		self.assertEqual(pl_key, 'ib_2024_2025_VISUAL_ARTS_PL')
+		self.assertEqual(
+			parse_ib_column_key(pl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'PL'},
+		)
+
+		lvl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='LVL')
+		self.assertEqual(lvl_key, 'ib_2024_2025_VISUAL_ARTS_LVL')
+		self.assertEqual(
+			parse_ib_column_key(lvl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'LVL'},
+		)
+
+		cat_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='CAT')
+		self.assertEqual(cat_key, 'ib_2024_2025_VISUAL_ARTS_CAT')
+		self.assertEqual(
+			parse_ib_column_key(cat_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'CAT'},
+		)
+
+	def test_ib_column_key_legacy_with_level(self):
+		from dataexploration.column_utils import parse_ib_column_key
+		legacy_key = 'ib_2024_2025_VISUAL_ARTS_SL_PL'
+		self.assertEqual(
+			parse_ib_column_key(legacy_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': 'SL', 'kind': 'PL'},
+		)
+
+	def test_ib_filter_generates_valid_where_clause(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'ib_2024_2025_VISUAL_ARTS_PL': ['2', '3']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('dataLoader_ibexamresult', where_clauses[0])
+		self.assertIn('cs.ssid IN', where_clauses[0])
 
 
 class SurveyDataResolutionTests(SimpleTestCase):
@@ -2019,6 +2119,273 @@ class ExportFiltersTests(SimpleTestCase):
 				self.assertNotIn('schedule_period', passed_filters)
 
 
+class ExportColumnCoverageTests(SimpleTestCase):
+	"""Guard that every Data Explorer column has a CSV export source."""
+
+	DYNAMIC_PREFIXES = (
+		'test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_',
+		'apawards_all_', 'apall_', 'sat_', 'course_prog_',
+	)
+	ENROLL_FALLBACK = {
+		'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant',
+		'enter_date', 'leave_date',
+	}
+
+	def test_enter_and_leave_dates_resolve_from_student_enroll(self):
+		from dataexploration.view_modules.column_management import get_column_expression
+
+		db_columns = {'ssid', 'student_name'}
+		enroll_columns = {'enter_date', 'leave_date'}
+		for col in ('enter_date', 'leave_date'):
+			expr, alias = get_column_expression(
+				col, db_columns, enroll_columns, use_enroll=True,
+			)
+			self.assertEqual(expr, f'se.{col}')
+			self.assertEqual(alias, col)
+
+	def test_every_static_column_resolves_to_a_select_expression(self):
+		from studata.models import CurrentStudent, StudentEnroll
+		from dataexploration.constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
+		from dataexploration.catalog_columns import is_course_program_column
+		from dataexploration.incident_columns import is_incident_column
+		from dataexploration.mtss_columns import is_mtss_column
+		from dataexploration.view_modules.column_management import get_column_expression
+
+		db_columns = {field.name for field in CurrentStudent._meta.fields}
+		enroll_columns = {field.name for field in StudentEnroll._meta.fields}
+		missing = []
+		for col in COLUMN_DEFINITIONS:
+			if (
+				col in VIRTUAL_COLUMNS
+				or col.startswith(self.DYNAMIC_PREFIXES)
+				or is_course_program_column(col)
+				or is_incident_column(col)
+				or is_mtss_column(col)
+			):
+				continue
+			expr, _alias = get_column_expression(
+				col,
+				db_columns,
+				enroll_columns,
+				use_enroll=col in self.ENROLL_FALLBACK,
+				use_students=False,
+				use_eht=col == 'elem_teacher_name',
+			)
+			if not expr:
+				missing.append(col)
+		self.assertEqual(missing, [], f'Columns without an export SQL source: {missing}')
+
+	def test_grade_column_filter_is_applied_to_export_query(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		factory = RequestFactory()
+		req = factory.get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'grade']),
+				'filters': json.dumps({'grade': ['07']}),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.return_value = []
+		cursor.description = [('student_name',), ('grade',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					resp = export_students_csv(req)
+					list(resp.streaming_content)
+
+		sql, params = cursor.execute.call_args[0][0], cursor.execute.call_args[0][1]
+		self.assertIn('cs.grade = ANY(%s)', sql)
+		self.assertIn(['07', '7'], params)
+
+	def test_survey_column_exports_without_unbound_local_error(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		factory = RequestFactory()
+		req = factory.get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'survey_test_q1']),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.side_effect = [
+			[('Alice', 'S1', '1001')],
+			[],
+		]
+		cursor.description = [('student_name',), ('ssid',), ('student_id',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		survey_columns = {
+			'definitions': {'survey_test_q1': 'Test Question?'},
+			'col_meta': {},
+		}
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					with patch(
+						'dataexploration.view_modules.export_views.get_survey_columns',
+						return_value=survey_columns,
+					):
+						with patch(
+							'dataexploration.view_modules.export_views.get_survey_data_for_students',
+							return_value={'S1': {'survey_test_q1': 'Agree'}},
+						):
+							resp = export_students_csv(req)
+							content = b''.join(resp.streaming_content).decode('utf-8')
+
+		self.assertNotIn('Error exporting data', content)
+		self.assertIn('Test Question?', content)
+		self.assertIn('Agree', content)
+
+	def test_ap_all_results_uses_clickhouse_ap_results_table(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		req = RequestFactory().get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'apall_2025_2026']),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.return_value = []
+		cursor.description = [('student_name',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					with patch(
+						'dataexploration.view_modules.export_views._fetchall_ch_or_pg',
+						return_value=[(0,)],
+					) as mock_fetch:
+						with patch(
+							'dataexploration.view_modules.export_views.cache.get',
+							return_value=None,
+						), patch(
+							'dataexploration.view_modules.export_views.cache.set',
+						):
+							resp = export_students_csv(req)
+							list(resp.streaming_content)
+
+		sqls = [call.args[0] for call in mock_fetch.call_args_list if call.args]
+		ap_sql = next(sql for sql in sqls if 'MAX(cnt)' in sql and 'admin_year' in sql)
+		self.assertIn('FROM analytics_ap_results r', ap_sql)
+		self.assertNotIn('analytics_ap_exam_results', ap_sql)
+
+
+class MarkallPeriodFilterTests(SimpleTestCase):
+	def test_extract_markall_period_includes_reads_umbrella_values(self):
+		from dataexploration.view_modules.filter_sql import extract_markall_period_includes
+
+		filters = {
+			'markall_2025_2026_Math': ['period:Q1', 'period:Q3', 'exclude:Homeroom'],
+			'markall_2025_2026_Math_1_MARKS': ['period:Q4'],
+			'grade': ['07'],
+		}
+		self.assertEqual(
+			extract_markall_period_includes(filters),
+			{'markall_2025_2026_Math': {'Q1', 'Q3'}},
+		)
+		self.assertEqual(extract_markall_period_includes({}), {})
+
+	def test_markall_period_filter_parts_builds_allowlist_sql(self):
+		from dataexploration.view_modules.filter_sql import markall_period_filter_parts
+
+		sql, params = markall_period_filter_parts({'Q1', 'P2'})
+		self.assertEqual(sql, ' AND sm.mark_period IN (%s, %s)')
+		self.assertEqual(params, ['P2', 'Q1'])
+		self.assertEqual(markall_period_filter_parts(set()), ('', []))
+		self.assertEqual(markall_period_filter_parts(None), ('', []))
+
+	def test_group_marks_filters_selected_periods(self):
+		from dataexploration.column_utils import group_marks_by_ssid_course
+
+		rows = [
+			{'ssid': 'A', 'student_id': '1', 'subject': 'Math', 'course_name': 'Math 8',
+			 'mark_period': 'Q1', 'mark': 'A', 'mark_status': 'Final', 'mark_ord': 1},
+			{'ssid': 'A', 'student_id': '1', 'subject': 'Math', 'course_name': 'Math 8',
+			 'mark_period': 'Q2', 'mark': 'B', 'mark_status': 'Final', 'mark_ord': 2},
+		]
+		by_ssid, _by_id = group_marks_by_ssid_course(rows, subject='Math', periods={'Q1'})
+		self.assertEqual(list(by_ssid['A']['Math 8']), [('Q1', 'A')])
+		all_by_ssid, _ = group_marks_by_ssid_course(rows, subject='Math')
+		self.assertEqual(len(all_by_ssid['A']['Math 8']), 2)
+
+	def test_build_marks_period_index_sorts_live_last(self):
+		from dataexploration.view_modules.column_management import build_marks_period_index
+
+		structure = {
+			'2025-2026': {
+				'Math': {
+					'Math 8': {'Q2': 'mark_1', 'Live': 'mark_2', 'Q1': 'mark_3'},
+					'Algebra': {'S1': 'mark_4'},
+				},
+			},
+		}
+		self.assertEqual(
+			build_marks_period_index(structure),
+			{'2025-2026': {'Math': ['Q1', 'Q2', 'S1', 'Live']}},
+		)
+
+
 class MtssDataExplorationTests(TestCase):
 	databases = {'default'}
 
@@ -2152,6 +2519,38 @@ class MtssDataExplorationTests(TestCase):
 		self.assertEqual(len(where_clauses), 1)
 		sql = where_clauses[0]
 		self.assertIn('mtss_data', sql)
+
+	def test_mtss_filter_options_distinct(self):
+		from dataexploration.mtss_columns import fetch_mtss_filter_options
+		from django.db import connection
+
+		with connection.cursor() as cur:
+			cur.execute("""
+				CREATE TABLE IF NOT EXISTS current_student (
+					stu_annual_key text,
+					ssid text,
+					student_id text,
+					student_name text,
+					grade text,
+					school_year text,
+					status text,
+					school text
+				)
+			""")
+			cur.execute("DELETE FROM current_student")
+			cur.execute("""
+				INSERT INTO current_student (stu_annual_key, ssid, student_id, school_year, status)
+				VALUES ('k1', '1317443220', 's1', '2026-2027', 'Active'),
+				       ('k2', '1352209140', 's2', '2026-2027', 'Active')
+			""")
+
+		values = fetch_mtss_filter_options(
+			'plan_type',
+			"cs.status = 'Active' AND cs.school_year = %s",
+			'',
+			['2026-2027'],
+		)
+		self.assertIn('Tier 2', values)
 		self.assertIn('m.plan_type = ANY(%s)', sql)
 		self.assertIn("m.school_year = cs.school_year", sql)
 		self.assertEqual(params, [['Tier 2']])
@@ -2170,4 +2569,227 @@ class MtssDataExplorationTests(TestCase):
 			self.assertIn(col, defs)
 			self.assertIn(col, cats['mtss']['columns'])
 		self.assertEqual(cats['mtss']['title'], 'MTSS (Tier 2)')
+
+
+class StudentIncidentsTests(TestCase):
+	"""Parser and Data Explorer enrichment for student_incidents JSON."""
+
+	SAMPLE_JSON = {
+		'Major': {
+			'count': 2,
+			'incidents': [
+				{
+					'date': '2025-10-08',
+					'school': 'Example MS',
+					'location': 'Lunch Area',
+					'violations': [{'violation': 'Major Assault', 'notify_law_enforcement': 'N'}],
+					'incident_id': 2503199,
+					'dispositions': [],
+					'referring_staff': 'Staff A',
+				},
+				{
+					'date': '2026-03-05',
+					'location': 'Classroom',
+					'violations': [
+						{'violation': 'Major Defiance', 'ed_code': '48900(k)', 'notify_law_enforcement': 'N'},
+					],
+					'incident_id': 2513231,
+					'dispositions': [{'disposition': 'Lunch Detention'}],
+					'referring_staff': 'Staff B',
+					'review_status': 'Closed',
+					'description': 'Student refused to follow staff direction.',
+				},
+			],
+		},
+		'suspension_days': 3,
+		'Minor': {
+			'count': 1,
+			'incidents': [
+				{
+					'date': '2025-09-25',
+					'location': 'School Grounds',
+					'violations': [{'violation': 'Minor Campus disruption', 'notify_law_enforcement': 'N'}],
+					'incident_id': 2502159,
+					'dispositions': [],
+					'referring_staff': 'Staff C',
+				},
+			],
+		},
+	}
+
+	def test_incident_counts_from_json(self):
+		from dataexploration.incident_columns import (
+			incident_counts,
+			parse_incidents_payload,
+			suspension_days_from_payload,
+		)
+
+		payload = parse_incidents_payload(self.SAMPLE_JSON)
+		self.assertEqual(incident_counts(payload), (2, 1))
+		self.assertEqual(suspension_days_from_payload(payload), 3)
+
+	def test_suspension_days_from_dispositions(self):
+		from dataexploration.incident_columns import parse_incidents_payload, suspension_days_from_payload
+
+		payload = parse_incidents_payload({
+			'Major': {
+				'count': 1,
+				'incidents': [{
+					'incident_id': 1,
+					'dispositions': [{
+						'disposition': 'Out of School Suspension',
+						'duration_days': 4,
+					}],
+				}],
+			},
+			'Minor': {'count': 0, 'incidents': []},
+		})
+		self.assertEqual(suspension_days_from_payload(payload), 4)
+
+	def test_suspension_days_alt_root_key(self):
+		from dataexploration.incident_columns import parse_incidents_payload, suspension_days_from_payload
+
+		payload = parse_incidents_payload({'Suspension_Days': 2, 'Major': {'count': 0, 'incidents': []}})
+		self.assertEqual(suspension_days_from_payload(payload), 2)
+
+	def test_combine_incidents_for_year_sorts_newest_first(self):
+		from dataexploration.incident_columns import combine_incidents_for_year, parse_incidents_payload
+
+		payload = parse_incidents_payload(self.SAMPLE_JSON)
+		combined = combine_incidents_for_year(payload)
+		self.assertEqual(len(combined), 3)
+		self.assertEqual(combined[0]['incident_id'], 2513231)
+		self.assertEqual(combined[-1]['incident_id'], 2502159)
+
+	def test_normalize_incident_record(self):
+		from dataexploration.incident_columns import normalize_incident_record
+
+		item = self.SAMPLE_JSON['Major']['incidents'][1]
+		row = normalize_incident_record('Major', item)
+		self.assertEqual(row['date'], '2026-03-05')
+		self.assertEqual(row['date_display'], '03/05/2026')
+		self.assertIn('Major Defiance', row['violations'])
+		self.assertEqual(row['dispositions'], 'Lunch Detention')
+		self.assertEqual(row['review_status'], 'Closed')
+		self.assertEqual(row['description'], 'Student refused to follow staff direction.')
+		self.assertEqual(row['ed_codes'], '48900(k)')
+
+	def test_incident_suspension_days_for_item(self):
+		from dataexploration.incident_columns import incident_suspension_days_for_item
+
+		item = {
+			'dispositions': [
+				{'disposition': 'Out-of-School Suspension', 'duration_days': 2},
+			],
+		}
+		self.assertEqual(incident_suspension_days_for_item(item), 2)
+
+	def test_format_incident_date_display(self):
+		from dataexploration.incident_columns import format_incident_date_display
+
+		self.assertEqual(format_incident_date_display('2025-10-08'), '10/08/2025')
+		self.assertEqual(format_incident_date_display(''), '')
+
+	def test_incident_columns_in_catalog(self):
+		from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+
+		self.assertIn('incidents_major', COLUMN_DEFINITIONS)
+		self.assertIn('incidents_minor', COLUMN_DEFINITIONS)
+		self.assertIn('suspension_days', COLUMN_DEFINITIONS)
+		perf = COLUMN_CATEGORIES['performance']['columns']
+		self.assertIn('incidents_major', perf)
+		self.assertIn('incidents_minor', perf)
+		self.assertIn('suspension_days', perf)
+		self.assertLess(perf.index('suspension_indicator'), perf.index('incidents_major'))
+		self.assertLess(perf.index('incidents_major'), perf.index('incidents_minor'))
+		self.assertLess(perf.index('incidents_minor'), perf.index('suspension_days'))
+
+	def test_enabled_allowlist_auto_includes_incident_columns(self):
+		from unittest.mock import patch
+		from dataexploration.view_modules.column_management import get_enabled_columns
+
+		mock_cfg = type('Cfg', (), {'enabled_columns': ['ssid', 'suspension_indicator']})()
+		with patch('landing.utils.get_project_config', return_value=mock_cfg):
+			_defs, cats = get_enabled_columns()
+		perf = cats.get('performance', {}).get('columns', [])
+		self.assertEqual(
+			[
+				c for c in perf
+				if c in ('suspension_indicator', 'incidents_major', 'incidents_minor', 'suspension_days')
+			],
+			['suspension_indicator', 'incidents_major', 'incidents_minor', 'suspension_days'],
+		)
+
+	def test_apply_incident_columns(self):
+		from unittest.mock import patch
+		from dataexploration.incident_columns import apply_incident_columns
+
+		students = [
+			{'stu_annual_key': 'key1', 'ssid': '111'},
+			{'stu_annual_key': 'key2', 'ssid': '222'},
+		]
+		with patch('dataexploration.incident_columns.fetch_incidents_for_keys') as mock_fetch:
+			mock_fetch.return_value = {
+				'key1': self.SAMPLE_JSON,
+			}
+			apply_incident_columns(
+				students,
+				['incidents_major', 'incidents_minor', 'suspension_days'],
+			)
+		self.assertEqual(students[0]['incidents_major'], 2)
+		self.assertEqual(students[0]['incidents_minor'], 1)
+		self.assertEqual(students[0]['suspension_days'], 3)
+		self.assertEqual(students[1]['incidents_major'], 0)
+		self.assertEqual(students[1]['incidents_minor'], 0)
+		self.assertEqual(students[1]['suspension_days'], 0)
+
+
+class MarkallCourseAlignmentTests(SimpleTestCase):
+	def test_course_similarity_key_groups_variants(self):
+		from dataexploration.column_utils import course_similarity_key
+		self.assertEqual(course_similarity_key('Algebra 1'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra 1 HP'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra I'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Algebra 1 (H)'), 'algebra 1')
+		self.assertEqual(course_similarity_key('Geometry'), 'geometry')
+		self.assertEqual(course_similarity_key('Geometry HP'), 'geometry')
+		self.assertEqual(course_similarity_key('Pre-AP English I'), 'english 1')
+		self.assertEqual(course_similarity_key('English I CP'), 'english 1')
+		self.assertNotEqual(course_similarity_key('English 9'), course_similarity_key('English 10'))
+
+	def test_order_student_courses_aligns_similar_and_single_courses(self):
+		from dataexploration.column_utils import (
+			build_markall_course_rank_key,
+			order_student_courses_for_markall,
+		)
+		students = [
+			{'ssid': '1'},
+			{'ssid': '2'},
+			{'ssid': '3'},
+			{'ssid': '4'},
+		]
+		by_ssid = {
+			'1': {'Math Support': [('Q1', 'P')], 'Algebra 1': [('Q1', 'A')]},
+			'2': {'Algebra 1 HP': [('Q1', 'A+')], 'Math Support': [('Q1', 'P')]},
+			'3': {'Geometry': [('Q1', 'B+')]},
+			'4': {'Algebra 1': [('Q1', 'A')], 'Geometry': [('Q1', 'B')]},
+		}
+		rank_fn = build_markall_course_rank_key(students, by_ssid, {})
+		
+		# Student 1: Algebra 1 should be placed first, Math Support second
+		s1_courses = order_student_courses_for_markall(by_ssid['1'], rank_fn)
+		self.assertEqual(s1_courses, ['Algebra 1', 'Math Support'])
+
+		# Student 2: Algebra 1 HP should be placed first, Math Support second
+		s2_courses = order_student_courses_for_markall(by_ssid['2'], rank_fn)
+		self.assertEqual(s2_courses, ['Algebra 1 HP', 'Math Support'])
+
+		# Student 3: Geometry (only 1 course) stays in column 1 (first slot)
+		s3_courses = order_student_courses_for_markall(by_ssid['3'], rank_fn)
+		self.assertEqual(s3_courses, ['Geometry'])
+
+		# Student 4: Algebra 1 (more frequent) first, Geometry second
+		s4_courses = order_student_courses_for_markall(by_ssid['4'], rank_fn)
+		self.assertEqual(s4_courses, ['Algebra 1', 'Geometry'])
+
 

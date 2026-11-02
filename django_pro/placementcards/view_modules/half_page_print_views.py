@@ -575,6 +575,9 @@ def _draw_assessment_three_columns(pdf: Any, ssid: str, x: int, y: int, width: i
 def _question_prompt(question) -> str:
     text = question.question_text
     if question.question_type == 'checkbox':
+        choices = question.field_options.get('choices', []) if isinstance(question.field_options, dict) else []
+        if choices:
+            return f"{text}: " + '  '.join([f"[ ] {str(choice)}" for choice in choices[:4]])
         return f"[   ] {text}"
     if question.question_type == 'choice':
         choices = question.field_options.get('choices', []) if isinstance(question.field_options, dict) else []

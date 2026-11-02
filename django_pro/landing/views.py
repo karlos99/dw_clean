@@ -47,6 +47,20 @@ def index(request):
             for slot in slots:
                 slot.rendered_html = ''
                 slot.render_error = None
+                if slot.chart:
+                    parts = [p.strip() for p in (slot.chart.name or '').replace('\\', '/').split('/') if p.strip()]
+                    if len(parts) > 1:
+                        slot.chart_last_directory = parts[-2]
+                        slot.chart_display_name = parts[-1]
+                        slot.chart_short_location = f"{parts[-2]} / {parts[-1]}"
+                    else:
+                        slot.chart_last_directory = ""
+                        slot.chart_display_name = parts[0] if parts else slot.chart.name
+                        slot.chart_short_location = slot.chart.name
+                else:
+                    slot.chart_last_directory = ""
+                    slot.chart_display_name = "Chart"
+                    slot.chart_short_location = "Chart"
 
             def _render_slot(s):
                 if s.element_type != 'chart' or not s.chart_id:
@@ -107,7 +121,21 @@ def index(request):
             try:
                 from users.context_processors import _user_charts
                 placed_ids = {s.chart_id for s in slots if s.chart_id}
-                dock_charts = [c for c in _user_charts() if c['id'] not in placed_ids]
+                raw_charts = [c for c in _user_charts() if c['id'] not in placed_ids]
+                dock_charts = []
+                for c in raw_charts:
+                    chart_item = dict(c)
+                    name = chart_item.get('name') or ''
+                    parts = [p.strip() for p in name.replace('\\', '/').split('/') if p.strip()]
+                    if len(parts) > 1:
+                        chart_item['last_directory'] = parts[-2]
+                        chart_item['display_name'] = parts[-1]
+                        chart_item['short_location'] = f"{parts[-2]} / {parts[-1]}"
+                    else:
+                        chart_item['last_directory'] = ""
+                        chart_item['display_name'] = parts[0] if parts else name
+                        chart_item['short_location'] = name
+                    dock_charts.append(chart_item)
             except Exception:
                 dock_charts = None
 
@@ -214,7 +242,7 @@ def project_settings(request):
         if isinstance(access_rules, dict) and access_rules:
             # Clean roles and emails for each module
             cleaned_rules = {}
-            for key in ('tests', 'grades', 'diploma', 'ag', 'on_track', 'cte', 'recognition', 'flags'):
+            for key in ('tests', 'grades', 'diploma', 'ag', 'on_track', 'cte', 'behavior', 'recognition', 'flags'):
                 r = access_rules.get(key)
                 if isinstance(r, dict):
                     mode = r.get('mode', 'all')
@@ -301,6 +329,7 @@ def project_settings(request):
         ('ag', 'UC/CSU A-G', 'A-G course requirements.', 'Content tabs'),
         ('on_track', 'On Track', 'Grade-level A-G and diploma progress benchmarks (grades 9–11).', 'Content tabs'),
         ('cte', 'CTE Pathways', 'Career & technical education pathways.', 'Content tabs'),
+        ('behavior', 'Behavior', 'Discipline incidents (major/minor) by school year.', 'Content tabs'),
         ('recognition', 'Academic recognition', 'Summa / Magna / Cum Laude badge from unweighted GPA.', 'Header indicators'),
         ('flags', 'Support flags', 'SPED, 504, ELL, GATE, foster, homeless, … badges.', 'Header indicators'),
     ]

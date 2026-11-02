@@ -654,24 +654,58 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return set;
     };
+    // Marking periods selected on the umbrella. No values = all periods, which
+    // keeps saved queries created before period selection working unchanged.
+    const markallPeriodIncludeSet = (umbrellaKey) => {
+        const set = new Set();
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        vals.forEach((v) => {
+            const s = String(v);
+            if (s.startsWith('period:')) set.add(s.slice('period:'.length));
+        });
+        return set;
+    };
+    const markallFilterValuesWithoutPeriods = (umbrellaKey) => {
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        return vals.filter((v) => !String(v).startsWith('period:'));
+    };
     const getMarkallVisibleCourseInputs = (box, subject) => Array.from(box.querySelectorAll('input[data-markall-course]'))
         .filter((ci) => !isMarkallHiddenCourse(subject, ci.dataset.markallCourseName || ''));
     const getMarkallVisibleCourseNames = (box, subject) => getMarkallVisibleCourseInputs(box, subject)
         .map((ci) => String(ci.dataset.markallCourseName || '').trim())
         .filter(Boolean);
-    const persistMarkallCoursePicker = (umbrellaKey, mode, checkedNames, allVisibleNames) => {
-        const checked = [...new Set(checkedNames)];
-        const visible = [...new Set(allVisibleNames)];
-        if (mode === 'only') {
-            filters[umbrellaKey] = ['mode:only', ...checked.map((n) => `include:${n}`)];
-            return;
-        }
-        const excluded = visible.filter((n) => !checked.includes(n));
-        if (excluded.length) {
-            filters[umbrellaKey] = excluded.map((n) => `exclude:${n}`);
+    const applyMarkallFilterValues = (umbrellaKey, values) => {
+        if (values.length) {
+            filters[umbrellaKey] = values;
         } else {
             delete filters[umbrellaKey];
         }
+    };
+    const persistMarkallCoursePicker = (umbrellaKey, mode, checkedNames, allVisibleNames) => {
+        const checked = [...new Set(checkedNames)];
+        const visible = [...new Set(allVisibleNames)];
+        const existingValues = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        const periodValues = existingValues.filter((v) => String(v).startsWith('period:'));
+        let courseValues = [];
+        if (mode === 'only') {
+            courseValues = ['mode:only', ...checked.map((n) => `include:${n}`)];
+        } else {
+            const excluded = visible.filter((n) => !checked.includes(n));
+            courseValues = excluded.map((n) => `exclude:${n}`);
+        }
+        applyMarkallFilterValues(umbrellaKey, [...courseValues, ...periodValues]);
+    };
+    const persistMarkallPeriodPicker = (umbrellaKey, checkedPeriods, allPeriods) => {
+        const checked = [...new Set(checkedPeriods)].filter(Boolean);
+        const all = [...new Set(allPeriods)].filter(Boolean);
+        // Preserve the course picker values (mode/include/exclude).
+        const courseValues = markallFilterValuesWithoutPeriods(umbrellaKey);
+        // Only store an allowlist when the user narrowed the periods; checking
+        // everything removes the values so the default is truly "all".
+        const periodValues = checked.length && checked.length < all.length
+            ? checked.map((p) => `period:${p}`)
+            : [];
+        applyMarkallFilterValues(umbrellaKey, [...courseValues, ...periodValues]);
     };
     const updateMarkallModeButtons = (box, mode) => {
         box.querySelectorAll('[data-markall-mode-btn]').forEach((btn) => {
@@ -698,8 +732,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const active = markallUmbrellaActive(year, subject);
             box.classList.toggle('hidden', !active);
             const hint = box.querySelector('[data-markall-course-hint]');
+            const periodHint = box.querySelector('[data-markall-period-hint]');
             if (!active) {
                 if (hint) hint.textContent = '';
+                if (periodHint) periodHint.textContent = '';
                 return;
             }
             const umbrellaKey = markallUmbrellaKey(year, subject);
@@ -734,6 +770,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     hint.textContent = `${checked}/${visible.length} selected`;
                 }
             }
+
+            const periodInputs = Array.from(box.querySelectorAll('input[data-markall-period]'));
+            const selectedPeriods = markallPeriodIncludeSet(umbrellaKey);
+            periodInputs.forEach((pi) => {
+                const name = pi.dataset.markallPeriodName || '';
+                pi.checked = selectedPeriods.size ? selectedPeriods.has(name) : true;
+            });
+            if (periodHint) {
+                if (!periodInputs.length) {
+                    periodHint.textContent = '';
+                } else if (selectedPeriods.size) {
+                    const periodChecked = periodInputs.filter((pi) => pi.checked).length;
+                    periodHint.textContent = `${periodChecked}/${periodInputs.length}`;
+                } else {
+                    periodHint.textContent = 'All';
+                }
+            }
         });
     };
 
@@ -764,6 +817,47 @@ document.addEventListener('DOMContentLoaded', () => {
         const allNames = getMarkallVisibleCourseNames(box, subject);
         const checkedNames = checkedAfter.map((ci) => String(ci.dataset.markallCourseName || '').trim()).filter(Boolean);
         persistMarkallCoursePicker(umbrellaKey, mode, checkedNames, allNames);
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData({ debounceMs: 250 });
+    };
+
+    const getMarkallPeriodInputs = (box) => Array.from(box.querySelectorAll('input[data-markall-period]'));
+
+    const handleMarkallPeriodToggle = (periodCb) => {
+        const container = periodCb.closest('[data-category^="marks_"]');
+        const box = container ? container.querySelector('[data-markall-course-box]') : null;
+        if (!box) return;
+        const year = periodCb.dataset.markallYear || '';
+        const subject = periodCb.dataset.markallSubject || '';
+        if (!markallUmbrellaActive(year, subject)) {
+            syncMarkallCourseControls();
+            return;
+        }
+        const inputs = getMarkallPeriodInputs(box);
+        const checkedAfter = inputs.filter((pi) => pi.checked);
+        if (checkedAfter.length === 0) {
+            // Keep at least one period selected, mirroring the course picker.
+            periodCb.checked = true;
+            return;
+        }
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allPeriods = inputs.map((pi) => String(pi.dataset.markallPeriodName || '').trim()).filter(Boolean);
+        const checkedPeriods = checkedAfter.map((pi) => String(pi.dataset.markallPeriodName || '').trim()).filter(Boolean);
+        persistMarkallPeriodPicker(umbrellaKey, checkedPeriods, allPeriods);
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData({ debounceMs: 250 });
+    };
+
+    const selectAllMarkallPeriods = (box, year, subject) => {
+        if (!markallUmbrellaActive(year, subject)) return;
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allPeriods = getMarkallPeriodInputs(box)
+            .map((pi) => String(pi.dataset.markallPeriodName || '').trim())
+            .filter(Boolean);
+        if (!allPeriods.length) return;
+        persistMarkallPeriodPicker(umbrellaKey, allPeriods, allPeriods);
         resetPage();
         syncMarkallCourseControls();
         triggerLoadData({ debounceMs: 250 });
@@ -919,6 +1013,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     umbrellaCb.dataset.markallSubject || '',
                 );
             }
+            return;
+        }
+        const markallSelectAllPeriods = e.target.closest('[data-markall-select-all-periods]');
+        if (markallSelectAllPeriods) {
+            const box = markallSelectAllPeriods.closest('[data-markall-course-box]');
+            const umbrellaCb = box?.closest('[data-category^="marks_"]')?.querySelector('input[data-markall="1"]');
+            if (box && umbrellaCb) {
+                selectAllMarkallPeriods(
+                    box,
+                    umbrellaCb.dataset.markallYear || '',
+                    umbrellaCb.dataset.markallSubject || '',
+                );
+            }
+            return;
         }
     });
     const selectedCountEl = document.getElementById('selected-count');
@@ -1078,7 +1186,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const getCurrentFiltersForSave = () => {
         return {
             school_year: document.getElementById('school_year')?.value,
-            grade: document.getElementById('grade')?.value,
             status: document.getElementById('status')?.value,
             search: document.getElementById('search')?.value,
             ...getScheduleFilterValues(),
@@ -1095,7 +1202,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 sortDir,
                 search: document.getElementById('search')?.value || '',
                 school_year: document.getElementById('school_year')?.value || '',
-                grade: document.getElementById('grade')?.value || '',
                 status: document.getElementById('status')?.value || '',
                 ...getScheduleFilterValues(),
                 page,
@@ -1132,12 +1238,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const searchInput = document.getElementById('search');
             const schoolYearSelect = document.getElementById('school_year');
-            const gradeSelect = document.getElementById('grade');
             const statusInput = document.getElementById('status');
 
             if (searchInput && stored.search !== undefined) searchInput.value = stored.search || '';
             if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = resolveRelativeSchoolYear(stored.school_year || '');
-            if (gradeSelect && stored.grade !== undefined) gradeSelect.value = stored.grade || '';
             if (statusInput && stored.status !== undefined) statusInput.value = stored.status || '';
             if (scheduleFiltersEligible) {
                 if (stored.schedule_period !== undefined) setScheduleSelectValues('schedule_period', stored.schedule_period);
@@ -1180,7 +1284,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const searchInput = document.getElementById('search');
         const schoolYearSelect = document.getElementById('school_year');
-        const gradeSelect = document.getElementById('grade');
         const statusInput = document.getElementById('status');
 
         if (!isInitialSavedQueryLoad) {
@@ -1190,7 +1293,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 url.searchParams.set('search', searchInput.value);
             }
             if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
-            if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
             appendScheduleFilterParams(url);
         }
@@ -1206,18 +1308,27 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const statsCache = {};
+    const statsUnsupportedColumns = new Set();
+
+    const columnShowsStatsIcon = (col) => {
+        if (isPictureCol(col)) return false;
+        if (statsUnsupportedColumns.has(col)) return false;
+        return true;
+    };
+
     const clearStatsCache = () => {
         Object.keys(statsCache).forEach(k => delete statsCache[k]);
+        statsUnsupportedColumns.clear();
     };
 
     const fetchColumnStats = async (col) => {
+        if (statsUnsupportedColumns.has(col)) return null;
         if (statsCache[col]) return statsCache[col];
         if (!columnStatisticsUrl) return null;
 
         const url = new URL(columnStatisticsUrl, window.location.origin);
         url.searchParams.set('target_columns', JSON.stringify([col]));
         url.searchParams.set('school_year', document.getElementById('school_year')?.value || '');
-        url.searchParams.set('grade', document.getElementById('grade')?.value || '');
         url.searchParams.set('status', document.getElementById('status')?.value || '');
         url.searchParams.set('search', document.getElementById('search')?.value || '');
         if (filters && Object.keys(filters).length) {
@@ -1227,13 +1338,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const res = await fetch(url.toString(), { credentials: 'same-origin' });
-            if (!res.ok) return null;
+            if (!res.ok) {
+                statsUnsupportedColumns.add(col);
+                return null;
+            }
             const data = await res.json();
             const stats = data.columns && data.columns[col];
-            if (stats) statsCache[col] = stats;
-            return stats;
+            if (stats) {
+                statsCache[col] = stats;
+            } else {
+                statsUnsupportedColumns.add(col);
+            }
+            return stats || null;
         } catch (e) {
             console.error(e);
+            statsUnsupportedColumns.add(col);
             return null;
         }
     };
@@ -1247,13 +1366,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const buildColumnStructureFilters = () => {
         const columnFilters = {
             school_year: document.getElementById('school_year')?.value || '',
-            grade: document.getElementById('grade')?.value || '',
             status: document.getElementById('status')?.value || '',
-            search: document.getElementById('search')?.value || '',
         };
-        Object.keys(filters || {}).sort().forEach((k) => {
-            columnFilters[k] = filters[k];
-        });
         // Keep marks/test column trees aligned with schedule-filtered student cohort.
         if (scheduleFiltersEligible && isScheduleFilterBarActive()) {
             const sf = getScheduleFilterValues();
@@ -1683,6 +1797,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const DATE_COLUMNS = new Set(['birth_date', 'us_enter_date', 'fep_date', 'support_start_date', 'support_end_date']);
+    const NUMERIC_RANGE_FILTER_COLUMNS = new Set([
+        'atendace_rate',
+        'incidents_major',
+        'incidents_minor',
+        'suspension_days',
+    ]);
+    const isNumericRangeFilterColumn = (col) => NUMERIC_RANGE_FILTER_COLUMNS.has(col);
+    const MTSS_FILTER_COLUMNS = new Set([
+        'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
+        'support_start_date', 'support_end_date', 'case_id', 'outcome', 'outcome_action',
+    ]);
+    const isMtssFilterColumn = (col) => MTSS_FILTER_COLUMNS.has(col) || (typeof col === 'string' && col.startsWith('mtss_'));
     const isDateLikeString = (value) => {
         if (typeof value !== 'string') return false;
         return /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(value);
@@ -1703,7 +1829,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return datePart;
         }
     };
+    const INCIDENT_ZERO_COLUMNS = new Set(['incidents_major', 'incidents_minor', 'suspension_days']);
+
     const formatValueForColumn = (col, value) => {
+        if (INCIDENT_ZERO_COLUMNS.has(col)) {
+            if (value === null || value === undefined || value === '' || value === '—') return 0;
+            return value;
+        }
         if (value === null || value === undefined) return '—';
         if (DATE_COLUMNS.has(col)) {
             const s = String(value);
@@ -1743,12 +1875,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (Array.isArray(payload.selected_columns)) {
-            selectedColumns = payload.selected_columns;
+            const clientUmbrellas = new Set();
+            for (const col of selectedColumns) {
+                const n = normaliseKey(col);
+                if (n.startsWith('markall_')) {
+                    const u = markallUmbrellaKeyFromColumn(n);
+                    if (u) clientUmbrellas.add(u);
+                } else if (n.startsWith('apall_')) {
+                    const u = apallUmbrellaKeyFromColumn(n);
+                    if (u) clientUmbrellas.add(u);
+                }
+            }
+            const serverCols = [...payload.selected_columns];
+            clientUmbrellas.forEach((u) => {
+                const prefix = `${u}_`;
+                const hasInServer = serverCols.some((sc) => {
+                    const sn = normaliseKey(sc);
+                    return sn === u || sn.startsWith(prefix);
+                });
+                if (!hasInServer) {
+                    serverCols.push(u);
+                }
+            });
+            selectedColumns = serverCols;
             invalidateSelectedColumnIndex();
         }
 
-        if (payload.filters) {
-            filters = payload.filters;
+        if (payload.filters && typeof payload.filters === 'object') {
+            const preservedUmbrellaFilters = {};
+            Object.keys(filters).forEach((k) => {
+                if ((k.startsWith('markall_') && !isMarkallPairKey(k)) ||
+                    (k.startsWith('apall_') && !isApallPairKey(k))) {
+                    preservedUmbrellaFilters[k] = filters[k];
+                }
+            });
+            filters = Object.assign({}, payload.filters, preservedUmbrellaFilters);
         }
         updateScheduleFilterChrome();
 
@@ -1761,17 +1922,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const searchInput = document.getElementById('search');
         const schoolYearSelect = document.getElementById('school_year');
-        const gradeSelect = document.getElementById('grade');
         const statusInput = document.getElementById('status');
 
-        if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
+        if (payload.search !== undefined && searchInput && document.activeElement !== searchInput) searchInput.value = payload.search || '';
         if (payload.school_year !== undefined && schoolYearSelect) {
             const resolvedYear = resolveRelativeSchoolYear(payload.school_year || '');
             if (resolvedYear && [...schoolYearSelect.options].some(o => o.value === resolvedYear)) {
                 schoolYearSelect.value = resolvedYear;
             }
         }
-        if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
         applyScheduleFilterPayload(payload);
 
@@ -1894,7 +2053,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Race List is stored in add_data JSON; always offer the filter UI when the
             // column is visible (options may load from PostgreSQL after the table renders).
             const hasFilter = optionsForCol.length > 0 || hasActiveFilter || col === 'race_list'
-                || col.startsWith('course_prog_');
+                || col.startsWith('course_prog_') || isMtssFilterColumn(col);
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
             const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';
@@ -1923,18 +2082,19 @@ document.addEventListener('DOMContentLoaded', () => {
             html += `<span class="text-[10px] ${sortColorClass} group-hover/sort:text-white transition-colors flex-shrink-0">${sortIcon}</span>`;
             html += `</div>`;
 
-            // Stats Button
-            html += `<div class="relative ml-1">`;
-            html += `<button draggable="false" type="button" data-action="toggle-stats" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 text-slate-500 group-hover:text-slate-300 transition-colors" title="Column Statistics">`;
-            html += `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>`;
-            html += `</button>`;
-            html += `<div class="hidden absolute ${alignClass} top-full mt-2 w-72 bg-white rounded-md shadow-xl border border-slate-200 z-30 text-slate-700 font-normal normal-case text-left cursor-default p-0" data-stats-panel="${escapeHtml(col)}">`;
-            html += `<div class="p-2 border-b border-slate-100 font-bold text-slate-800 bg-slate-50 rounded-t-md flex justify-between items-center text-xs"><span>Statistics</span><button data-action="toggle-stats" data-column="${escapeHtml(col)}" class="text-slate-400 hover:text-red-500 px-1">×</button></div>`;
-            html += `<div class="p-2 max-h-80 overflow-y-auto" data-stats-content="${escapeHtml(col)}"><div class="animate-pulse flex space-x-4"><div class="flex-1 space-y-2 py-1"><div class="h-2 bg-slate-200 rounded"></div><div class="h-2 bg-slate-200 rounded w-5/6"></div></div></div></div>`;
-            html += `</div>`;
-            html += `</div>`;
+            if (columnShowsStatsIcon(col)) {
+                html += `<div class="relative ml-1">`;
+                html += `<button draggable="false" type="button" data-action="toggle-stats" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 text-slate-500 group-hover:text-slate-300 transition-colors" title="Column Statistics">`;
+                html += `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>`;
+                html += `</button>`;
+                html += `<div class="hidden absolute ${alignClass} top-full mt-2 w-72 bg-white rounded-md shadow-xl border border-slate-200 z-30 text-slate-700 font-normal normal-case text-left cursor-default p-0" data-stats-panel="${escapeHtml(col)}">`;
+                html += `<div class="p-2 border-b border-slate-100 font-bold text-slate-800 bg-slate-50 rounded-t-md flex justify-between items-center text-xs"><span>Statistics</span><button data-action="toggle-stats" data-column="${escapeHtml(col)}" class="text-slate-400 hover:text-red-500 px-1">×</button></div>`;
+                html += `<div class="p-2 max-h-80 overflow-y-auto" data-stats-content="${escapeHtml(col)}"><div class="animate-pulse flex space-x-4"><div class="flex-1 space-y-2 py-1"><div class="h-2 bg-slate-200 rounded"></div><div class="h-2 bg-slate-200 rounded w-5/6"></div></div></div></div>`;
+                html += `</div>`;
+                html += `</div>`;
+            }
 
-            if (hasFilter || col === 'atendace_rate') {
+            if (hasFilter || isNumericRangeFilterColumn(col)) {
                 const filterIconClass = hasActiveFilter ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300';
                 html += `<div class="relative ml-1">`;
                 html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 ${filterIconClass} transition-colors" title="Filter list">`;
@@ -1942,17 +2102,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 html += `</button>`;
                 html += `<div class="hidden absolute right-0 mt-2 w-56 bg-white rounded-md shadow-xl border border-slate-200 py-1 z-20 text-slate-700 font-normal normal-case text-left" data-filter-panel="${escapeHtml(col)}">`;
                 
-                if (col === 'atendace_rate') {
+                if (isNumericRangeFilterColumn(col)) {
+                     const isAttendance = col === 'atendace_rate';
                      html += `<div class="p-2 border-b border-slate-200 space-y-2 bg-slate-50">`;
-                     html += `<div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Range %</div>`;
+                     html += `<div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">${isAttendance ? 'Range %' : 'Count range'}</div>`;
                      html += `<div class="flex gap-2 items-center">`;
-                     html += `<input type="number" placeholder="Min" id="filter-min-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
-                     html += `<span class="text-slate-400 text-xs">to</span>`;
-                     html += `<input type="number" placeholder="Max" id="filter-max-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
+                     if (isAttendance) {
+                         html += `<input type="number" placeholder="Min" id="filter-min-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
+                         html += `<span class="text-slate-400 text-xs">to</span>`;
+                         html += `<input type="number" placeholder="Max" id="filter-max-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
+                     } else {
+                         html += `<input type="number" placeholder="Min" id="filter-min-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0">`;
+                         html += `<span class="text-slate-400 text-xs">to</span>`;
+                         html += `<input type="number" placeholder="Max" id="filter-max-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0">`;
+                     }
                      html += `</div>`;
                      html += `<div class="flex flex-wrap gap-1.5">`;
-                     html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value="<90" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">< 90%</button>`;
-                     html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value=">=95" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">95%+</button>`;
+                     if (isAttendance) {
+                         html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value="<90" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">< 90%</button>`;
+                         html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value=">=95" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">95%+</button>`;
+                     } else {
+                         html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value="0" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">0</button>`;
+                         html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value=">=1" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">≥ 1</button>`;
+                         html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value="1-3" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">1–3</button>`;
+                     }
                      html += `</div>`;
                      html += `<button type="button" data-action="apply-range" data-column="${col}" class="w-full text-xs bg-blue-600 text-white py-1 rounded hover:bg-blue-700 transition-colors">Apply Range</button>`;
                      html += `</div>`;
@@ -2173,7 +2346,10 @@ document.addEventListener('DOMContentLoaded', () => {
                          html += `</div>`;
                          contentEl.innerHTML = html;
                      } else {
-                         contentEl.innerHTML = '<div class="text-red-500 p-2 text-xs">Failed to load statistics.</div>';
+                         statsUnsupportedColumns.add(col);
+                         panel.classList.add('hidden');
+                         const statsWrap = toggleStatsEl.closest('.relative.ml-1');
+                         if (statsWrap) statsWrap.remove();
                      }
                 }
             } else {
@@ -2345,6 +2521,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let loadDataDebounceTimer = null;
     const triggerLoadData = (opts = {}) => {
+        window.clearTimeout(loadDataDebounceTimer);
+        loadDataDebounceTimer = null;
+        loadDataSeq++;
+        if (loadAbort) {
+            loadAbort.abort();
+            loadAbort = null;
+        }
+        inFlightUrl = '';
+
         const run = () => {
             loadDataDebounceTimer = null;
             if (typeof window.loadData === 'function') {
@@ -2354,11 +2539,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
         if (opts.debounceMs) {
-            window.clearTimeout(loadDataDebounceTimer);
             loadDataDebounceTimer = window.setTimeout(run, opts.debounceMs);
             return;
         }
-        window.clearTimeout(loadDataDebounceTimer);
         run();
     };
 
@@ -2408,7 +2591,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const tp = tail.split('_');
                     if (tp.length >= 2 && /^\d{4}$/.test(tp[0]) && /^\d{4}$/.test(tp[1])) {
                         if (`${tp[0]}-${tp[1]}` !== yearHyphen) return true;
-                        const restNorm = '_'.join(tp.slice(2));
+                        const restNorm = tp.slice(2).join('_');
                         return !restNorm.startsWith(`${subjNorm}_`);
                     }
                     return true;
@@ -2519,6 +2702,12 @@ document.addEventListener('DOMContentLoaded', () => {
             resetPage();
             renderSelectedColumns();
             triggerLoadData();
+            return;
+        }
+
+        const periodCheckbox = event.target.closest('input[data-markall-period]');
+        if (periodCheckbox) {
+            handleMarkallPeriodToggle(periodCheckbox);
             return;
         }
 
@@ -2724,7 +2913,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (pastedIdList) clearIdList();
             resetPage();
             triggerLoadData();
-        }, 400));
+        }, 800));
+
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (pastedIdList) clearIdList();
+                resetPage();
+                triggerLoadData();
+            }
+        });
     }
 
     if (searchIdListClear) {
@@ -3118,12 +3316,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const searchInput = document.getElementById('search');
             const schoolYearSelect = document.getElementById('school_year');
-            const gradeSelect = document.getElementById('grade');
             const statusInput = document.getElementById('status');
 
             if (searchInput) searchInput.value = '';
             if (schoolYearSelect) schoolYearSelect.value = '';
-            if (gradeSelect) gradeSelect.value = '';
             if (statusInput) statusInput.value = 'Active';
             if (scheduleFiltersEligible) {
                 updateScheduleFilterChrome();

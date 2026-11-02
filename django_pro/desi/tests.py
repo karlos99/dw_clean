@@ -1,4 +1,5 @@
-from django.test import TestCase
+from django.test import TestCase, RequestFactory
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import connection
@@ -6,6 +7,7 @@ from django.urls import reverse
 from django.core import signing
 import csv
 import io
+from importlib import import_module
 from unittest import mock
 
 from studata.models import CurrentStudent, Result, School as StudataSchool, Test
@@ -37,6 +39,8 @@ from desi.views import (
     EXPORT_ENDPOINT_SIGNING_SALT,
 )
 from desi import importers
+from users.context_processors import navigation_pages, user_can_access_page
+from users.models_pages import Page
 
 User = get_user_model()
 
@@ -3446,6 +3450,132 @@ class Desi504AdminRoleTests(TestCase):
         )
         # Superusers have full rights to all students, including 504.
         self.assertTrue(can_edit_desi(su, student=self.student_504))
+
+
+class DesiSchoolViewRoleTests(TestCase):
+    """School View users can open DESI read-only; editing roles keep their rights."""
+
+    def setUp(self):
+        cache.delete('landing:project_config')
+        self.school_view_role = Role.objects.create(name="School View")
+        self.teacher_role = Role.objects.create(name="Teacher")
+        self.coordinator_role, _ = Role.objects.get_or_create(
+            name="Testing Coordinator", defaults={"description": "Testing Coordinator"}
+        )
+        self.admin504_role, _ = Role.objects.get_or_create(
+            name="504_Admin", defaults={"description": "504 editor"}
+        )
+
+        def make_user(username, roles, schools=("SCH-SV",)):
+            user = User.objects.create_user(
+                username=username, email=username, password="password123"
+            )
+            user.roles.add(*roles)
+            user.schools = list(schools)
+            user.save()
+            return user
+
+        self.viewer = make_user("schoolview@test.com", [self.school_view_role])
+        self.viewer_coordinator = make_user(
+            "schoolview-coord@test.com",
+            [self.school_view_role, self.coordinator_role],
+        )
+        self.viewer_teacher = make_user(
+            "schoolview-teacher@test.com",
+            [self.school_view_role, self.teacher_role],
+        )
+        self.viewer_504 = make_user(
+            "schoolview-504@test.com", [self.school_view_role, self.admin504_role]
+        )
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="sv-student", ssid="sv-ssid", student_id="sv",
+            student_name="School View Student", grade="04", in_504="N",
+            school_state_id="SCH-SV", school_year="2025-2026", status="Active",
+        )
+        self.student_504 = CurrentStudent.objects.create(
+            stu_annual_key="sv-student-504", ssid="sv-ssid-504", student_id="sv504",
+            student_name="School View 504 Student", grade="04", in_504="Y",
+            school_state_id="SCH-SV", school_year="2025-2026", status="Active",
+        )
+
+    def test_school_view_cannot_edit_students(self):
+        self.assertFalse(can_edit_desi(self.viewer, student=self.student))
+        self.assertFalse(can_edit_desi(self.viewer, student=self.student_504))
+
+    def test_school_view_plus_coordinator_keeps_edit_rights(self):
+        self.assertTrue(can_edit_desi(self.viewer_coordinator, student=self.student))
+        # 504 students remain editable only by 504_Admin.
+        self.assertFalse(can_edit_desi(self.viewer_coordinator, student=self.student_504))
+        # Other roles that already grant edit rights keep them additively.
+        self.assertTrue(can_edit_desi(self.viewer_teacher, student=self.student))
+
+    def test_school_view_plus_504_admin_keeps_504_edit_rights(self):
+        self.assertTrue(can_edit_desi(self.viewer_504, student=self.student_504))
+        # 504_Admin alone does not grant edit rights on non-504 students.
+        self.assertFalse(can_edit_desi(self.viewer_504, student=self.student))
+
+    def test_school_view_workspace_and_list_are_read_only(self):
+        self.client.force_login(self.viewer)
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["can_edit"])
+
+        response = self.client.get(reverse("desi:student_list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/desi/student/", response["Location"])
+
+    def test_school_view_post_does_not_save(self):
+        assessment = Assessment.objects.create(name="School View Blocked", is_active=True)
+        self.client.force_login(self.viewer)
+
+        response = self.client.post(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            {"completed_assessments": [str(assessment.id)]},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            StudentAssessmentCompletion.objects.filter(
+                student_annual_key=self.student.stu_annual_key, assessment=assessment
+            ).exists()
+        )
+
+    def test_migration_adds_school_view_to_desi_students_page(self):
+        parent = Page.objects.create(
+            slug="desi",
+            name="DESI",
+            url_path="#",
+            status="active",
+            show_in_menu=True,
+            menu_roles=["Project Admin"],
+        )
+        page = Page.objects.create(
+            slug="desi-students",
+            name="Student List",
+            url_path="/desi/",
+            status="active",
+            required_roles=["Teacher", "School Admin", "Project Admin", "Testing Coordinator"],
+            show_in_menu=True,
+            parent_page=parent,
+        )
+
+        migration = import_module("desi.migrations.0035_desi_students_school_view")
+        migration.add_school_view_access(django_apps, None)
+
+        page.refresh_from_db()
+        self.assertIn("School View", page.required_roles)
+        self.assertTrue(user_can_access_page(self.viewer, page))
+
+        request = RequestFactory().get("/")
+        request.user = self.viewer
+        context = navigation_pages(request)
+        desi_page = next(p for p in context["navigation_pages"] if p.slug == "desi")
+        self.assertIn(
+            "desi-students", [child.slug for child in desi_page.accessible_children]
+        )
 
 
 class DesiStateUploadExportTests(TestCase):

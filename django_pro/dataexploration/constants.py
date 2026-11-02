@@ -41,6 +41,9 @@ COLUMN_DEFINITIONS = {
     "migrant": "Migrant",
     "atendace_rate": "Attendance Rate",
     "suspension_indicator": "Suspension",
+    "incidents_major": "Major Incidents",
+    "incidents_minor": "Minor Incidents",
+    "suspension_days": "Suspension Days",
     "avid": "AVID",
     "avid_type": "AVID Type",
 
@@ -76,7 +79,13 @@ COLUMN_CATEGORIES = {
     },
     "performance": {
         "title": "Performance & Behavior",
-        "columns": ["atendace_rate", "suspension_indicator"]
+        "columns": [
+            "atendace_rate",
+            "suspension_indicator",
+            "incidents_major",
+            "incidents_minor",
+            "suspension_days",
+        ]
     },
     "mtss": {
         "title": "MTSS (Tier 2)",

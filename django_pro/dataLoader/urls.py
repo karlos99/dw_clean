@@ -54,4 +54,14 @@ urlpatterns = [
     path('sat/import/<int:pk>/progress/', views.SATImportProgressView.as_view(), name='sat_import_progress'),
     path('sat/import/<int:pk>/delete/', views.sat_delete_import, name='sat_delete_import'),
     path('sat/import/<int:pk>/publish/', views.sat_toggle_publish, name='sat_toggle_publish'),
+
+    path('ib/upload/', views.IBUploadView.as_view(), name='ib_upload'),
+    path('ib/preview/', views.IBPreviewView.as_view(), name='ib_preview'),
+    path('ib/search-student/', views.ib_student_search, name='ib_student_search'),
+    path('ib/import/<int:pk>/', views.IBImportDetailView.as_view(), name='ib_import_detail'),
+    path('ib/import/<int:pk>/status/', views.ib_import_status, name='ib_import_status'),
+    path('ib/import/<int:pk>/progress/', views.IBImportProgressView.as_view(), name='ib_import_progress'),
+    path('ib/import/<int:pk>/delete/', views.ib_delete_import, name='ib_delete_import'),
+    path('ib/import/<int:pk>/publish/', views.ib_toggle_publish, name='ib_toggle_publish'),
+    path('ib/import/<int:pk>/save-overrides/', views.ib_save_manual_overrides, name='ib_save_manual_overrides'),
 ]

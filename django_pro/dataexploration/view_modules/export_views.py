@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import StreamingHttpResponse
 from django.db import connections
 from django.core.cache import cache
+from django.urls import reverse
 import json
 import csv
 import hashlib
@@ -21,13 +22,17 @@ from ..catalog_columns import (
 )
 from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from ..mtss_columns import is_mtss_column, apply_mtss_columns
+from ..incident_columns import is_incident_column, apply_incident_columns
 from ..column_utils import (
     _get_display_name,
     export_csv_cell,
     enrich_students_tests_marks,
     _fetch_marks_live_from_alt,
     group_marks_by_ssid_course,
+    get_sat_columns,
     markall_course_filter_fn,
+    build_markall_course_rank_key,
+    order_student_courses_for_markall,
     parse_markall_key,
     markall_key as _markall_key,
     parse_sat_column_key,
@@ -35,7 +40,18 @@ from ..column_utils import (
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
-from .filter_sql import apply_column_filters, extract_markall_course_picker, markall_course_filter_parts
+from .filter_sql import (
+    append_de_student_status_where,
+    append_grade_where_clause,
+    apply_column_filters,
+    extract_markall_course_picker,
+    extract_markall_period_includes,
+    incident_sql_backend_for_request,
+    list_query_uses_postgres,
+    markall_course_filter_parts,
+    markall_period_filter_parts,
+)
+from ..incident_pg_sql import incident_join_sql_fragment
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -170,8 +186,13 @@ def export_students_csv(request):
     sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
 
+    # ``grade`` is intentionally not a core key here: the Data Explorer sends
+    # it as a column filter (``filters={"grade": [...]}``), exactly like the
+    # student list does. Keep it in the filters dict so the same predicate is
+    # applied to the export; the legacy top-level ``grade`` parameter below is
+    # still supported.
     CORE_FILTER_KEYS = {
-        'search', 'school_year', 'grade', 'status',
+        'search', 'school_year', 'status',
         'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
     }
 
@@ -188,6 +209,12 @@ def export_students_csv(request):
 
     if isinstance(filters, dict):
         filters = {k: v for k, v in filters.items() if k not in CORE_FILTER_KEYS}
+        # The explorer applies Grade as a column filter. Move it to the single
+        # top-level grade predicate so the table and the export agree (and so
+        # a legacy ?grade= parameter still takes precedence when present).
+        filters_grade = filters.pop('grade', None)
+        if not grade and filters_grade:
+            grade = filters_grade
 
     # If saved query defines umbrella course/assessment filters that were not sent in filters, preserve them
     if saved_filters and isinstance(filters, dict):
@@ -261,9 +288,13 @@ def export_students_csv(request):
         selected_columns = new_selected
 
     markall_pickers = extract_markall_course_picker(filters)
+    markall_period_pickers = extract_markall_period_includes(filters)
 
     def _markall_course_picker_for_umbrella(umbrella):
         return markall_pickers.get(umbrella, {'mode': 'all', 'courses': set()})
+
+    def _markall_periods_for_umbrella(umbrella):
+        return markall_period_pickers.get(umbrella, set())
 
     # ── AP "All Results" expansion setup ───────────────────────────────────
     # The apall_<year> umbrella (or already-expanded pairs) collapses back to
@@ -328,6 +359,22 @@ def export_students_csv(request):
                     names.add(s[len('exclude:'):])
         return names
 
+    cp_filters, filters_without_cp = split_course_program_filters(filters)
+    list_uses_pg = list_query_uses_postgres(
+        filters_without_cp,
+        sort_by,
+        search=search,
+        search_ids=search_ids,
+        schedule_marks_filters=schedule_marks_filters,
+    )
+    incident_sql_backend = incident_sql_backend_for_request(
+        filters_without_cp,
+        sort_by,
+        search=search,
+        search_ids=search_ids,
+        schedule_marks_filters=schedule_marks_filters,
+    )
+
     # 2. Preparation for Query
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
@@ -354,6 +401,10 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
     ))
+    selected_ib_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
+    ))
     selected_survey_cols = [
         c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
     ]
@@ -365,16 +416,21 @@ def export_students_csv(request):
         [c for c in selected_columns if is_mtss_column(c)]
         + [k for k in filter_keys if is_mtss_column(k)]
     ))
+    selected_incident_cols = list(set(
+        [c for c in selected_columns if is_incident_column(c)]
+        + [k for k in filter_keys if is_incident_column(k)]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
         and not is_mtss_column(c)
+        and not is_incident_column(c)
         and c in COLUMN_DEFINITIONS
         and c not in VIRTUAL_COLUMNS
     ]
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     needs_enroll = (
         any(c in enroll_fields for c in selected_columns)
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
@@ -412,6 +468,14 @@ def export_students_csv(request):
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 
+    needs_incident_predicate = bool(sort_by and is_incident_column(sort_by))
+    if isinstance(filters, dict):
+        needs_incident_predicate = needs_incident_predicate or any(
+            is_incident_column(k) and filters.get(k) for k in filters
+        )
+    if needs_incident_predicate and incident_sql_backend == 'ch':
+        join_sql += incident_join_sql_fragment(join_sql, backend='ch')
+
     # Streaming Response setup
     class Echo:
         def write(self, value): return value
@@ -426,7 +490,7 @@ def export_students_csv(request):
             from clickhouse_utils.executor import QueryExecutor
             # Local working copy (the markall expansion below re-binds it).
             export_cols = list(selected_columns)
-            with QueryExecutor(analytics=True).cursor() as cursor:
+            with QueryExecutor(analytics=True, force_postgres=list_uses_pg).cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
                     s = (col_key or '').replace('-', '_')
@@ -468,9 +532,11 @@ def export_students_csv(request):
                             win_norm = _norm_part(test_window).strip('_')
                             key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
                             
-                            for metric in ('ss', 'pl', 'dfp'):
+                            for metric in ('ss', 'pl', 'elpi_level', 'dfp'):
                                 norm_key = f"test_{key_base}_{metric.upper()}"
                                 original_key = normalized_to_original.get(norm_key)
+                                if not original_key and metric == 'elpi_level':
+                                    original_key = normalized_to_original.get(f"test_{key_base}_ELPI")
                                 if original_key:
                                     info = {
                                         'col_name': original_key, 'year': yr, 'test_name': (test_name or ''), 
@@ -478,6 +544,8 @@ def export_students_csv(request):
                                     }
                                     if metric == 'dfp':
                                         info['other_info_key'] = 'dfp'
+                                    elif metric == 'elpi_level':
+                                        info['other_info_key'] = 'ELPI_level'
                                     test_cols_info.append(info)
                                     test_col_map[original_key] = info
                                     test_col_map[original_key.replace('-', '_')] = info
@@ -630,12 +698,22 @@ def export_students_csv(request):
                         })
 
                 # Prepare Dynamic Headers
+                if selected_sat_cols:
+                    # Populate COLUMN_DEFINITIONS with SAT labels; the module
+                    # constant is only filled when the selector is built.
+                    try:
+                        get_sat_columns()
+                    except Exception:
+                        pass
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
+                # The Data Explorer renders pictures from the student-picture
+                # endpoint; a CSV gets the absolute URL so the column is usable.
+                dynamic_labels['picture'] = 'Picture URL'
                 if course_program_columns_enabled():
                     dynamic_labels.update(COURSE_PROGRAM_DEFINITIONS)
                 if test_cols_info:
                     for info in test_cols_info:
-                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                         metric_label = metric_map.get(info['metric'], info['metric'])
                         
                         display_test = _get_display_name(info['test_name'])
@@ -660,6 +738,16 @@ def export_students_csv(request):
                     else:
                         dynamic_labels[info['col_name']] = f"{info['award']} {info['year']}"
 
+                if selected_ib_cols:
+                    from dataexploration.column_utils import parse_ib_column_key
+                    for _col in selected_ib_cols:
+                        _parsed = parse_ib_column_key(_col)
+                        if _parsed:
+                            kind_label = 'Grade (PL)' if _parsed['kind'] == 'PL' else ('Category' if _parsed['kind'] == 'CAT' else 'Level')
+                            subj_disp = _parsed['subj_slug'].replace('_', ' ')
+                            lvl_disp = f" ({_parsed['level']})" if _parsed.get('level') else ""
+                            dynamic_labels[_col] = f"{subj_disp}{lvl_disp} {kind_label} {_parsed['year']}"
+
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
                 base_params = []
@@ -673,6 +761,7 @@ def export_students_csv(request):
                 filters_value = filters
                 
                 student_list_id = request.GET.get('student_list')
+                de_status_skip_all_scope = False
                 if student_list_id:
                     list_ssids = None
 
@@ -712,6 +801,7 @@ def export_students_csv(request):
                             grade_value = None
                             status_value = None
                             filters_value = {}
+                            de_status_skip_all_scope = True
 
                 search_ids_value = search_ids
                 if search_ids_value:
@@ -722,27 +812,14 @@ def export_students_csv(request):
                     base_params.extend([f'%{search_value}%'] * 3)
                 _append_school_year_filter(base_where_clauses, base_params, school_year_value)
                 if grade_value:
-                    if isinstance(grade_value, list):
-                        if len(grade_value) == 1:
-                            base_where_clauses.append("cs.grade = %s")
-                            base_params.append(grade_value[0])
-                        elif len(grade_value) > 1:
-                            base_where_clauses.append("cs.grade = ANY(%s)")
-                            base_params.append(grade_value)
-                    else:
-                        base_where_clauses.append("cs.grade = %s")
-                        base_params.append(grade_value)
-                if status_value:
-                    if isinstance(status_value, list):
-                        if len(status_value) == 1:
-                            base_where_clauses.append("cs.status = %s")
-                            base_params.append(status_value[0])
-                        elif len(status_value) > 1:
-                            base_where_clauses.append("cs.status = ANY(%s)")
-                            base_params.append(status_value)
-                    else:
-                        base_where_clauses.append("cs.status = %s")
-                        base_params.append(status_value)
+                    # Match "7", "07" and numeric variants exactly like load_students.
+                    append_grade_where_clause(base_where_clauses, base_params, grade_value)
+                append_de_student_status_where(
+                    base_where_clauses,
+                    base_params,
+                    status_value,
+                    apply_all_when_unset=not de_status_skip_all_scope,
+                )
 
                 # Apply active school context or enforce school permissions
                 _apply_de_school_filter(base_where_clauses, base_params, request.user)
@@ -774,6 +851,7 @@ def export_students_csv(request):
                     where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
                     db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
                     ap_exam_infos, ap_award_infos,
+                    incident_sql_backend=incident_sql_backend,
                 )
                 apply_course_program_filters_for_clickhouse(
                     where_clauses, params, cp_filters, base_where_clauses, base_params,
@@ -784,7 +862,6 @@ def export_students_csv(request):
                     if isinstance(k, str) and k.startswith('survey_') and v
                 }
                 if survey_filters:
-                    from ..survey_utils import get_survey_columns
                     _survey_col_meta = get_survey_columns().get('col_meta', {})
                     for _sr_col_key, _sr_values in survey_filters.items():
                         _sr_meta = _survey_col_meta.get(_sr_col_key)
@@ -828,6 +905,9 @@ def export_students_csv(request):
                         course_filter_sql, course_extra_params = markall_course_filter_parts(
                             subject, _markall_course_picker_for_umbrella(umbrella)
                         )
+                        period_filter_sql, period_extra_params = markall_period_filter_parts(
+                            _markall_periods_for_umbrella(umbrella),
+                        )
                         markall_cache_key = (
                             f"dataexp:markall_max:{_sync_v}:"
                             + hashlib.md5(json.dumps({
@@ -838,6 +918,8 @@ def export_students_csv(request):
                                 'subject': subject,
                                 'cf': course_filter_sql,
                                 'cep': [str(p) for p in course_extra_params],
+                                'pf': period_filter_sql,
+                                'pep': [str(p) for p in period_extra_params],
                             }, sort_keys=True).encode()).hexdigest()
                         )
                         max_val = cache.get(markall_cache_key)
@@ -852,6 +934,7 @@ def export_students_csv(request):
                                 WHERE {where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
                                   {course_filter_sql}
+                                  {period_filter_sql}
                                 GROUP BY sm.ssid
                             ) t
                             """
@@ -859,7 +942,7 @@ def export_students_csv(request):
                             pg_query = pg_sql_from_ch_marks_sql(ch_query)
                             res = _fetchall_ch_or_pg(
                                 ch_query,
-                                params + [year, subject] + course_extra_params,
+                                params + [year, subject] + course_extra_params + period_extra_params,
                                 pg_sql=pg_query,
                             )
                             max_val = min(int(res[0][0] or 0), 10) if res else 0
@@ -872,7 +955,7 @@ def export_students_csv(request):
                         if parsed and parsed['kind'] is None:
                             year = parsed['year']
                             subject = _markall_subject_actual(year, parsed['subject_norm'])
-                            n = markall_max.get((year, subject), 0)
+                            n = max(markall_max.get((year, subject), 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"{c}_{i}_COURSE")
                                 new_selected.append(f"{c}_{i}_MARKS")
@@ -882,7 +965,7 @@ def export_students_csv(request):
 
                 # Definitions for the Marks "All Marks" wide-pair columns
                 for (year, subject), umbrella in markall_years.items():
-                    n = markall_max.get((year, subject), 0)
+                    n = max(markall_max.get((year, subject), 0), 1)
                     for i in range(1, n + 1):
                         dynamic_labels[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject}) {year}"
                         dynamic_labels[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject}) {year}"
@@ -916,7 +999,7 @@ def export_students_csv(request):
                             SELECT COALESCE(MAX(cnt), 0)
                             FROM (
                                 SELECT r.ssid, COUNT(*) AS cnt
-                                FROM analytics_ap_exam_results r
+                                FROM analytics_ap_results r
                                 INNER JOIN current_student cs ON r.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {where_sql}
@@ -954,7 +1037,7 @@ def export_students_csv(request):
                         yk = _apall_year_key(c)
                         if yk:
                             year = yk.replace('_', '-')
-                            n = apall_max.get(year, 0)
+                            n = max(apall_max.get(year, 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"apall_{yk}_{i}_SUBJECT")
                                 new_selected.append(f"apall_{yk}_{i}_PL")
@@ -965,7 +1048,7 @@ def export_students_csv(request):
                 # Definitions for the AP "All Results" wide-pair columns
                 for year in apall_years:
                     yk = year.replace('-', '_')
-                    n = apall_max.get(year, 0)
+                    n = max(apall_max.get(year, 0), 1)
                     for i in range(1, n + 1):
                         suffix = f" {i}" if n > 1 else ""
                         dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
@@ -991,8 +1074,10 @@ def export_students_csv(request):
                 if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years or selected_course_prog_cols) and 'stu_annual_key' not in query_base_cols:
                     query_base_cols.insert(0, 'stu_annual_key')
-                if (selected_course_prog_cols or selected_mtss_cols) and 'school_year' not in query_base_cols:
+                if (selected_course_prog_cols or selected_mtss_cols or selected_incident_cols) and 'school_year' not in query_base_cols:
                     query_base_cols.insert(0, 'school_year')
+                if selected_incident_cols and 'stu_annual_key' not in query_base_cols:
+                    query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
                 base_col_expressions = {}
@@ -1037,6 +1122,23 @@ def export_students_csv(request):
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
 
+                    if 'picture' in export_cols:
+                        for student in chunk_students:
+                            ssid_val = str(student.get('ssid') or '').strip()
+                            if not ssid_val:
+                                student['picture'] = ''
+                                continue
+                            try:
+                                picture_path = reverse('studata:picture', args=[ssid_val])
+                                try:
+                                    student['picture'] = request.build_absolute_uri(picture_path)
+                                except Exception:
+                                    # Some proxies/hosts are not in ALLOWED_HOSTS;
+                                    # a relative URL is still useful in the CSV.
+                                    student['picture'] = picture_path
+                            except Exception:
+                                student['picture'] = ''
+
                     if selected_survey_cols:
                         try:
                             chunk_stu_ids = [s.get('student_id') for s in chunk_students if s.get('student_id')]
@@ -1066,6 +1168,9 @@ def export_students_csv(request):
                     if selected_mtss_cols:
                         apply_mtss_columns(chunk_students, selected_mtss_cols, active_school_year=school_year)
 
+                    if selected_incident_cols:
+                        apply_incident_columns(chunk_students, selected_incident_cols, active_school_year=school_year)
+
                     if sat_infos:
                         try:
                             from dataviz.utils.data_loader import _fetch_sat_data
@@ -1087,6 +1192,17 @@ def export_students_csv(request):
                             for _student in chunk_students:
                                 for _info in ap_exam_infos + ap_award_infos:
                                     _student.setdefault(_info['col_name'], '')
+                        except Exception:
+                            pass
+
+                    # Fetch IB exam values for this chunk
+                    if selected_ib_cols:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_ib_data
+                            _fetch_ib_data(chunk_students, selected_ib_cols)
+                            for _student in chunk_students:
+                                for _col in selected_ib_cols:
+                                    _student.setdefault(_col, '')
                         except Exception:
                             pass
 
@@ -1161,6 +1277,7 @@ def export_students_csv(request):
                                     if n <= 0:
                                         continue
                                     picker = _markall_course_picker_for_umbrella(umbrella)
+                                    selected_periods = _markall_periods_for_umbrella(umbrella)
                                     if year not in _live_marks_by_year:
                                         _live_marks_by_year[year] = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
                                     live_rows = _live_marks_by_year[year]
@@ -1168,16 +1285,21 @@ def export_students_csv(request):
                                         live_rows,
                                         subject=subject,
                                         course_filter_fn=markall_course_filter_fn(subject, picker),
+                                        periods=selected_periods,
+                                    )
+                                    rank_fn = build_markall_course_rank_key(
+                                        chunk_students, by_ssid, by_student_id, course_picker=picker,
                                     )
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()
                                         sid_key = str(student.get('student_id') or '').strip()
                                         courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
+                                        ordered_courses = order_student_courses_for_markall(courses, rank_fn)
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"
-                                            if i <= len(courses):
-                                                course_name = list(courses.keys())[i - 1]
+                                            if i <= len(ordered_courses):
+                                                course_name = ordered_courses[i - 1]
                                                 periods = sorted(
                                                     courses[course_name],
                                                     key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))

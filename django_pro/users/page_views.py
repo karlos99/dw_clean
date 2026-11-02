@@ -188,9 +188,18 @@ def navbar_settings(request):
             label_case = 'uppercase'
         config.label_case = label_case
         submenu_style = request.POST.get('submenu_style', 'dropdown')
-        if submenu_style not in {'dropdown', 'megamenu'}:
+        if submenu_style not in {'dropdown', 'megamenu', 'split_panel'}:
             submenu_style = 'dropdown'
         config.submenu_style = submenu_style
+
+        try:
+            submenu_opacity = int(request.POST.get('submenu_opacity', 100))
+            if submenu_opacity not in {100, 95, 90, 85, 80, 70}:
+                submenu_opacity = 100
+        except (ValueError, TypeError):
+            submenu_opacity = 100
+        config.submenu_opacity = submenu_opacity
+
         config.updated_by = request.user
         config.save()
         messages.success(request, 'Navbar settings saved.')
@@ -499,9 +508,10 @@ def manage_default_columns(request):
         return HttpResponseForbidden("You don't have permission to manage default columns.")
 
     test_structure = get_test_columns()
-    from dataexploration.column_utils import get_ap_columns, get_sat_columns
+    from dataexploration.column_utils import get_ap_columns, get_sat_columns, get_ib_columns
     ap_structure = get_ap_columns()
     sat_structure = get_sat_columns()
+    ib_structure = get_ib_columns()
     
     # Get saved default columns or fall back to constants
     selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
@@ -511,7 +521,7 @@ def manage_default_columns(request):
         default_columns = DEFAULT_COLUMNS
 
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
-    _all_years = list(test_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
+    _all_years = list(test_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys()) + list(ib_structure.keys())
 
     if request.method == 'POST':
         import json
@@ -535,6 +545,7 @@ def manage_default_columns(request):
                 'test_structure': test_structure,
                 'ap_structure': ap_structure,
                 'sat_structure': sat_structure,
+                'ib_structure': ib_structure,
                 'selected_columns': columns,
                 'year_labels': get_year_labels_map(_all_years),
                 'year_to_alias': get_year_alias_map(),
@@ -548,6 +559,7 @@ def manage_default_columns(request):
                 'test_structure': test_structure,
                 'ap_structure': ap_structure,
                 'sat_structure': sat_structure,
+                'ib_structure': ib_structure,
                 'selected_columns': default_columns,
                 'year_labels': get_year_labels_map(_all_years),
                 'year_to_alias': get_year_alias_map(),
@@ -559,7 +571,8 @@ def manage_default_columns(request):
         'column_definitions': COLUMN_DEFINITIONS,
         'test_structure': test_structure,
         'ap_structure': ap_structure,
-                'sat_structure': sat_structure,
+        'sat_structure': sat_structure,
+        'ib_structure': ib_structure,
         'selected_columns': default_columns,
         'year_labels': get_year_labels_map(_all_years),
         'year_to_alias': get_year_alias_map(),

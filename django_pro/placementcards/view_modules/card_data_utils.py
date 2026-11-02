@@ -476,3 +476,15 @@ def invalidate_school_caches(school_id: int):
     cache.delete(f'placement_questions:{school_id}')
     cache.delete(f'placement_tags:{school_id}')
     cache.delete(f'tag_usage:{school_id}')
+
+
+def question_choice_options(question) -> list[str]:
+    field_options = question.field_options if isinstance(getattr(question, 'field_options', None), dict) else {}
+    raw_choices = field_options.get('choices', [])
+    if not isinstance(raw_choices, list):
+        return []
+    return [str(option).strip() for option in raw_choices if str(option).strip()]
+
+
+def checkbox_has_choice_options(question) -> bool:
+    return bool(question_choice_options(question))

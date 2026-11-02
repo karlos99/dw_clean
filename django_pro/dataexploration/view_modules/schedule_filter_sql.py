@@ -20,6 +20,7 @@ from ..utils import (
     schedule_filter_ui_mode,
     single_school_state_id_from_column_filters,
 )
+from .filter_sql import append_de_student_status_where
 
 
 def _resolve_scope_state_school_id(user, column_filters=None):
@@ -115,12 +116,18 @@ def _schedule_student_year_scope_sql(user, school_year, params, column_filters=N
     cs_params = []
     _append_school_year_clauses('cs', cs_clauses, cs_params, school_year)
     status_vals = _normalize_multi_value(status)
-    if len(status_vals) == 1:
-        cs_clauses.append("cs.status = %s")
-        cs_params.append(status_vals[0])
-    elif len(status_vals) > 1:
-        cs_clauses.append("cs.status = ANY(%s)")
-        cs_params.append(status_vals)
+    if status_vals:
+        toolbar_status = status_vals if len(status_vals) > 1 else status_vals[0]
+    elif status is None:
+        toolbar_status = None
+    else:
+        toolbar_status = ''
+    append_de_student_status_where(
+        cs_clauses,
+        cs_params,
+        toolbar_status,
+        apply_all_when_unset=True,
+    )
     cs_clauses.extend(_current_student_scope_clauses(user, cs_params, column_filters))
     if not cs_clauses:
         return ""

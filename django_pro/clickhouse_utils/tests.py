@@ -120,6 +120,36 @@ class ClickHouseClientHealthTests(SimpleTestCase):
             self.assertIs(ch_client.get_clickhouse_client(), fake)
         fake.ping.assert_called_once_with()
 
+class PostgresOnlyTableRoutingTests(SimpleTestCase):
+    def test_schedule_alt_and_catalog_stay_on_postgres(self):
+        from clickhouse_utils.executor import _sql_requires_postgres
+
+        preview = (
+            "SELECT DISTINCT schedule_table_alt.schedule_id "
+            "FROM schedule_table_alt LIMIT 51"
+        )
+        catalog = "SELECT course_key FROM courses_catalog LIMIT 51"
+        self.assertTrue(_sql_requires_postgres(preview))
+        self.assertTrue(_sql_requires_postgres(catalog))
+        self.assertTrue(_sql_requires_postgres(
+            "SELECT s.ssid FROM schedule_table_alt s "
+            "INNER JOIN courses_catalog c ON c.course_id = s.course_code"
+        ))
+        self.assertFalse(_sql_requires_postgres(
+            "SELECT schedule_id FROM schedule_list LIMIT 51"
+        ))
+
+    def test_official_data_db_stays_on_postgres(self):
+        from clickhouse_utils.executor import _non_ch_dataset_tables, _sql_requires_postgres
+
+        preview = (
+            'SELECT DISTINCT "official_data_db"."source_id" AS "official_data_db.source_id" '
+            'FROM "official_data_db" LIMIT 51'
+        )
+        self.assertTrue(_sql_requires_postgres(preview))
+        self.assertIn('official_data_db', _non_ch_dataset_tables())
+
+
 class SQLTranslatorTests(SimpleTestCase):
     def test_translate_cross_join_lateral_jsonb_object_keys(self):
         sql = """
@@ -418,8 +448,71 @@ class RemainingAnalyticsTests(SimpleTestCase):
         self.assertIn(CREATE_ANALYTICS_SURVEY_RESPONSES, get_all_ddl())
         self.assertIn('analytics_ap_results', ddl)
         self.assertIn('analytics_survey_responses', ddl)
+        self.assertNotIn('dbuilder', CREATE_ANALYTICS_AP_RESULTS)
+        self.assertNotIn('dbuilder', CREATE_ANALYTICS_SURVEY_RESPONSES)
+        self.assertIn('exam_grade Nullable(String)', CREATE_ANALYTICS_AP_RESULTS)
         self.assertTrue(PROJECTION_DDL)
         self.assertIn('ADD PROJECTION', PROJECTION_DDL[0])
+
+    def test_dbuilder_tables_are_new_clickhouse_read_models(self):
+        from clickhouse_utils.executor import CLICKHOUSE_SYNCED_TABLES
+        from clickhouse_utils.management.commands.sync_to_clickhouse import Command
+        from clickhouse_utils.schema import (
+            ANALYTICS_TABLE_NAMES,
+            CREATE_ANALYTICS_DBUILDER_AP_RESULTS,
+            CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
+            get_all_ddl,
+        )
+        from dataviz.utils.compiler import COLUMN_WHITELIST, TABLE_WHITELIST
+
+        ddl = get_all_ddl()
+        self.assertIn(CREATE_ANALYTICS_DBUILDER_AP_RESULTS, ddl)
+        self.assertIn(CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY, ddl)
+        self.assertIn('analytics_dbuilder_ap_results', ANALYTICS_TABLE_NAMES)
+        self.assertIn('analytics_dbuilder_panorama_survey', ANALYTICS_TABLE_NAMES)
+        self.assertIn('ORDER BY (school_year, exam_name, ssid)', CREATE_ANALYTICS_DBUILDER_AP_RESULTS)
+        self.assertIn(
+            'ORDER BY (school_year, survey_window, school, ssid)',
+            CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
+        )
+        self.assertNotIn('Nullable', CREATE_ANALYTICS_DBUILDER_AP_RESULTS)
+        self.assertIn('response_value Nullable(UInt8)', CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY)
+
+        for name in ('analytics_dbuilder_ap_results', 'analytics_dbuilder_panorama_survey'):
+            self.assertIn(name, TABLE_WHITELIST)
+            self.assertIn(name, CLICKHOUSE_SYNCED_TABLES)
+
+        self.assertIn('official_data_db', TABLE_WHITELIST)
+        self.assertNotIn('official_data_db', CLICKHOUSE_SYNCED_TABLES)
+
+        self.assertEqual(
+            COLUMN_WHITELIST['analytics_dbuilder_ap_results'],
+            {'ssid', 'school_year', 'exam_name', 'exam_grade'},
+        )
+        self.assertEqual(
+            COLUMN_WHITELIST['analytics_dbuilder_panorama_survey'],
+            {'ssid', 'school', 'category', 'question', 'response', 'response_value', 'school_year', 'survey_window'},
+        )
+
+        pg = dict(pg_host='h', pg_port='5432', pg_db='db', pg_user='u', pg_password='p')
+        cmd = Command()
+        ap_sql = cmd._derived_insert_sql('ch', 'analytics_dbuilder_ap_results', 't', pg)
+        self.assertIn('dataLoader_apexamresult', ap_sql)
+        self.assertIn('dataLoader_apexamcode', ap_sql)
+        self.assertIn('toUInt8(il.is_published) = 1', ap_sql)
+        self.assertIn('r.admin_year', ap_sql)
+
+        survey_sql = cmd._derived_insert_sql('ch', 'analytics_dbuilder_panorama_survey', 't', pg)
+        self.assertIn('dataLoader_surveytopic', survey_sql)
+        self.assertIn('dataLoader_responsescalelabel', survey_sql)
+        self.assertIn("sd.source_system = 'Panorama'", survey_sql)
+        self.assertIn("'Fall'", survey_sql)
+        self.assertIn('question_text', survey_sql)
+        self.assertIn('CAST(sr.value AS Nullable(UInt8))', survey_sql)
+
+        old_survey = cmd._derived_insert_sql('ch', 'analytics_survey_responses', 't', pg)
+        self.assertNotIn('question_text', old_survey)
+        self.assertNotIn('dbuilder', old_survey)
 
     def test_timed_fn_preserves_name_and_sets_request_id(self):
         from clickhouse_utils.timing import current_request_id, timed_fn
@@ -455,3 +548,98 @@ class CourseProgramSyncTests(SimpleTestCase):
         from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
 
         self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)
+
+    def test_refresh_skipped_when_clickhouse_analytics_off(self):
+        from django.test import override_settings
+
+        from clickhouse_utils.course_program_sync import (
+            _course_program_sync_requested,
+            schedule_course_program_refresh,
+        )
+
+        _course_program_sync_requested.clear()
+        with override_settings(USE_CLICKHOUSE_ANALYTICS=False):
+            schedule_course_program_refresh()
+        self.assertFalse(_course_program_sync_requested.is_set())
+
+
+class StudentIncidentsSyncTests(SimpleTestCase):
+    def test_pg_select_casts_incidents_to_text(self):
+        from clickhouse_utils.student_incidents_sync import STUDENT_INCIDENTS_PG_SELECT
+
+        self.assertIn('incidents::text', STUDENT_INCIDENTS_PG_SELECT)
+        self.assertIn('current_student', STUDENT_INCIDENTS_PG_SELECT)
+
+    def test_sync_select_joins_current_student_when_no_annual_key(self):
+        from clickhouse_utils import student_incidents_sync as mod
+
+        mod.clear_pg_student_incidents_columns_cache()
+        with patch.object(
+            mod,
+            'pg_student_incidents_columns',
+            return_value=frozenset({'ssid', 'school_year', 'incidents', 'updated_at'}),
+        ):
+            sql = mod._sync_select_sql()
+        self.assertIn('INNER JOIN current_student cs', sql)
+        self.assertIn('cs.stu_annual_key', sql)
+        self.assertNotIn('si.stu_annual_key', sql)
+
+    def test_sanitize_incident_row_coerces_strings(self):
+        from clickhouse_utils.student_incidents_sync import sanitize_incident_row
+
+        row = sanitize_incident_row(('key1', 'ssid1', 99, {'Major': {}}, None))
+        self.assertEqual(row[0], 'key1')
+        self.assertEqual(row[1], 'ssid1')
+        self.assertEqual(row[2], 99)
+        self.assertIn('Major', row[3])
+        self.assertEqual(row[4], None)
+
+
+class StudentIncidentsAnalyticsTests(SimpleTestCase):
+    def test_week_fields_from_dw_cal_lookup(self):
+        from clickhouse_utils.student_incidents_analytics import _week_fields_for_date
+
+        lookup = {
+            ('2026-2027', '2026-03-05'): {
+                'school_week': 28,
+                'week_start_date': '2026-03-02',
+                'week_end_date': '2026-03-08',
+                'week_label': 'Week 28 (03/02/2026–03/08/2026)',
+            },
+        }
+        meta = _week_fields_for_date(lookup, '2026-2027', '2026-03-05')
+        self.assertEqual(meta['school_week'], 28)
+        self.assertEqual(meta['week_label'], 'Week 28 (03/02/2026–03/08/2026)')
+
+    def test_build_analytics_rows_uses_sample_json(self):
+        from unittest.mock import patch
+        from clickhouse_utils.student_incidents_analytics import build_analytics_student_incidents_rows
+
+        sample_payload = '{"Major": {"count": 1, "incidents": [{"date": "2026-03-05", "incident_id": 1, "violations": [{"violation": "Major Defiance", "ed_code": "48900(k)"}], "dispositions": [{"disposition": "Out-of-School Suspension", "duration_days": 3}]}]}, "Minor": {"count": 0, "incidents": []}}'
+        fake_row = (
+            '111', 'key1', '9001', 'Student A', '10', 'School A', 'SCH1', 'Active',
+            '2026-2027', sample_payload,
+        )
+        lookup = {
+            ('2026-2027', '2026-03-05'): {
+                'school_week': 28,
+                'week_start_date': '2026-03-02',
+                'week_end_date': '2026-03-08',
+                'week_label': 'Week 28',
+            },
+        }
+
+        with patch(
+            'clickhouse_utils.student_incidents_analytics._fetch_incidents_with_students_sql',
+            return_value='SELECT 1',
+        ):
+            with patch('clickhouse_utils.student_incidents_analytics.connection') as mock_conn:
+                mock_conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [fake_row]
+                rows = build_analytics_student_incidents_rows(dw_cal_lookup=lookup)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], '111')
+        self.assertEqual(rows[0][9], 'Major')
+        self.assertEqual(rows[0][16], 3)
+        self.assertEqual(rows[0][17], 1)
+        self.assertEqual(rows[0][18], 28)

@@ -17,6 +17,7 @@ For cursor-compatible usage (matching Django's cursor.execute + fetchall):
 """
 
 import logging
+import re
 from decimal import Decimal
 from django.conf import settings
 from clickhouse_connect.driver.exceptions import DatabaseError
@@ -40,11 +41,13 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'current_student', 'student_enroll', 'results', 'tests',
     'results_with_tests', 'student_marks_list', 'nextyearlist_placement',
     'school', 'schedule_list', 'relative_year', 'mathr_recommendation',
-    'student_attendance', 'student_incidents',
+    'student_attendance', 'student_incidents', 'analytics_student_incidents',
     'analytics_student_profile', 'analytics_student_results',
     'analytics_student_marks',     'analytics_ap_results', 'analytics_ap_awards',
-    'analytics_sat_results',
+    'analytics_sat_results', 'analytics_ib_results',
     'analytics_survey_responses',
+    'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey',
     'analytics_test_metadata', 'analytics_marks_metadata',
     'analytics_student_course_program', 'analytics_course_program_values',
     'analytics_ccgi_favorite_career', 'analytics_ccgi_career_cluster',
@@ -70,6 +73,11 @@ _PG_ONLY_TABLE_MARKERS = (
     # expression identifier".
     'dataloader_',
     'mtss_data',
+    # Dataset builder base tables that stay in PostgreSQL. ClickHouse has
+    # schedule_list, not schedule_table_alt, and has no courses_catalog.
+    'schedule_table_alt',
+    'courses_catalog',
+    'official_data_db',
 )
 
 
@@ -77,6 +85,34 @@ _PG_ONLY_TABLE_MARKERS = (
 def _sql_uses_pg_add_data_key(sql: str) -> bool:
     text = sql or ''
     return any(k in text for k in _PG_ADD_DATA_KEYS)
+
+
+_NON_CH_DATASET_TABLES: frozenset[str] | None = None
+
+
+def _non_ch_dataset_tables() -> frozenset[str]:
+    """Dataset-builder tables that are not mirrored into ClickHouse."""
+    global _NON_CH_DATASET_TABLES
+    if _NON_CH_DATASET_TABLES is None:
+        try:
+            from dataviz.utils.compiler import get_dataset_table_registry
+            names = set(get_dataset_table_registry())
+        except Exception:
+            names = set()
+        _NON_CH_DATASET_TABLES = frozenset(
+            t for t in names if t not in CLICKHOUSE_SYNCED_TABLES
+        )
+    return _NON_CH_DATASET_TABLES
+
+
+def _sql_references_table(text_lower: str, table: str) -> bool:
+    """True when *table* appears as a SQL identifier (not a column prefix)."""
+    t = table.lower()
+    if f'"{t}"' in text_lower:
+        return True
+    if f'.{t}.' in text_lower:
+        return True
+    return re.search(rf'(?<![a-z0-9_]){re.escape(t)}(?![a-z0-9_])', text_lower) is not None
 
 
 def _sql_requires_postgres(sql: str) -> bool:
@@ -89,7 +125,12 @@ def _sql_requires_postgres(sql: str) -> bool:
         return True
     # Any reference to a table that is only kept in Postgres routes the whole
     # statement there (mirrored tables never appear in this list).
-    return any(m in text for m in _PG_ONLY_TABLE_MARKERS)
+    if any(m in text for m in _PG_ONLY_TABLE_MARKERS):
+        return True
+    for t in _non_ch_dataset_tables():
+        if _sql_references_table(text, t):
+            return True
+    return False
 
 
 class QueryExecutor:
@@ -112,7 +153,7 @@ class QueryExecutor:
     PostgreSQL-based code for seamless drop-in compatibility.
     """
 
-    def __init__(self, analytics=False):
+    def __init__(self, analytics=False, force_postgres=False):
         """Create an executor.
 
         ``analytics=True`` is used by interactive analytics reads.  Those
@@ -121,8 +162,11 @@ class QueryExecutor:
         different snapshot while ClickHouse is being synchronized.  The
         default remains compatible for legacy/admin callers that intentionally
         support PostgreSQL fallback.
+
+        ``force_postgres=True`` skips ClickHouse entirely (MTSS + incident sort/filter mixes).
         """
         self.analytics = bool(analytics)
+        self.force_postgres = bool(force_postgres)
         self._ch_client = None
         self._pg_connection = None
 
@@ -154,6 +198,9 @@ class QueryExecutor:
             return self._execute(sql, params)
 
     def _execute(self, sql, params=None):
+        if self.force_postgres:
+            return self._execute_postgres(sql, params)
+
         if self.analytics and self.ch_client is None:
             return {'columns': [], 'rows': [], 'row_count': 0,
                     'error': 'ClickHouse analytics service is unavailable'}
@@ -195,6 +242,9 @@ class QueryExecutor:
         Execute and return raw (columns, rows) tuple like PG cursor.fetchall().
         rows is a list of tuples (not dicts).
         """
+        if self.force_postgres:
+            return self._execute_postgres_fetchall(sql, params)
+
         if self.analytics and self.ch_client is None:
             raise RuntimeError('ClickHouse analytics service is unavailable')
 

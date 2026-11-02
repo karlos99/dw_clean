@@ -78,6 +78,25 @@ function chartBuilderPreviewMethods(urls) {
             const queryCols = JSON.parse(el.dataset.queryColumns || '[]');
             this.queryColumns = queryCols.map(c => c.split('.').pop());
           } catch (_) {}
+          try {
+            const pRows = JSON.parse(el.dataset.previewRows || '[]');
+            this.previewTableRows = Array.isArray(pRows) ? pRows : [];
+            this.previewRowCount = parseInt(el.dataset.previewRowCount || '0', 10) || this.previewTableRows.length;
+            if (this.previewTableRows.length > 0) {
+              this.previewTableCols = Object.keys(this.previewTableRows[0]);
+            } else {
+              this.previewTableCols = [];
+            }
+          } catch (_) {
+            this.previewTableRows = [];
+            this.previewTableCols = [];
+          }
+        }
+        if (!c._hasPointListener) {
+          c._hasPointListener = true;
+          c.addEventListener('chartPointClicked', (e) => {
+            this.selectedPreviewPoint = e.detail;
+          });
         }
         // initAllCharts is lazy via IntersectionObserver; poll briefly for drill status.
         this._updateDrillStatus(c);

@@ -98,6 +98,12 @@ class Page(models.Model):
     def get_absolute_url(self):
         return self.url_path
 
+    @property
+    def has_accessible_subpages(self):
+        """Returns True if any accessible child of this page has its own accessible children."""
+        children = getattr(self, 'accessible_children', None) or []
+        return any(bool(getattr(c, 'accessible_children', None)) for c in children)
+
 
 class NavbarConfig(models.Model):
     """Singleton navbar settings managed from Page Management."""
@@ -115,6 +121,16 @@ class NavbarConfig(models.Model):
     SUBMENU_STYLE_CHOICES = [
         ('dropdown', 'Classic Dropdown'),
         ('megamenu', 'Mega Menu'),
+        ('split_panel', 'Split Panel Submenu (Left Categories + Right Items)'),
+    ]
+
+    SUBMENU_OPACITY_CHOICES = [
+        (100, '100% Solid (Opaque)'),
+        (95, '95% (Subtle Glass)'),
+        (90, '90% (Soft Translucent)'),
+        (85, '85% (Glassmorphic)'),
+        (80, '80% (Frosted Glass)'),
+        (70, '70% (High Transparency)'),
     ]
 
     sticky = models.BooleanField(_("Sticky Navbar"), default=True, help_text="Keep the navbar fixed to the top of the viewport while scrolling")
@@ -137,8 +153,21 @@ class NavbarConfig(models.Model):
         max_length=20,
         choices=SUBMENU_STYLE_CHOICES,
         default='dropdown',
-        help_text="Classic Dropdown shows a small menu below the item; Mega Menu shows a full-width panel with descriptions",
+        help_text="Classic Dropdown shows a small menu below the item; Mega Menu shows a full-width panel; Split Panel shows a half-page panel with left categories and right items list",
     )
+    submenu_opacity = models.IntegerField(
+        _("Submenu Opacity"),
+        default=100,
+        choices=SUBMENU_OPACITY_CHOICES,
+        help_text="Background opacity percentage for the submenu panel. Values below 100% enable modern translucent glass styling with background blur.",
+    )
+
+    @property
+    def submenu_opacity_decimal(self):
+        try:
+            return round(float(self.submenu_opacity or 100) / 100.0, 2)
+        except (TypeError, ValueError):
+            return 1.0
 
     updated_by = models.ForeignKey(
         'User',

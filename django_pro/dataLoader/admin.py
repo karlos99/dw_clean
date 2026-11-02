@@ -5,6 +5,7 @@ from .models import (
     ResponseScaleLabel, SurveyTopic, SurveyColorPalette, APExamCode, APAwardType,
     APImportLog, APStudentAward, APExamResult,
     SATImportLog, SATResult, SATSettings,
+    IBImportLog, IBExamResult,
 )
 
 
@@ -290,3 +291,53 @@ class SATResultAdmin(admin.ModelAdmin):
 @admin.register(SATSettings)
 class SATSettingsAdmin(admin.ModelAdmin):
     list_display = ['result_mode', 'highest_metric', 'updated_at', 'updated_by']
+
+
+@admin.register(IBImportLog)
+class IBImportLogAdmin(admin.ModelAdmin):
+    list_display = ['name', 'school_year', 'status_badge', 'students_matched',
+                    'results_created', 'results_skipped', 'uploaded_by', 'uploaded_at']
+    list_filter = ['status', 'school_year', 'uploaded_at']
+    search_fields = ['name', 'filename', 'uploaded_by__username']
+    readonly_fields = ['uploaded_at', 'completed_at', 'file_hash',
+                       'total_candidates', 'results_detected', 'results_created',
+                       'results_skipped', 'students_matched', 'students_unmatched',
+                       'records_processed', 'error_count']
+    ordering = ['-uploaded_at']
+
+    fieldsets = (
+        (None, {'fields': ('name', 'filename', 'school_year')}),
+        ('Upload Info', {'fields': ('uploaded_by', 'uploaded_at', 'completed_at', 'status', 'file_hash')}),
+        ('Statistics', {'fields': ('total_candidates', 'students_matched', 'students_unmatched',
+                                   'results_detected', 'results_created', 'results_skipped')}),
+        ('Publishing', {'fields': ('is_published', 'published_at', 'published_by')}),
+        ('Manual Overrides', {'fields': ('manual_overrides',), 'classes': ('collapse',)}),
+        ('Errors', {'fields': ('error_count', 'error_log', 'warnings'), 'classes': ('collapse',)}),
+    )
+
+    def status_badge(self, obj):
+        colors = {
+            'PENDING': 'orange', 'PROCESSING': 'blue', 'COMPLETED': 'green',
+            'FAILED': 'red', 'PARTIAL': 'yellow',
+        }
+        color = colors.get(obj.status, 'gray')
+        return format_html(
+            '<span style="background-color: {}; padding: 3px 8px; border-radius: 3px; color: white;">{}</span>',
+            color, obj.get_status_display()
+        )
+    status_badge.short_description = 'Status'
+
+
+@admin.register(IBExamResult)
+class IBExamResultAdmin(admin.ModelAdmin):
+    list_display = ['candidate_name', 'ssid', 'personal_code', 'exam_count', 'category',
+                    'school_year', 'school_name', 'result_code', 'total_points']
+    list_filter = ['school_year', 'category', 'result_code', 'import_log__school_year']
+    search_fields = ['candidate_name', 'ssid', 'personal_code', 'subject']
+    raw_id_fields = ['import_log']
+    ordering = ['candidate_name', 'personal_code']
+
+    def exam_count(self, obj):
+        return len(obj.exam_results) if obj.exam_results else (1 if obj.subject else 0)
+    exam_count.short_description = 'Exams'
+

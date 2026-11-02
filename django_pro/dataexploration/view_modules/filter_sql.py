@@ -22,7 +22,229 @@ from ..mtss_columns import (
     is_mtss_column,
     canonical_mtss_column,
 )
+from ..incident_columns import (
+    is_incident_column,
+    incident_value_sql_expr,
+)
 
+
+def expand_grade_match_values(raw) -> list[str]:
+    """String variants for grade (e.g. 3 vs 03) so filters match SIS storage."""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    out: list[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s:
+            continue
+        out.append(s)
+        if s.isdigit():
+            n = int(s)
+            out.append(str(n))
+            if 0 <= n < 10:
+                out.append(f"{n:02d}")
+    seen: set[str] = set()
+    unique: list[str] = []
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            unique.append(v)
+    return unique
+
+
+def append_grade_where_clause(where_clauses, params, grade) -> None:
+    variants = expand_grade_match_values(grade)
+    if not variants:
+        return
+    where_clauses.append("cs.grade = ANY(%s)")
+    params.append(variants)
+
+
+DE_EXCLUDED_STUDENT_STATUS = 'No_show'
+DE_ALLOWED_STUDENT_STATUSES = ('Active', 'Inactive')
+
+
+def _de_status_is_empty_toolbar_selection(status) -> bool:
+    if status is None:
+        return False
+    if isinstance(status, (list, tuple, set)):
+        cleaned = [str(s).strip() for s in status if s is not None and str(s).strip()]
+        return not cleaned
+    return str(status).strip() == ''
+
+
+def sanitize_de_status_filter_values(raw_vals) -> list[str]:
+    """Column-filter values for ``status``: only Active/Inactive; never No_show."""
+    if isinstance(raw_vals, (list, tuple, set)):
+        items = raw_vals
+    elif raw_vals is not None and str(raw_vals).strip() and str(raw_vals).strip().casefold() != 'all':
+        items = [raw_vals]
+    else:
+        items = []
+    allowed = set(DE_ALLOWED_STUDENT_STATUSES)
+    excluded = DE_EXCLUDED_STUDENT_STATUS.casefold()
+    out: list[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s or s.casefold() == excluded:
+            continue
+        if s in allowed:
+            out.append(s)
+    return out
+
+
+def append_de_student_status_where(
+    where_clauses,
+    params,
+    status,
+    *,
+    alias: str = 'cs',
+    apply_all_when_unset: bool = True,
+) -> None:
+    """Data Explorer student status: exclude No_show; empty toolbar = Active+Inactive only."""
+    col = f'{alias}.status'
+    # ClickHouse has no ``IS DISTINCT FROM``; NULL-safe exclusion works on PG + CH.
+    where_clauses.append(f'({col} IS NULL OR {col} <> %s)')
+    params.append(DE_EXCLUDED_STUDENT_STATUS)
+
+    if status is None:
+        if not apply_all_when_unset:
+            return
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if _de_status_is_empty_toolbar_selection(status):
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if isinstance(status, list):
+        vals = sanitize_de_status_filter_values(status)
+        if not vals:
+            where_clauses.append('1=0')
+            return
+        if len(vals) == 1:
+            where_clauses.append(f'{col} = %s')
+            params.append(vals[0])
+        else:
+            where_clauses.append(f'{col} = ANY(%s)')
+            params.append(vals)
+        return
+
+    s = str(status).strip()
+    if s.casefold() == DE_EXCLUDED_STUDENT_STATUS.casefold():
+        where_clauses.append('1=0')
+        return
+    if s.casefold() in ('', 'all'):
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+    where_clauses.append(f'{col} = %s')
+    params.append(s)
+
+
+def _filters_have_active_values(filters) -> bool:
+    if not isinstance(filters, dict):
+        return False
+    for key, values in filters.items():
+        if key == 'search' or not values:
+            continue
+        return True
+    return False
+
+
+def filters_require_postgres(filters) -> bool:
+    """True when filter keys force the main query onto PostgreSQL (e.g. mtss_data)."""
+    if not isinstance(filters, dict):
+        return False
+    for col, values in filters.items():
+        if col == 'search' or not values:
+            continue
+        if is_mtss_column(col):
+            return True
+        if is_incident_column(col):
+            return True
+        if isinstance(col, str) and (col.startswith('survey_') or col.startswith('ib_')):
+            return True
+        if col == 'elem_teacher_name':
+            return True
+    return False
+
+
+def _value_nonempty(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return any(str(v).strip() for v in value if v is not None and v != '')
+    return bool(str(value).strip())
+
+
+def _topbar_cohort_filters_active(
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> bool:
+    """Toolbar cohort filters (search, schedule) — not stored in the filters JSON blob."""
+    if search_ids:
+        return True
+    if _value_nonempty(search):
+        return True
+    if schedule_marks_filters:
+        from .schedule_filter_sql import _schedule_filters_active
+
+        if _schedule_filters_active(schedule_marks_filters):
+            return True
+    return False
+
+
+def list_query_uses_postgres(
+    filters,
+    sort_by=None,
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> bool:
+    """True when the student list must run on PostgreSQL (mixed MTSS/incident/survey reads)."""
+    if filters_require_postgres(filters):
+        return True
+    if sort_by and is_mtss_column(sort_by):
+        return True
+    if sort_by and is_incident_column(sort_by):
+        if _filters_have_active_values(filters):
+            return True
+        if _topbar_cohort_filters_active(
+            search=search,
+            search_ids=search_ids,
+            schedule_marks_filters=schedule_marks_filters,
+        ):
+            return True
+    return False
+
+
+def incident_sql_backend_for_request(
+    filters,
+    sort_by=None,
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> str:
+    """ClickHouse vs PostgreSQL incident count SQL for the current list request."""
+    return (
+        'pg'
+        if list_query_uses_postgres(
+            filters,
+            sort_by,
+            search=search,
+            search_ids=search_ids,
+            schedule_marks_filters=schedule_marks_filters,
+        )
+        else 'ch'
+    )
 
 
 def normalize_filter_param(col, value):
@@ -147,6 +369,44 @@ def extract_markall_course_picker(filters_to_apply):
     return pickers
 
 
+def extract_markall_period_includes(filters_to_apply):
+    """Read per-umbrella All Marks marking-period allowlist from a filters dict.
+
+    Selected periods are stored on the umbrella key as ``period:<period>``
+    values (e.g. ``period:Q1``). No period values means **all** periods, which
+    keeps saved queries created before period selection existed unchanged.
+
+    Returns ``{umbrella_key: set(period_names)}``.
+    """
+    periods = {}
+    if not isinstance(filters_to_apply, dict):
+        return periods
+    for col, values in filters_to_apply.items():
+        if not is_markall_umbrella_key(col):
+            continue
+        selected = {
+            str(value)[len('period:'):].strip()
+            for value in (values or [])
+            if str(value).startswith('period:')
+        }
+        selected.discard('')
+        if selected:
+            periods[col] = selected
+    return periods
+
+
+def markall_period_filter_parts(periods, alias='sm'):
+    """SQL predicate + params restricting All Marks to selected marking periods.
+
+    Returns ``(sql_fragment, params)``; an empty fragment means all periods.
+    """
+    names = sorted({str(p).strip() for p in (periods or set()) if str(p).strip()})
+    if not names:
+        return '', []
+    placeholders = ", ".join(["%s"] * len(names))
+    return f" AND {alias}.mark_period IN ({placeholders})", names
+
+
 def extract_markall_course_excludes(filters_to_apply):
     """Legacy helper: exclude sets for umbrellas still in **all** mode."""
     pickers = extract_markall_course_picker(filters_to_apply)
@@ -170,6 +430,7 @@ def apply_column_filters(
     needs_eht=False,
     ap_exam_infos=None,
     ap_award_infos=None,
+    incident_sql_backend='ch',
 ):
     """Append SQL filter clauses + params for the provided filters dict."""
     ap_exam_infos = ap_exam_infos or []
@@ -182,6 +443,10 @@ def apply_column_filters(
         if col == 'search':
             continue
         if not values:
+            continue
+
+        if col == 'grade':
+            append_grade_where_clause(where_clauses, params, values)
             continue
 
         if col == 'atendace_rate':
@@ -211,6 +476,42 @@ def apply_column_filters(
 
                     conditions.append(f"{expr} = %s")
                     params.append(val)
+
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if is_incident_column(col):
+            expr = incident_value_sql_expr(
+                col,
+                backend=incident_sql_backend,
+                student_alias='cs',
+            )
+            if expr:
+                conditions = []
+                for val in values:
+                    val_str = str(val).strip()
+                    if not val_str:
+                        conditions.append(f"({expr} = 0)")
+                        continue
+
+                    match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
+                    if match:
+                        op = match.group(1) or '='
+                        num = match.group(2)
+                        conditions.append(f"{expr} {op} %s")
+                        params.append(num)
+                        continue
+
+                    match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
+                    if match_range:
+                        low, high = match_range.groups()
+                        conditions.append(f"{expr} BETWEEN %s AND %s")
+                        params.extend([low, high])
+                        continue
+
+                    conditions.append(f"{expr} = %s")
+                    params.append(int(float(val_str)) if val_str.replace('.', '', 1).isdigit() else val_str)
 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
@@ -269,7 +570,7 @@ def apply_column_filters(
 
                 val_id_params = list(base_params)
                 val_ssid_params = list(base_params)
-                if metric_col in {'oi', 'dfp'}:
+                if metric_col in {'oi', 'dfp', 'elpi_level'}:
                     val_id_params.append(test_info.get('other_info_key', ''))
                     val_ssid_params.append(test_info.get('other_info_key', ''))
                 val_id_params.append(real_values)
@@ -482,6 +783,42 @@ def apply_column_filters(
             if has_blank:
                 conditions.append(f"cs.ssid NOT IN ({sub_base})")
                 params.extend(sub_params)
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('ib_'):
+            from dataexploration.column_utils import parse_ib_column_key
+            parsed = parse_ib_column_key(col)
+            if not parsed:
+                continue
+            target_field = 'grade' if parsed['kind'] == 'PL' else ('category' if parsed['kind'] == 'CAT' else 'level')
+            sub_clauses = [
+                'r.school_year = %s',
+                'il.is_published = true',
+            ]
+            sub_params = [parsed['year']]
+            if parsed.get('level'):
+                sub_clauses.append('r.level = %s')
+                sub_params.append(parsed['level'])
+            sub_clauses.append("REGEXP_REPLACE(r.subject, '[^A-Za-z0-9_]+', '_', 'g') ILIKE %s")
+            sub_params.append(f"%{parsed['subj_slug']}%")
+
+            sub_base = (
+                'SELECT r.ssid FROM "dataLoader_ibexamresult" r '
+                'INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id '
+                f"WHERE {' AND '.join(sub_clauses)} "
+            )
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base} AND r.{target_field} = ANY(%s))")
+                params.extend(sub_params + [[str(v) for v in real_values]])
+            if has_blank:
+                conditions.append(
+                    f"(cs.ssid NOT IN ({sub_base}) OR "
+                    f"cs.ssid IN ({sub_base} AND (r.{target_field} IS NULL OR r.{target_field} = '')))"
+                )
+                params.extend(sub_params + sub_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue

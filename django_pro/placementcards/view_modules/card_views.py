@@ -16,6 +16,7 @@ from placementcards.models import PlacementCard, PlacementTag, QuestionTemplate
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
     can_user_access_teacher_notes,
+    checkbox_has_choice_options,
     get_accessible_students,
     get_request_school,
     invalidate_school_caches,
@@ -337,10 +338,13 @@ def save_placement_card(request: HttpRequest):
     for question in questions:
         key = f'q_{question.id}'
         if question.question_type == 'checkbox':
-            responses[str(question.id)] = key in request.POST
-            detail_key = f'{key}_detail'
-            if question.requires_detail:
-                responses[f'{question.id}_detail'] = request.POST.get(detail_key, '').strip()
+            if checkbox_has_choice_options(question):
+                responses[str(question.id)] = request.POST.getlist(key)
+            else:
+                responses[str(question.id)] = key in request.POST
+                detail_key = f'{key}_detail'
+                if question.requires_detail:
+                    responses[f'{question.id}_detail'] = request.POST.get(detail_key, '').strip()
         elif question.question_type == 'multiselect':
             responses[str(question.id)] = request.POST.getlist(key)
         elif question.question_type == 'student_list':

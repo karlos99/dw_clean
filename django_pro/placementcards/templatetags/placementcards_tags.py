@@ -51,6 +51,17 @@ def get_item(value, key):
     return value.get(str(key), value.get(key, ''))
 
 
+@register.simple_tag
+def placement_choice_checked(responses, question_id, choice):
+    if responses is None or not hasattr(responses, 'get'):
+        return False
+    value = responses.get(str(question_id), responses.get(question_id))
+    if isinstance(value, list):
+        normalized = {str(item).strip() for item in value if str(item).strip()}
+        return str(choice).strip() in normalized
+    return False
+
+
 @register.filter
 def get_item_detail(value, key):
     if value is None or not hasattr(value, 'get'):

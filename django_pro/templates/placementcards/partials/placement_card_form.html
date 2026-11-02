@@ -90,6 +90,17 @@
                                 {% endfor %}
                             </select>
 
+                        {% elif q.question_type == 'checkbox' and q.field_options.choices %}
+                            <div class="space-y-2 bg-slate-50 p-3 rounded-md border border-slate-200">
+                                {% for choice in q.field_options.choices %}
+                                {% placement_choice_checked card.responses q.id choice as is_checked %}
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" name="q_{{ q.id }}" value="{{ choice }}" class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"{% if is_checked %} checked{% endif %}>
+                                    <span class="text-sm text-slate-700 font-medium">{{ choice }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+
                         {% elif q.question_type == 'checkbox' %}
                             <div class="bg-slate-50 p-3 rounded-md border border-slate-200">
                                 <label class="flex items-center gap-3">
@@ -101,6 +112,17 @@
                                     <input type="text" name="q_{{ q.id }}_detail" value="{{ card.responses|get_item_detail:q.id }}" placeholder="Please provide details..." class="block w-full rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:ring-blue-500">
                                 </div>
                                 {% endif %}
+                            </div>
+
+                        {% elif q.question_type == 'multiselect' %}
+                            <div class="space-y-2 bg-slate-50 p-3 rounded-md border border-slate-200">
+                                {% for choice in q.field_options.choices %}
+                                {% placement_choice_checked card.responses q.id choice as is_checked %}
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" name="q_{{ q.id }}" value="{{ choice }}" class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"{% if is_checked %} checked{% endif %}>
+                                    <span class="text-sm text-slate-700 font-medium">{{ choice }}</span>
+                                </label>
+                                {% endfor %}
                             </div>
 
                         {% elif q.question_type == 'student_list' %}
