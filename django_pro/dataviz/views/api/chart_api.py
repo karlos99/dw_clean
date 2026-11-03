@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '18'
+_CHART_PIPELINE_VERSION = '21'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -88,6 +88,9 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
     """
     chart_type = cfg.get('chart_type', 'bar')
     if chart_type not in _CLICKHOUSE_AGGREGATE_CHARTS:
+        return None
+    # Unique-student share charts need per-row SSIDs for the denominator.
+    if cfg.get('student_share_percent') or cfg.get('one_row_per_ssid'):
         return None
 
     x_cols = cfg.get('x_cols') or []
@@ -1010,7 +1013,7 @@ def _cfg_from_post(post):
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
-        'show_zoom':         bool(post.get('show_zoom', '1')),
+        'show_zoom':         post.get('show_zoom') == '1',
         'show_toolbox':      bool(post.get('show_toolbox', '1')),
         'show_grid':         bool(post.get('show_grid', '1')),
         'show_axis_labels':  bool(post.get('show_axis_labels', '1')),
@@ -1248,7 +1251,10 @@ def chart_preview_api(request):
             res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
             if res.get('error'):
                 return _error(res['error'])
-            aliased_rows = res.get('rows', [])
+            aliased_rows = _apply_sql_dataset_row_filters(
+                res.get('rows', []), source_filters or {},
+            )
+            aliased_rows = _dedupe_chart_rows(aliased_rows, cfg)
             cfg = _remap_config_cols(cfg, col_mappings)
         else:
             active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
@@ -1275,8 +1281,9 @@ def chart_preview_api(request):
             if res.get('error'):
                 return _error(res['error'])
             aliased_rows = res.get('rows', [])
-            if one_per_sak and aggregated is None:
-                aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
+            aliased_rows = _dedupe_chart_rows(
+                aliased_rows, cfg, used_aggregate=aggregated is not None,
+            )
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
         _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
@@ -1573,6 +1580,37 @@ def _parse_pf_filters(get_params) -> dict:
     return filters
 
 
+def _apply_sql_dataset_row_filters(rows, filters):
+    """Apply page/chart filters to SQL dataset rows (same rules as drill-through)."""
+    if not rows or not filters:
+        return rows
+    from dataviz.utils.drill_through import _apply_drill_row_filters
+    return _apply_drill_row_filters(rows, filters)
+
+
+def _merge_page_filters(chart_filters, pf_filters, chart_cfg):
+    """Merge page filters into chart filters, honoring ``skip_page_filters`` in config."""
+    merged = dict(chart_filters or {})
+    skip = set(chart_cfg.get('skip_page_filters') or [])
+    for key, val in (pf_filters or {}).items():
+        if key in skip:
+            continue
+        merged[key] = val
+    return merged
+
+
+def _dedupe_chart_rows(rows, cfg, *, used_aggregate=False):
+    """Optional one-row-per-student dedupe before chart aggregation."""
+    if used_aggregate or not rows or not cfg:
+        return rows
+    from dataviz.utils.compiler import dedupe_rows_by_ssid, dedupe_rows_by_stu_annual_key
+    if cfg.get('one_row_per_stu_annual_key'):
+        rows = dedupe_rows_by_stu_annual_key(rows)
+    if cfg.get('one_row_per_ssid') or cfg.get('student_share_percent'):
+        rows = dedupe_rows_by_ssid(rows)
+    return rows
+
+
 def _chart_flight_keys(chart_id, updated_ts, pf_hash, embed_suffix, sync_version):
     lock_key = (
         f'chart_flight:{_CHART_PIPELINE_VERSION}:{chart_id}:'
@@ -1793,8 +1831,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             for c in _chart_extra_query_columns(chart.config):
                 if c not in selected_columns:
                     selected_columns.append(c)
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(pf_filters)
+            merged_filters = _merge_page_filters(
+                chart.source_filters, pf_filters, chart_cfg,
+            )
             result = run_column_query(selected_columns, merged_filters)
             result = _augment_chart_result_rows(
                 chart.chart_type, chart_cfg, {}, result,
@@ -1815,8 +1854,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # Dataset-specific data cache — key includes dataset updated_at
                 # so schema changes automatically bust stale cached rows.
                 col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
-                raw_filters = dict(chart.source_filters or {})
-                raw_filters.update(pf_filters)
+                raw_filters = _merge_page_filters(
+                    chart.source_filters, pf_filters, chart_cfg,
+                )
                 limit_val = _parse_chart_row_limit(chart_cfg)
                 one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
                 ds_updated = int(ds.updated_at.timestamp())
@@ -1825,6 +1865,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     ds_filter_hash = hashlib.md5(json.dumps({
                         '__sql__': True,
                         '__one_per_sak__': one_per_sak,
+                        **raw_filters,
                     }, sort_keys=True, default=str).encode()).hexdigest()[:12]
                 else:
                     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
@@ -1849,6 +1890,12 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 else:
                     if is_sql_ds:
                         res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
+                        if not res.get('error') and res.get('rows'):
+                            res = dict(res)
+                            res['rows'] = _apply_sql_dataset_row_filters(
+                                res['rows'], raw_filters,
+                            )
+                            res['row_count'] = len(res['rows'])
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                         resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
@@ -1889,8 +1936,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
-                    if one_per_sak and not used_aggregate:
-                        aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
+                    aliased_rows = _dedupe_chart_rows(
+                        aliased_rows, chart_cfg, used_aggregate=used_aggregate,
+                    )
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
                         aliased_rows = _augment_rows_with_assessment_cols(
@@ -1901,8 +1949,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     result['row_count'] = len(aliased_rows)
 
         else:
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(pf_filters)
+            merged_filters = _merge_page_filters(
+                chart.source_filters, pf_filters, chart_cfg,
+            )
             user = getattr(request, 'user', None)
             extra_cols = _chart_extra_query_columns(chart_cfg)
             result = run_saved_query(

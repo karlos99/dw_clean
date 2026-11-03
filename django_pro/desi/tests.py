@@ -764,6 +764,57 @@ class DesiWorkflowAndViewsTests(TestCase):
         rows = list(reader)
         self.assertEqual(rows[0], ['Student', 'TTS Support'])
 
+    def test_export_data_includes_default_assignment_rules_without_saved_record(self):
+        self.client.force_login(self.admin_user)
+        rule = SupportDefaultRule.objects.create(
+            name="Global TTS",
+            support=self.acc,
+            scope="all",
+            is_active=True,
+        )
+        rule.options.add(self.opt)
+
+        export_url = reverse('desi:export_data')
+        support_col_key = f'support__{self.acc.id}'
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'support_value_field': 'code',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+            f'include__{support_col_key}': 'on',
+            f'header__{support_col_key}': 'TTS Code',
+            f'order__{support_col_key}': '2',
+            'header__assessment_name': 'Assessment Name',
+            'order__assessment_name': '99',
+            'header__student_id': 'Local Student ID',
+            'order__student_id': '99',
+            'header__ssid': 'SSID',
+            'order__ssid': '99',
+            'header__stu_annual_key': 'Student Annual Key',
+            'order__stu_annual_key': '99',
+            'header__grade': 'Grade',
+            'order__grade': '99',
+            'header__school_name': 'School',
+            'order__school_name': '99',
+            'header__school_year': 'School Year',
+            'order__school_year': '99',
+            'header__assessment_subject': 'Assessment Subject',
+            'order__assessment_subject': '99',
+            'header__assessment_school_year': 'Assessment School Year',
+            'order__assessment_school_year': '99',
+            'header__assessment_completed': 'Assessment Completed',
+            'order__assessment_completed': '99',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        rows = list(reader)
+        self.assertEqual(rows[1][1], 'TTS')
+        self.assertFalse(
+            StudentAccommodation.objects.filter(student_annual_key=self.student.stu_annual_key).exists()
+        )
+
     def test_export_data_support_columns_can_use_option_code(self):
         self.client.force_login(self.admin_user)
         StudentAccommodation.objects.create(student_annual_key=self.student.stu_annual_key).options.add(self.opt)

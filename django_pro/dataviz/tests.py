@@ -2737,6 +2737,41 @@ class GroupTotalOptionTests(SimpleTestCase):
         self.assertNotIn('Total', opt['__category_names__'])
 
 
+class UniqueStudentShareOptionTests(SimpleTestCase):
+    def test_absence_level_percent_uses_unique_ssid_over_total(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'absence_category': 'No Absence', 'absence_pct': 0},
+            {'ssid': '1', 'absence_category': 'No Absence', 'absence_pct': 0},
+            {'ssid': '2', 'absence_category': 'Moderate Absence', 'absence_pct': 3},
+            {'ssid': '3', 'absence_category': 'Moderate Absence', 'absence_pct': 4},
+            {'ssid': '4', 'absence_category': 'Chronic Absence', 'absence_pct': 12},
+        ]
+        opt = build_option(rows, {'ssid': 'Students'}, {
+            'chart_type': 'bar',
+            'x_col': 'absence_category',
+            'y_col': 'absence_pct',
+            'agg': 'sum',
+            'show_percent': True,
+            'student_share_percent': True,
+            'category_order': [
+                'No Absence', 'Moderate Absence', 'High Absence', 'Chronic Absence',
+            ],
+            'sort_col': '__manual__',
+        })
+        cats = opt['__category_names__']
+        data = opt['series'][0]['data']
+        values = [
+            item['value'] if isinstance(item, dict) else item for item in data
+        ]
+        by_cat = dict(zip(cats, values))
+        self.assertEqual(by_cat['No Absence'], 25.0)
+        self.assertEqual(by_cat['Moderate Absence'], 50.0)
+        self.assertEqual(by_cat['Chronic Absence'], 25.0)
+        self.assertLessEqual(max(values), 100)
+
+
 class DateSeriesOptionTests(SimpleTestCase):
     def test_basic_count_line_per_date(self):
         from dataviz.utils.chart_builder import build_option

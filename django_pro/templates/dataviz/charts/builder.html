@@ -4220,7 +4220,7 @@ function chartBuilder() {
     colorMapSaveAsName:  '',
     colorMapPresetsLoaded: false,
     /* Element toggles */
-    showZoom:         existing ? (existing.config?.show_zoom !== false) : true,
+    showZoom:         existing ? (existing.config?.show_zoom === true) : false,
     showToolbox:      existing ? (existing.config?.show_toolbox !== false) : true,
     showGrid:         existing ? (existing.config?.show_grid !== false) : true,
     showAxisLabels:   existing ? (existing.config?.show_axis_labels !== false) : true,

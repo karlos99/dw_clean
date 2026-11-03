@@ -366,6 +366,28 @@ def _bucket_date_column(series, bucket):
     return dt.map_elements(_fmt_val, return_dtype=pl.Utf8)
 
 
+def _unique_population_total(df, y_col: str, agg: str) -> float | None:
+    """Distinct student count for % of population (denominator for share charts)."""
+    for col in ('ssid', 'student_id', 'stu_annual_key'):
+        if col in df.columns:
+            try:
+                sub = df.drop_nulls(subset=[col])
+                if sub.is_empty():
+                    return 0.0
+                return float(sub.select(pl.col(col).n_unique()).item())
+            except Exception:
+                continue
+    if agg == 'count_unique' and y_col and y_col in df.columns:
+        try:
+            sub = df.drop_nulls(subset=[y_col])
+            if sub.is_empty():
+                return 0.0
+            return float(sub.select(pl.col(y_col).n_unique()).item())
+        except Exception:
+            pass
+    return None
+
+
 def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
     if agg_decimals is None and cfg is not None:
         _raw = cfg.get('agg_decimals')
@@ -791,7 +813,16 @@ def _apply_color_map(option: dict, cfg: dict) -> None:
         return
     names = [str(s.get('name', '')).strip() for s in series]
     cmap = _resolve_color_map(cfg, names)
-    if not cmap:
+    user_map = cfg.get('color_map') or {}
+    categories = option.get('__category_names__') or []
+    single_bar_cats = (
+        len(series) == 1
+        and categories
+        and user_map
+        and series[0].get('type') == 'bar'
+        and not series[0].get('stack')
+    )
+    if not cmap and not single_bar_cats:
         return
 
     palette = option.get('color', PALETTES.get(cfg.get('palette', 'default'), PALETTES['default']))
@@ -815,6 +846,26 @@ def _apply_color_map(option: dict, cfg: dict) -> None:
                 item_name = str(item.get('name', '')).strip()
                 if item_name in cmap:
                     item.setdefault('itemStyle', {})['color'] = cmap[item_name]
+
+    # Single-series bar/column: color_map keys are usually x-axis category names.
+    if single_bar_cats:
+        s = series[0]
+        if s.get('type') == 'bar' and not s.get('stack'):
+            opacity = float((s.get('itemStyle') or {}).get('opacity', 0.9) or 0.9)
+            painted = []
+            for i, val in enumerate(s.get('data') or []):
+                cat = str(categories[i]).strip() if i < len(categories) else ''
+                color = cmap.get(cat) or user_map.get(cat)
+                if isinstance(color, str) and color.startswith('#'):
+                    num = val.get('value', val) if isinstance(val, dict) else val
+                    painted.append({
+                        'value': num,
+                        'itemStyle': {'color': color, 'opacity': opacity},
+                    })
+                else:
+                    painted.append(val)
+            if painted:
+                s['data'] = painted
 
 
 def _build_grouped_axis_data(categories, sep=' · '):
@@ -1379,7 +1430,7 @@ def _ordered_categories(categories: list[str], cfg: dict, value_map: dict | None
 
 
 def _add_zoom(option: dict, cfg: dict = None, axis: str = 'x') -> None:
-    if cfg and cfg.get('show_zoom', True) is False:
+    if not cfg or cfg.get('show_zoom') is not True:
         return
     axis_index_key = 'yAxisIndex' if axis == 'y' else 'xAxisIndex'
     option['dataZoom'] = [

@@ -225,6 +225,7 @@ TABLE_WHITELIST = {
     'analytics_student_marks': 'analytics_student_marks',
     'analytics_student_attendance': 'analytics_student_attendance',
     'analytics_student_incidents': 'analytics_student_incidents',
+    'analytics_student_attendance_weekly': 'analytics_student_attendance_weekly',
     'analytics_ap_results': 'analytics_ap_results',
     'analytics_ap_awards': 'analytics_ap_awards',
     'analytics_sat_results': 'analytics_sat_results',
@@ -547,6 +548,12 @@ COLUMN_WHITELIST = {
         'review_status', 'description', 'suspension_days', 'is_suspended',
         'school_week', 'week_start_date', 'week_end_date', 'week_label',
     },
+    'analytics_student_attendance_weekly': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'grade_label', 'school',
+        'school_state_id', 'status', 'school_year',
+        'school_week', 'week_start_date', 'week_end_date', 'week_label',
+        'attendance_rate_week',
+    },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',
         'is_superuser', 'is_staff'
@@ -713,6 +720,32 @@ def dedupe_rows_by_stu_annual_key(rows: list) -> list:
     key_col = None
     for k in rows[0].keys():
         if k == 'stu_annual_key' or str(k).split('.')[-1] == 'stu_annual_key':
+            key_col = k
+            break
+    if not key_col:
+        return rows
+    seen = set()
+    out = []
+    for row in rows:
+        val = row.get(key_col)
+        if val is None or not str(val).strip():
+            out.append(row)
+            continue
+        key = str(val).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def dedupe_rows_by_ssid(rows: list) -> list:
+    """Keep the first row for each non-blank ``ssid`` value."""
+    if not rows:
+        return rows
+    key_col = None
+    for k in rows[0].keys():
+        if k == 'ssid' or str(k).split('.')[-1] == 'ssid':
             key_col = k
             break
     if not key_col:

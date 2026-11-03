@@ -208,8 +208,9 @@ def drill_table(request, chart_id):
         else:
             active_drill_filters[k] = v
 
-    # Merge page-level filters into active drill filters
-    active_drill_filters.update(page_filters)
+    # Page filters apply first; point-specific drill filters win on the same key
+    # (e.g. a clicked school year must not be replaced by the page school-year filter).
+    active_drill_filters = {**page_filters, **active_drill_filters}
 
     # Per-column header filters
     column_filters = _parse_column_filters(request)

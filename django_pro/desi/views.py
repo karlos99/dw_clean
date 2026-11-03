@@ -639,7 +639,22 @@ def hidden_support_ids(student):
     return hidden
 
 
-def default_support_locks(student):
+def active_default_rules_by_support():
+    """Active default-assignment rules grouped by support (for batch export/report)."""
+    criteria_qs = SupportDefaultRuleCriteria.objects.order_by('order', 'id')
+    rules = (
+        SupportDefaultRule.objects.filter(is_active=True)
+        .select_related('support')
+        .prefetch_related(Prefetch('criteria', queryset=criteria_qs), 'options')
+        .order_by('priority', 'id')
+    )
+    rules_by_support = {}
+    for rule in rules:
+        rules_by_support.setdefault(rule.support_id, []).append(rule)
+    return rules_by_support
+
+
+def default_support_locks(student, rules_by_support=None):
     """
     Default options assigned to a student by active ``SupportDefaultRule`` rows.
 
@@ -648,6 +663,9 @@ def default_support_locks(student):
     option(s). When no criteria rule matches, the support's "Default (all
     students)" rule is used instead. Supports with no matching rule and no
     default are left untouched.
+
+    Pass ``rules_by_support`` from :func:`active_default_rules_by_support` when
+    evaluating many students (exports, reports) to avoid repeated DB queries.
 
     Returns::
 
@@ -664,17 +682,8 @@ def default_support_locks(student):
         'direct_support_ids': set(),
         'managers': {},
     }
-    criteria_qs = SupportDefaultRuleCriteria.objects.order_by('order', 'id')
-    rules = (
-        SupportDefaultRule.objects.filter(is_active=True)
-        .select_related('support')
-        .prefetch_related(Prefetch('criteria', queryset=criteria_qs), 'options')
-        .order_by('priority', 'id')
-    )
-
-    rules_by_support = {}
-    for rule in rules:
-        rules_by_support.setdefault(rule.support_id, []).append(rule)
+    if rules_by_support is None:
+        rules_by_support = active_default_rules_by_support()
 
     def _matches(rule):
         if rule.scope == 'all':
@@ -1937,10 +1946,18 @@ def _build_export_rows(
     student_keys = [s.stu_annual_key for s in students]
 
     student_option_map = {}
+    student_direct_support_map = {}
     if student_keys:
-        student_acc_records = StudentAccommodation.objects.filter(student_annual_key__in=student_keys).prefetch_related('options__accommodation')
+        student_acc_records = StudentAccommodation.objects.filter(
+            student_annual_key__in=student_keys,
+        ).prefetch_related('options__accommodation', 'selected_accommodations')
         for rec in student_acc_records:
             student_option_map[rec.student_annual_key] = list(rec.options.all())
+            student_direct_support_map[rec.student_annual_key] = set(
+                rec.selected_accommodations.values_list('id', flat=True)
+            )
+
+    default_rules_by_support = active_default_rules_by_support()
 
     completion_map = {}
     if student_keys and selected_assessment_ids:
@@ -1964,6 +1981,12 @@ def _build_export_rows(
     for student in students:
         selected_options = student_option_map.get(student.stu_annual_key, [])
         selected_option_ids = {o.id for o in selected_options}
+        default_locks = default_support_locks(student, default_rules_by_support)
+        selected_option_ids |= default_locks['option_ids']
+        direct_support_ids = (
+            student_direct_support_map.get(student.stu_annual_key, set())
+            | default_locks['direct_support_ids']
+        )
 
         for ast in selected_assessments:
             base_values = {
@@ -1991,7 +2014,15 @@ def _build_export_rows(
                     continue
                 selected_opt = next((o for o in support_entry['options'] if o.id in selected_option_ids), None)
                 if not selected_opt:
-                    row[col['key']] = ''
+                    if support_id in direct_support_ids:
+                        support = support_entry['support']
+                        if support_value_field == 'code':
+                            row[col['key']] = support.code or support.column_letter or 'Yes'
+                        else:
+                            row[col['key']] = support.name or 'Yes'
+                        has_any_support_selected = True
+                    else:
+                        row[col['key']] = ''
                 else:
                     row[col['key']] = selected_opt.code if support_value_field == 'code' else (selected_opt.name or '')
                     has_any_support_selected = True

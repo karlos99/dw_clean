@@ -14,6 +14,76 @@ except Exception:  # pragma: no cover
 from .constants import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403
 
+# Columns that are rates/percentages — summing or averaging them for a
+# "% of students" bar chart produces nonsense axis values (thousands of %).
+_RATE_MEASURE_COLS = frozenset({
+    'absence_pct', 'attendance_rate', 'atendace_rate',
+})
+_STUDENT_COUNT_COLS = frozenset({'ssid', 'student_id', 'stu_annual_key'})
+
+
+def _student_id_col(df):
+    for col in ('ssid', 'student_id', 'stu_annual_key'):
+        if col in df.columns:
+            return col
+    return None
+
+
+def _wants_unique_student_share(cfg, df, is_stacked, stack_col):
+    cfg = cfg or {}
+    if cfg.get('student_share_percent'):
+        return True
+    if not cfg.get('show_percent'):
+        return False
+    if is_stacked or (stack_col and stack_col in df.columns):
+        return False
+    return _student_id_col(df) is not None
+
+
+def _unique_student_share(df, x_col, cfg):
+    """Unique students in each x category ÷ unique students overall.
+
+    Returns (categories, percents, counts, total) so bars are always 0–100
+    and sum to ~100, independent of agg/y_col chosen in the builder.
+    """
+    id_col = _student_id_col(df)
+    work = df.drop_nulls(subset=[x_col])
+    if id_col:
+        work = work.drop_nulls(subset=[id_col]).unique(subset=[id_col], keep='first')
+        adf = work.group_by(x_col).agg(pl.col(id_col).n_unique().alias('_value'))
+        total = float(work.select(pl.col(id_col).n_unique()).item() or 0)
+    else:
+        adf = work.group_by(x_col).len().rename({'len': '_value'})
+        total = float(adf['_value'].sum() or 0)
+    value_map = agg_to_dict(adf, x_col)
+    categories = _ordered_categories(
+        [str(c) for c in adf[x_col].cast(pl.Utf8).to_list()],
+        cfg,
+        value_map,
+    )
+    counts = [float(value_map.get(cat, 0) or 0) for cat in categories]
+    decimals = _percent_decimals(cfg)
+    percents = [
+        round(v / total * 100, decimals) if total > 0 else 0.0 for v in counts
+    ]
+    return categories, percents, counts, total
+
+
+def _student_share_measure(df, y_col, agg, show_percent, is_stacked, stack_col, cfg=None):
+    """For % of students, always count unique SSIDs — never row counts or rate sums."""
+    cfg = cfg or {}
+    student_share = bool(cfg.get('student_share_percent', False))
+    if not (show_percent or student_share):
+        return y_col, agg
+    if 'ssid' in df.columns:
+        return 'ssid', 'count_unique'
+    if 'stu_annual_key' in df.columns:
+        return 'stu_annual_key', 'count_unique'
+    if y_col in _RATE_MEASURE_COLS:
+        return '', 'count'
+    return y_col, agg
+
+
 def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, col_defs, group_col=''):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
@@ -23,7 +93,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     border_radius = int(cfg.get('bar_border_radius', 0) or 0)
     label_pos = cfg.get('label_position', 'top') or 'top'
-    show_percent = bool(cfg.get('show_percent', False))
+    show_percent = bool(cfg.get('show_percent', False) or cfg.get('student_share_percent', False))
     percent_decimals = _percent_decimals(cfg)
     percent_suffix = _percent_suffix(cfg)
     bar_layout = (cfg.get('bar_layout') or ('stacked' if stacked else 'grouped')).lower()
@@ -178,6 +248,9 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'}}
 
     elif stack_col and stack_col in df.columns:
+        y_col, agg = _student_share_measure(
+            df, y_col, agg, show_percent, is_stacked, stack_col, cfg,
+        )
         adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
         categories = sorted(adf[x_col].cast(pl.Utf8).unique().to_list())
         stacks = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
@@ -252,43 +325,91 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                              '__formatter_js__': tooltip_js}
     else:
-        adf = sort_df(_agg(df, x_col, y_col, agg, cfg=cfg), '_value', descending=True)
-        value_map = agg_to_dict(adf, x_col)
-        # Include the category itself as a tie-break so categories with equal
-        # values always render in the same order, regardless of which query
-        # path produced the underlying rows (compiled SQL vs raw rows).
-        ordered_categories = sorted(
-            (str(c) for c in adf[x_col].cast(pl.Utf8).to_list()),
-            key=lambda c: (float(value_map.get(c, 0) or 0), c),
-            reverse=True,
-        )
-        ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
-        # Optional Top-N cap for single-series category bars (e.g. a long tail of
-        # favorite careers). Sorting is already descending above, so a plain
-        # head() keeps the highest-value categories and drops the tail.
-        _top_n = cfg.get('top_n')
-        if _top_n not in (None, '', 0, '0'):
-            try:
-                _top_n = int(_top_n)
-                if _top_n > 0:
-                    ordered_categories = ordered_categories[:_top_n]
-                    ordered_values = ordered_values[:_top_n]
-            except (TypeError, ValueError):
-                pass
+        if _wants_unique_student_share(cfg, df, is_stacked, stack_col):
+            show_percent = True
+            ordered_categories, display_values, ordered_values, grand_total = (
+                _unique_student_share(df, x_col, cfg)
+            )
+        else:
+            y_col, agg = _student_share_measure(
+                df, y_col, agg, show_percent, is_stacked, stack_col, cfg,
+            )
+            adf = sort_df(_agg(df, x_col, y_col, agg, cfg=cfg), '_value', descending=True)
+            value_map = agg_to_dict(adf, x_col)
+            ordered_categories = _ordered_categories(
+                [str(c) for c in adf[x_col].cast(pl.Utf8).to_list()],
+                cfg,
+                value_map,
+            )
+            ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
+            # Optional Top-N cap for single-series category bars (e.g. a long tail of
+            # favorite careers). Sorting is already descending above, so a plain
+            # head() keeps the highest-value categories and drops the tail.
+            _top_n = cfg.get('top_n')
+            if _top_n not in (None, '', 0, '0'):
+                try:
+                    _top_n = int(_top_n)
+                    if _top_n > 0:
+                        ordered_categories = ordered_categories[:_top_n]
+                        ordered_values = ordered_values[:_top_n]
+                except (TypeError, ValueError):
+                    pass
+            count_total = sum(ordered_values)
+            pop_total = _unique_population_total(df, y_col, agg) if show_percent else None
+            grand_total = (
+                pop_total
+                if pop_total is not None and pop_total > 0
+                else count_total
+            )
+            display_values = ordered_values
+            if show_percent and grand_total > 0:
+                display_values = [
+                    round(v / grand_total * 100, percent_decimals) for v in ordered_values
+                ]
         series_name = labels['y'] or 'Value'
+        y_axis_name = '%' if show_percent else _axis_name(labels['y'] or 'Count', cfg)
         update_axes(
             ordered_categories,
-            [make_series(series_name, ordered_values)],
-            _axis_name(labels['y'] or 'Count', cfg),
+            [make_series(series_name, display_values)],
+            y_axis_name,
         )
-        # Single series: tooltip shows value + % of grand total
-        grand_total = sum(ordered_values)
+        if show_percent:
+            if radial:
+                option['radiusAxis']['max'] = 100
+            elif polar:
+                option['angleAxis']['max'] = 100
+            elif orientation == 'horizontal':
+                option['xAxis']['max'] = 100
+            else:
+                option['yAxis']['max'] = 100
+        # Single series: tooltip shows unique count + % of total students
+        if show_percent and display_values is not ordered_values:
+            raw_by_cat = {
+                cat: ordered_values[i] for i, cat in enumerate(ordered_categories)
+            }
+            pop_n = int(round(grand_total))
+            tooltip_js = (
+                "function(params) {"
+                "  var p = Array.isArray(params) ? params[0] : params;"
+                f"  var raw = {json.dumps(raw_by_cat)};"
+                f"  var pop = {pop_n};"
+                "  var cat = (p && (p.name || p.axisValue)) || '';"
+                "  var cnt = raw[cat] != null ? raw[cat] : 0;"
+                f"  var pct = Number(p && p.value) || 0;"
+                f"  return '<b>' + cat + '</b><br/><b>' + cnt + '</b> students ('"
+                f"  + pct.toFixed({percent_decimals}) + '{percent_suffix} of ' + pop + ')';"
+                "}"
+            )
+        else:
+            tooltip_js = _inline_pct_tooltip_js(
+                percent_decimals, percent_suffix, grand_total,
+                show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
+                categories=ordered_categories,
+            )
         option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                             '__formatter_js__': _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
-                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
-                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
-                                                                         categories=ordered_categories)}
+                             '__formatter_js__': tooltip_js}
     option.setdefault('__category_names__', categories if 'categories' in locals() else ordered_categories)
     if (radial or polar) and isinstance(option.get('tooltip'), dict):
         option['tooltip']['axisPointer'] = {'type': 'line'}
@@ -579,6 +700,15 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             'position': cfg.get('label_position', 'top') or 'top',
             'fontSize': int(cfg.get('label_font_size', 10) or 10),
         }
+        _ad = cfg.get('agg_decimals')
+        if _ad is not None and cfg.get('data_labels', False):
+            try:
+                ad = int(_ad)
+                label_cfg['__formatter_js__'] = (
+                    f"function(p){{var v=Number(p.value||0);return v.toFixed({ad});}}"
+                )
+            except (TypeError, ValueError):
+                pass
         return {
             'name': name, 'type': 'line', 'smooth': smooth,
             'stack': 'total' if stk else None,
