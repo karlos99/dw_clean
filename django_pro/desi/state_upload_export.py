@@ -24,7 +24,7 @@ from django.db import transaction
 from openpyxl import load_workbook
 
 from .models import Accommodation, AccommodationOption, DesiSeis, StudentAccommodation
-from .views import active_default_rules_by_support, default_support_locks
+from .views import active_default_rules_by_support, batch_default_support_locks
 from .state_upload_templates import (
     CAASPP_SHEET_NAME,
     ELPAC_SHEET_NAME,
@@ -164,7 +164,7 @@ def _student_codes_for_tag(tag, students):
     default_option_ids = set()
     for support_rules in default_rules_by_support.values():
         for rule in support_rules:
-            default_option_ids.update(rule.options.values_list('id', flat=True))
+            default_option_ids.update(opt.id for opt in rule.options.all())
     default_options_by_id = {
         opt.id: opt
         for opt in AccommodationOption.objects.filter(
@@ -173,10 +173,12 @@ def _student_codes_for_tag(tag, students):
         ).select_related('accommodation')
     }
 
+    default_locks_by_key = batch_default_support_locks(students, default_rules_by_support)
+
     results = []
     for student in students:
         codes = dict(desi_by_key.get(student.stu_annual_key, {}))
-        default_locks = default_support_locks(student, default_rules_by_support)
+        default_locks = default_locks_by_key.get(student.stu_annual_key, {})
         for opt_id in default_locks['option_ids']:
             option = default_options_by_id.get(opt_id)
             if option and option.code and option.accommodation_id:

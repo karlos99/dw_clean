@@ -274,7 +274,99 @@ def _result_to_float(value):
         return None
 
 
-def _eval_result_criterion(criterion, student):
+def _result_criterion_test_keys(criterion):
+    """Resolve ``Test`` rows for a result-type criterion to ``test_group_key`` values."""
+    tests = Test.objects.all()
+    if criterion.test_name:
+        tests = tests.filter(test_name__iexact=criterion.test_name.strip())
+    if criterion.test_subject:
+        tests = tests.filter(subject__iexact=criterion.test_subject.strip())
+    if criterion.test_window:
+        tests = tests.filter(test_window__iexact=criterion.test_window.strip())
+    if criterion.school_year:
+        tests = tests.filter(school_year=criterion.school_year.strip())
+    return list(tests.values_list('test_group_key', flat=True))
+
+
+def _result_values_for_student(criterion, student, test_keys):
+    """Collect normalized result field values for one student and test key set."""
+    ssid = getattr(student, 'ssid', None)
+    if not ssid or not test_keys:
+        return []
+
+    field = criterion.result_field or 'pl'
+    oi_key = (criterion.result_other_info_key or '').strip()
+    if field == 'additional_info' and not oi_key:
+        return []
+
+    results = Result.objects.filter(ssid=ssid, test_group_key__in=test_keys)
+    if criterion.school_year:
+        results = results.filter(school_year=criterion.school_year.strip())
+    if field == 'additional_info':
+        values = []
+        for info in results.values_list('other_info', flat=True):
+            raw_v = info.get(oi_key) if isinstance(info, dict) else None
+            if isinstance(raw_v, (dict, list)):
+                continue
+            normalized = _normalize_result_value(raw_v)
+            if normalized != '':
+                values.append(normalized)
+        return values
+
+    return [
+        _normalize_result_value(v)
+        for v in results.values_list(field, flat=True)
+        if _normalize_result_value(v) != ''
+    ]
+
+
+def _match_result_values(criterion, values):
+    """Return whether ``values`` satisfy the criterion's result operator."""
+    op = criterion.result_operator or 'in'
+    raw = (criterion.result_value or '').strip()
+    if op == 'in':
+        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
+        return any(v in wanted for v in values)
+    if op == 'not_in':
+        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
+        return bool(values) and all(v not in wanted for v in values)
+    if op == 'is':
+        return any(v == _normalize_result_value(raw) for v in values)
+    if op == 'is_not':
+        return bool(values) and all(v != _normalize_result_value(raw) for v in values)
+    if op == 'between':
+        low, _, high = raw.partition('-')
+        low_f, high_f = _result_to_float(low), _result_to_float(high)
+        if low_f is not None and high_f is not None:
+            return any(
+                f is not None and low_f <= f <= high_f
+                for f in (_result_to_float(v) for v in values)
+            )
+        return False
+    if op == 'gt':
+        threshold = _result_to_float(raw)
+        return threshold is not None and any(
+            f is not None and f > threshold for f in (_result_to_float(v) for v in values)
+        )
+    if op == 'gte':
+        threshold = _result_to_float(raw)
+        return threshold is not None and any(
+            f is not None and f >= threshold for f in (_result_to_float(v) for v in values)
+        )
+    if op == 'lt':
+        threshold = _result_to_float(raw)
+        return threshold is not None and any(
+            f is not None and f < threshold for f in (_result_to_float(v) for v in values)
+        )
+    if op == 'lte':
+        threshold = _result_to_float(raw)
+        return threshold is not None and any(
+            f is not None and f <= threshold for f in (_result_to_float(v) for v in values)
+        )
+    return False
+
+
+def _eval_result_criterion(criterion, student, eval_context=None):
     """
     Evaluate an assessment-result criterion against a student's results.
 
@@ -288,17 +380,6 @@ def _eval_result_criterion(criterion, student):
     if not ssid:
         return False, f"{label}: no SSID on student"
 
-    tests = Test.objects.all()
-    if criterion.test_name:
-        tests = tests.filter(test_name__iexact=criterion.test_name.strip())
-    if criterion.test_subject:
-        tests = tests.filter(subject__iexact=criterion.test_subject.strip())
-    if criterion.test_window:
-        tests = tests.filter(test_window__iexact=criterion.test_window.strip())
-    if criterion.school_year:
-        tests = tests.filter(school_year=criterion.school_year.strip())
-    test_keys = list(tests.values_list('test_group_key', flat=True))
-
     field = criterion.result_field or 'pl'
     oi_key = (criterion.result_other_info_key or '').strip()
     if field == 'additional_info' and not oi_key:
@@ -306,69 +387,15 @@ def _eval_result_criterion(criterion, student):
     field_label = criterion.get_result_field_display()
     if field == 'additional_info':
         field_label = f"Additional Info ({oi_key})"
-    values = []
-    if test_keys:
-        results = Result.objects.filter(ssid=ssid, test_group_key__in=test_keys)
-        if criterion.school_year:
-            results = results.filter(school_year=criterion.school_year.strip())
-        if field == 'additional_info':
-            for info in results.values_list('other_info', flat=True):
-                raw_v = info.get(oi_key) if isinstance(info, dict) else None
-                if isinstance(raw_v, (dict, list)):
-                    continue
-                normalized = _normalize_result_value(raw_v)
-                if normalized != '':
-                    values.append(normalized)
-        else:
-            values = [
-                _normalize_result_value(v)
-                for v in results.values_list(field, flat=True)
-                if _normalize_result_value(v) != ''
-            ]
 
-    op = criterion.result_operator or 'in'
+    if eval_context is not None:
+        values = eval_context.result_values(criterion, student)
+    else:
+        test_keys = _result_criterion_test_keys(criterion)
+        values = _result_values_for_student(criterion, student, test_keys)
+
     raw = (criterion.result_value or '').strip()
-    match = False
-    if op == 'in':
-        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
-        match = any(v in wanted for v in values)
-    elif op == 'not_in':
-        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
-        # "not in" only holds when the student actually has a result.
-        match = bool(values) and all(v not in wanted for v in values)
-    elif op == 'is':
-        match = any(v == _normalize_result_value(raw) for v in values)
-    elif op == 'is_not':
-        match = bool(values) and all(v != _normalize_result_value(raw) for v in values)
-    elif op == 'between':
-        low, _, high = raw.partition('-')
-        low_f, high_f = _result_to_float(low), _result_to_float(high)
-        if low_f is not None and high_f is not None:
-            match = any(
-                f is not None and low_f <= f <= high_f
-                for f in (_result_to_float(v) for v in values)
-            )
-    elif op == 'gt':
-        threshold = _result_to_float(raw)
-        match = threshold is not None and any(
-            f is not None and f > threshold for f in (_result_to_float(v) for v in values)
-        )
-    elif op == 'gte':
-        threshold = _result_to_float(raw)
-        match = threshold is not None and any(
-            f is not None and f >= threshold for f in (_result_to_float(v) for v in values)
-        )
-    elif op == 'lt':
-        threshold = _result_to_float(raw)
-        match = threshold is not None and any(
-            f is not None and f < threshold for f in (_result_to_float(v) for v in values)
-        )
-    elif op == 'lte':
-        threshold = _result_to_float(raw)
-        match = threshold is not None and any(
-            f is not None and f <= threshold for f in (_result_to_float(v) for v in values)
-        )
-
+    match = _match_result_values(criterion, values)
     reason = None if match else (
         f"{label} {field_label} must be "
         f"{criterion.get_result_operator_display()} '{raw}' "
@@ -377,7 +404,7 @@ def _eval_result_criterion(criterion, student):
     return match, reason
 
 
-def _eval_schedule_criterion(criterion, student):
+def _eval_schedule_criterion(criterion, student, eval_context=None):
     """
     Evaluate a schedule/class criterion: school scope, teacher, and/or period.
 
@@ -399,21 +426,24 @@ def _eval_schedule_criterion(criterion, student):
     stu_key = getattr(student, 'stu_annual_key', None)
     if not stu_key:
         return False, "Student has no schedule identity"
-    try:
-        with transaction.atomic():
-            scheduled = Schedule.objects.filter(stu_annual_key=stu_key)
-            year = (getattr(student, 'school_year', '') or '').strip()
-            if year:
-                scheduled = scheduled.filter(school_year=year)
-            if school:
-                scheduled = scheduled.filter(state_school_id=school)
-            if staff:
-                scheduled = scheduled.filter(staff_name__iexact=staff)
-            if period:
-                scheduled = scheduled.filter(period=period)
-            match = scheduled.exists()
-    except Exception:
-        return False, "Schedule data unavailable"
+    if eval_context is not None:
+        match = eval_context.schedule_matches(criterion, student)
+    else:
+        try:
+            with transaction.atomic():
+                scheduled = Schedule.objects.filter(stu_annual_key=stu_key)
+                year = (getattr(student, 'school_year', '') or '').strip()
+                if year:
+                    scheduled = scheduled.filter(school_year=year)
+                if school:
+                    scheduled = scheduled.filter(state_school_id=school)
+                if staff:
+                    scheduled = scheduled.filter(staff_name__iexact=staff)
+                if period:
+                    scheduled = scheduled.filter(period=period)
+                match = scheduled.exists()
+        except Exception:
+            return False, "Schedule data unavailable"
 
     label = staff or 'the teacher'
     if period:
@@ -422,7 +452,7 @@ def _eval_schedule_criterion(criterion, student):
     return match, reason
 
 
-def check_criteria(criteria_list, student):
+def check_criteria(criteria_list, student, eval_context=None):
     """
     Dynamically evaluates a list of AssessmentCriteria, SupportRuleCriteria or
     SupportDefaultRuleCriteria against a student, supporting 'AND' and 'OR'
@@ -433,9 +463,9 @@ def check_criteria(criteria_list, student):
     def _eval_criterion(criterion, stu):
         criterion_type = getattr(criterion, 'criterion_type', '')
         if criterion_type == 'result':
-            return _eval_result_criterion(criterion, stu)
+            return _eval_result_criterion(criterion, stu, eval_context)
         if criterion_type == 'schedule':
-            return _eval_schedule_criterion(criterion, stu)
+            return _eval_schedule_criterion(criterion, stu, eval_context)
 
         field_name = criterion.field_name
 
@@ -639,6 +669,118 @@ def hidden_support_ids(student):
     return hidden
 
 
+class DefaultRuleEvalContext:
+    """Preloaded result and schedule data for batch default-rule evaluation."""
+
+    def __init__(self, test_keys_by_criterion_id, results_by_ssid, schedules_by_key):
+        self.test_keys_by_criterion_id = test_keys_by_criterion_id
+        self.results_by_ssid = results_by_ssid
+        self.schedules_by_key = schedules_by_key
+
+    @classmethod
+    def for_students(cls, students, rules_by_support):
+        result_criteria = []
+        needs_schedule = False
+        for rules in rules_by_support.values():
+            for rule in rules:
+                if rule.scope != 'criteria':
+                    continue
+                for crit in rule.criteria.all():
+                    if getattr(crit, 'criterion_type', '') == 'result':
+                        result_criteria.append(crit)
+                    elif getattr(crit, 'criterion_type', '') == 'schedule':
+                        needs_schedule = True
+
+        test_keys_by_criterion_id = {}
+        for crit in result_criteria:
+            test_keys_by_criterion_id[crit.id] = _result_criterion_test_keys(crit)
+
+        results_by_ssid = {}
+        all_test_keys = set()
+        for keys in test_keys_by_criterion_id.values():
+            all_test_keys.update(keys)
+        ssids = [s.ssid for s in students if getattr(s, 'ssid', None)]
+        if ssids and all_test_keys:
+            for row in Result.objects.filter(
+                ssid__in=ssids,
+                test_group_key__in=all_test_keys,
+            ).values('ssid', 'test_group_key', 'school_year', 'pl', 'ss', 'other_info'):
+                results_by_ssid.setdefault(row['ssid'], []).append(row)
+
+        schedules_by_key = {}
+        if needs_schedule:
+            keys = [s.stu_annual_key for s in students if getattr(s, 'stu_annual_key', None)]
+            school_years = {(getattr(s, 'school_year', '') or '').strip() for s in students} - {''}
+            qs = Schedule.objects.filter(stu_annual_key__in=keys)
+            if len(school_years) == 1:
+                qs = qs.filter(school_year=next(iter(school_years)))
+            for stu_key, school_id, staff_name, period in qs.values_list(
+                'stu_annual_key', 'state_school_id', 'staff_name', 'period'
+            ):
+                schedules_by_key.setdefault(stu_key, []).append(
+                    (
+                        (school_id or '').strip(),
+                        (staff_name or '').strip().casefold(),
+                        (period or '').strip(),
+                    )
+                )
+
+        return cls(test_keys_by_criterion_id, results_by_ssid, schedules_by_key)
+
+    def result_values(self, criterion, student):
+        test_keys = set(self.test_keys_by_criterion_id.get(criterion.id) or ())
+        if not test_keys:
+            return []
+        ssid = getattr(student, 'ssid', None)
+        if not ssid:
+            return []
+
+        field = criterion.result_field or 'pl'
+        oi_key = (criterion.result_other_info_key or '').strip()
+        school_year = (criterion.school_year or '').strip()
+        rows = self.results_by_ssid.get(ssid, [])
+        if school_year:
+            rows = [row for row in rows if (row.get('school_year') or '').strip() == school_year]
+        rows = [row for row in rows if row.get('test_group_key') in test_keys]
+
+        if field == 'additional_info':
+            if not oi_key:
+                return []
+            values = []
+            for row in rows:
+                info = row.get('other_info')
+                raw_v = info.get(oi_key) if isinstance(info, dict) else None
+                if isinstance(raw_v, (dict, list)):
+                    continue
+                normalized = _normalize_result_value(raw_v)
+                if normalized != '':
+                    values.append(normalized)
+            return values
+
+        return [
+            _normalize_result_value(row.get(field))
+            for row in rows
+            if _normalize_result_value(row.get(field)) != ''
+        ]
+
+    def schedule_matches(self, criterion, student):
+        school = (criterion.school_state_id or '').strip()
+        staff = (criterion.staff_name or '').strip().casefold()
+        period = (criterion.period or '').strip()
+        stu_key = getattr(student, 'stu_annual_key', None)
+        if not stu_key:
+            return False
+        for row_school, row_staff, row_period in self.schedules_by_key.get(stu_key, ()):
+            if school and row_school != school:
+                continue
+            if staff and row_staff != staff:
+                continue
+            if period and row_period != period:
+                continue
+            return True
+        return False
+
+
 def active_default_rules_by_support():
     """Active default-assignment rules grouped by support (for batch export/report)."""
     criteria_qs = SupportDefaultRuleCriteria.objects.order_by('order', 'id')
@@ -654,7 +796,7 @@ def active_default_rules_by_support():
     return rules_by_support
 
 
-def default_support_locks(student, rules_by_support=None):
+def default_support_locks(student, rules_by_support=None, eval_context=None):
     """
     Default options assigned to a student by active ``SupportDefaultRule`` rows.
 
@@ -666,6 +808,9 @@ def default_support_locks(student, rules_by_support=None):
 
     Pass ``rules_by_support`` from :func:`active_default_rules_by_support` when
     evaluating many students (exports, reports) to avoid repeated DB queries.
+    Pass ``eval_context`` from :func:`DefaultRuleEvalContext.for_students` (or
+    use :func:`batch_default_support_locks`) when criteria include results or
+    schedule lookups.
 
     Returns::
 
@@ -691,7 +836,7 @@ def default_support_locks(student, rules_by_support=None):
         criteria = list(rule.criteria.all())
         if not criteria:
             return False
-        matched, _failed = check_criteria(criteria, student)
+        matched, _failed = check_criteria(criteria, student, eval_context)
         return matched
 
     for support_rules in rules_by_support.values():
@@ -724,6 +869,51 @@ def default_support_locks(student, rules_by_support=None):
         else:
             locks['direct_support_ids'].add(support.id)
     return locks
+
+
+_EMPTY_DEFAULT_LOCKS = {
+    'option_ids': set(),
+    'support_ids': set(),
+    'direct_support_ids': set(),
+    'managers': {},
+}
+
+
+def batch_default_support_locks(students, rules_by_support=None):
+    """
+    Evaluate default assignment rules for many students with batched DB reads.
+
+    Returns ``{stu_annual_key: locks_dict}`` in the same shape as
+    :func:`default_support_locks`.
+    """
+    students = list(students)
+    if not students:
+        return {}
+    if rules_by_support is None:
+        rules_by_support = active_default_rules_by_support()
+    if not rules_by_support:
+        return {student.stu_annual_key: dict(_EMPTY_DEFAULT_LOCKS) for student in students}
+
+    has_criteria = False
+    for rules in rules_by_support.values():
+        for rule in rules:
+            if rule.scope == 'criteria' and list(rule.criteria.all()):
+                has_criteria = True
+                break
+        if has_criteria:
+            break
+
+    if not has_criteria:
+        locks = default_support_locks(students[0], rules_by_support)
+        return {student.stu_annual_key: locks for student in students}
+
+    eval_context = DefaultRuleEvalContext.for_students(students, rules_by_support)
+    return {
+        student.stu_annual_key: default_support_locks(
+            student, rules_by_support, eval_context
+        )
+        for student in students
+    }
 
 
 def _parse_dependency_fields(post_data):
@@ -1958,6 +2148,7 @@ def _build_export_rows(
             )
 
     default_rules_by_support = active_default_rules_by_support()
+    default_locks_by_key = batch_default_support_locks(students, default_rules_by_support)
 
     completion_map = {}
     if student_keys and selected_assessment_ids:
@@ -1981,11 +2172,11 @@ def _build_export_rows(
     for student in students:
         selected_options = student_option_map.get(student.stu_annual_key, [])
         selected_option_ids = {o.id for o in selected_options}
-        default_locks = default_support_locks(student, default_rules_by_support)
-        selected_option_ids |= default_locks['option_ids']
+        default_locks = default_locks_by_key.get(student.stu_annual_key, {})
+        selected_option_ids |= default_locks.get('option_ids') or set()
         direct_support_ids = (
             student_direct_support_map.get(student.stu_annual_key, set())
-            | default_locks['direct_support_ids']
+            | (default_locks.get('direct_support_ids') or set())
         )
 
         for ast in selected_assessments:

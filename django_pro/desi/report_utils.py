@@ -343,7 +343,7 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     to a teacher's roster.
     """
     from desi.models import Accommodation, AccommodationOption, StudentAccommodation, StudentAssessmentCompletion
-    from desi.views import active_default_rules_by_support, default_support_locks
+    from desi.views import active_default_rules_by_support, batch_default_support_locks
     from studata.models import CurrentStudent
 
     filter_kind, filter_id = parse_support_filter_value(support_filter)
@@ -416,10 +416,11 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
         return subjects
 
     default_rules_by_support = active_default_rules_by_support()
+    default_locks_by_key = batch_default_support_locks(students, default_rules_by_support)
     default_option_ids = set()
     for support_rules in default_rules_by_support.values():
         for rule in support_rules:
-            default_option_ids.update(rule.options.values_list('id', flat=True))
+            default_option_ids.update(opt.id for opt in rule.options.all())
     default_options_by_id = {
         opt.id: opt
         for opt in AccommodationOption.objects.filter(id__in=default_option_ids)
@@ -469,8 +470,8 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
             for acc in record.selected_accommodations.all():
                 _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
 
-        default_locks = default_support_locks(student, default_rules_by_support)
-        for opt_id in default_locks['option_ids']:
+        default_locks = default_locks_by_key.get(student.stu_annual_key, {})
+        for opt_id in default_locks.get('option_ids') or ():
             option = default_options_by_id.get(opt_id)
             if not option:
                 continue
@@ -480,7 +481,7 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
                 _option_subjects(option),
                 f"{prefix}{option.name}",
             )
-        for acc_id in default_locks['direct_support_ids']:
+        for acc_id in default_locks.get('direct_support_ids') or ():
             acc = direct_default_accs.get(acc_id)
             if acc:
                 _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
