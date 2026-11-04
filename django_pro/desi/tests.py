@@ -3053,6 +3053,127 @@ class DesiSupportDefaultRuleTests(TestCase):
         )
         self.assertNotIn(self.opt.id, default_support_locks(other)["option_ids"])
 
+    def test_result_is_empty_matches_missing_or_blank_pl(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC no score", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="ELPAC", test_subject="summative",
+            school_year="2025-2026", result_field="pl", result_operator="is_empty", result_value="",
+        )
+        # No Result row for this student.
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        Result.objects.create(
+            test_id="r-blank", test_group_key="elpac-sum-2025", ssid=self.student.ssid,
+            local_student_id="dr", school_year="2025-2026", pl="",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        Result.objects.filter(ssid=self.student.ssid).update(pl="3")
+        self.assertNotIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_result_or_equals_three_or_is_empty(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC PL3 or blank", support=self.acc, scope="criteria", is_active=True
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", logic_operator="AND", order=0,
+            test_name="ELPAC", test_subject="summative", school_year="2025-2026",
+            result_field="pl", result_operator="is", result_value="3",
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", logic_operator="OR", order=1,
+            test_name="ELPAC", test_subject="summative", school_year="2025-2026",
+            result_field="pl", result_operator="is_empty", result_value="",
+        )
+
+        no_result = CurrentStudent.objects.create(
+            stu_annual_key="dr-nr", ssid="dr-nr", student_id="drnr",
+            student_name="No Result", grade="05", school_year="2025-2026",
+        )
+        pl3 = CurrentStudent.objects.create(
+            stu_annual_key="dr-pl3", ssid="dr-pl3", student_id="drpl3",
+            student_name="PL3", grade="05", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r-pl3", test_group_key="elpac-sum-2025", ssid=pl3.ssid,
+            local_student_id="drpl3", school_year="2025-2026", pl="3",
+        )
+        pl2 = CurrentStudent.objects.create(
+            stu_annual_key="dr-pl2", ssid="dr-pl2", student_id="drpl2",
+            student_name="PL2", grade="05", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r-pl2", test_group_key="elpac-sum-2025", ssid=pl2.ssid,
+            local_student_id="drpl2", school_year="2025-2026", pl="2",
+        )
+
+        locks_nr = default_support_locks(no_result)
+        self.assertIn(self.acc.id, locks_nr["support_ids"])
+        self.assertNotIn(self.opt.id, locks_nr["option_ids"])
+
+        locks_pl3 = default_support_locks(pl3)
+        self.assertIn(self.acc.id, locks_pl3["support_ids"])
+        self.assertNotIn(self.opt.id, locks_pl3["option_ids"])
+
+        locks_pl2 = default_support_locks(pl2)
+        self.assertNotIn(self.acc.id, locks_pl2["support_ids"])
+
+    def test_default_rule_form_persists_or_with_is_empty_criterion(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "OR empty save",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "crit_type[]": ["result", "result"],
+            "crit_logic_op[]": ["AND", "OR"],
+            "crit_field[]": ["", ""],
+            "crit_operator[]": ["", ""],
+            "crit_value[]": ["", ""],
+            "crit_test_name[]": ["ELPAC", "ELPAC"],
+            "crit_test_subject[]": ["summative", "summative"],
+            "crit_school_year[]": ["2025-2026", "2025-2026"],
+            "crit_result_field[]": ["pl", "pl"],
+            "crit_result_operator[]": ["is", "is_empty"],
+            "crit_result_value[]": ["3", ""],
+        })
+        self.assertEqual(response.status_code, 302)
+        criteria = list(
+            SupportDefaultRuleCriteria.objects.filter(rule__name="OR empty save").order_by("order")
+        )
+        self.assertEqual(len(criteria), 2)
+        self.assertEqual(criteria[0].result_operator, "is")
+        self.assertEqual(criteria[0].result_value, "3")
+        self.assertEqual(criteria[1].logic_operator, "OR")
+        self.assertEqual(criteria[1].result_operator, "is_empty")
+
+    def test_default_rule_edit_form_shows_or_connector(self):
+        rule = SupportDefaultRule.objects.create(
+            name="OR display", support=self.acc, scope="criteria", is_active=True,
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="demographic", order=0,
+            field_name="grade", operator="is", value="05",
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="demographic", order=1, logic_operator="OR",
+            field_name="grade", operator="is", value="06",
+        )
+        response = self.client.get(reverse("desi:support_default_rule_edit", args=[rule.id]))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("logic: 'OR'", content)
+
     def test_workspace_shows_locked_default_option(self):
         self._global_rule()
         response = self.client.get(

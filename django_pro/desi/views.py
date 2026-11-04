@@ -320,10 +320,17 @@ def _result_values_for_student(criterion, student, test_keys):
     ]
 
 
+_RESULT_OPS_WITHOUT_VALUE = frozenset({'is_empty', 'is_not_empty'})
+
+
 def _match_result_values(criterion, values):
     """Return whether ``values`` satisfy the criterion's result operator."""
     op = criterion.result_operator or 'in'
     raw = (criterion.result_value or '').strip()
+    if op == 'is_empty':
+        return not values
+    if op == 'is_not_empty':
+        return bool(values)
     if op == 'in':
         wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
         return any(v in wanted for v in values)
@@ -395,12 +402,22 @@ def _eval_result_criterion(criterion, student, eval_context=None):
         values = _result_values_for_student(criterion, student, test_keys)
 
     raw = (criterion.result_value or '').strip()
+    op = criterion.result_operator or 'in'
     match = _match_result_values(criterion, values)
-    reason = None if match else (
-        f"{label} {field_label} must be "
-        f"{criterion.get_result_operator_display()} '{raw}' "
-        f"(found: {', '.join(values) if values else '(none)'})"
-    )
+    if match:
+        reason = None
+    elif op in _RESULT_OPS_WITHOUT_VALUE:
+        reason = (
+            f"{label} {field_label} must be "
+            f"{criterion.get_result_operator_display()} "
+            f"(found: {', '.join(values) if values else '(none)'})"
+        )
+    else:
+        reason = (
+            f"{label} {field_label} must be "
+            f"{criterion.get_result_operator_display()} '{raw}' "
+            f"(found: {', '.join(values) if values else '(none)'})"
+        )
     return match, reason
 
 
@@ -3401,7 +3418,11 @@ def support_default_rule_form(request, id=None):
                     result_field = raw_field
                 else:
                     result_field = 'pl'
-                if not (test_name and _at(r_vals, idx).strip()):
+                result_op = _at(r_ops, idx).strip() or 'in'
+                result_val = _at(r_vals, idx).strip()
+                if not test_name:
+                    continue
+                if result_op not in _RESULT_OPS_WITHOUT_VALUE and not result_val:
                     continue
                 if result_field == 'additional_info' and not oi_key:
                     continue
@@ -3412,8 +3433,8 @@ def support_default_rule_form(request, id=None):
                     school_year=_at(r_years, idx).strip(),
                     result_field=result_field,
                     result_other_info_key=oi_key if result_field == 'additional_info' else '',
-                    result_operator=_at(r_ops, idx).strip() or 'in',
-                    result_value=_at(r_vals, idx).strip(),
+                    result_operator=result_op,
+                    result_value=result_val,
                 )
                 db_index += 1
             elif ctype == 'schedule':

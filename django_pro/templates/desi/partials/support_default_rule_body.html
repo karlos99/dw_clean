@@ -46,6 +46,9 @@
             row.multiValues = (row.rvalue || '').split(',').map(s => s.trim()).filter(Boolean);
         },
         isMulti(row) { return !!row && (row.rop === 'in' || row.rop === 'not_in'); },
+        valueNotRequired(row) {
+            return !!row && (row.rop === 'is_empty' || row.rop === 'is_not_empty');
+        },
         toggleMulti(row, value, checked) {
             if (!row.multiValues) row.multiValues = [];
             if (checked) {
@@ -56,7 +59,10 @@
             row.rvalue = row.multiValues.join(',');
         },
         onOperatorChange(row) {
-            if (this.isMulti(row)) {
+            if (this.valueNotRequired(row)) {
+                row.rvalue = '';
+                row.multiValues = [];
+            } else if (this.isMulti(row)) {
                 this.syncMulti(row);
             } else if (row.multiValues && row.multiValues.length) {
                 row.rvalue = row.multiValues[0];
@@ -229,11 +235,15 @@
                     <div class="bg-slate-50 border border-slate-200 rounded p-3 space-y-3">
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider" x-text="index === 0 ? 'WHERE' : (critRow.logic || 'AND')"></span>
-                            <select x-show="index > 0" name="crit_logic_op[]" x-model="critRow.logic" class="rounded text-xs font-bold py-0.5 px-2 border-slate-300">
-                                <option value="AND">AND</option>
-                                <option value="OR">OR</option>
-                            </select>
-                            <input x-show="index === 0" type="hidden" name="crit_logic_op[]" value="AND">
+                            <template x-if="index > 0">
+                                <select name="crit_logic_op[]" x-model="critRow.logic" class="rounded text-xs font-bold py-0.5 px-2 border-slate-300">
+                                    <option value="AND">AND</option>
+                                    <option value="OR">OR</option>
+                                </select>
+                            </template>
+                            <template x-if="index === 0">
+                                <input type="hidden" name="crit_logic_op[]" value="AND">
+                            </template>
                             <select name="crit_type[]" x-model="critRow.type" class="rounded text-xs font-bold py-0.5 px-2 border-slate-300">
                                 <option value="demographic">Demographic</option>
                                 <option value="result">Assessment Result</option>
@@ -301,7 +311,10 @@
                                 <!-- Canonical value submitted for the row (keeps server alignment) -->
                                 <input type="hidden" name="crit_result_value[]" :value="critRow.rvalue">
                                 <!-- Multiple selection (checkboxes) for In List / Not In List -->
-                                <div x-show="!valueIsInput(critRow) && isMulti(critRow)"
+                                <p x-show="valueNotRequired(critRow)" class="md:col-span-2 text-xs text-slate-600 italic py-1.5">
+                                    Matches when the student has no result for this assessment (blank/missing PL or SS). NS is not treated as empty.
+                                </p>
+                                <div x-show="!valueNotRequired(critRow) && !valueIsInput(critRow) && isMulti(critRow)"
                                      class="md:col-span-2 rounded border border-slate-300 bg-white px-2 py-1.5 max-h-32 overflow-y-auto space-y-1">
                                     <template x-for="v in valueOptions(critRow)" :key="v">
                                         <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
@@ -314,7 +327,7 @@
                                     <p x-show="valueOptions(critRow).length === 0" class="text-[10px] text-slate-400 italic">No options available.</p>
                                 </div>
                                 <!-- Single value dropdown for PL and PL-like Additional Info -->
-                                <select x-show="!valueIsInput(critRow) && !isMulti(critRow)" x-model="critRow.rvalue"
+                                <select x-show="!valueNotRequired(critRow) && !valueIsInput(critRow) && !isMulti(critRow)" x-model="critRow.rvalue"
                                         class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
                                     <option value="">— Select value —</option>
                                     <template x-for="v in valueOptions(critRow)" :key="v">
@@ -322,7 +335,7 @@
                                     </template>
                                 </select>
                                 <!-- Free-text value for Scale Score and non-PL Additional Info -->
-                                <input x-show="valueIsInput(critRow)" type="text" x-model="critRow.rvalue"
+                                <input x-show="!valueNotRequired(critRow) && valueIsInput(critRow)" type="text" x-model="critRow.rvalue"
                                        :placeholder="critRow.rfield === 'ss' ? 'Scale score, e.g. 2500' : 'Value'"
                                        class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
                                 <!-- Criteria -->
