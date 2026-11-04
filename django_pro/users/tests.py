@@ -309,6 +309,122 @@ class UserSchoolsAndRoleManagementTests(TestCase):
         self.assertFalse(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
 
 
+class RoleExpirationAndLimitedStudentTests(TestCase):
+    def setUp(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self.now = timezone.now()
+        self.timedelta = timedelta
+        self.teacher, _ = Role.objects.get_or_create(name='Teacher')
+        self.school_view, _ = Role.objects.get_or_create(name='School View')
+        self.limited_role, _ = Role.objects.get_or_create(
+            name='Limited Student Access',
+            defaults={'is_student_limited': True},
+        )
+        self.limited_role.is_student_limited = True
+        self.limited_role.save(update_fields=['is_student_limited'])
+        self.user = User.objects.create_user(
+            username='expiry_user',
+            email='expiry_user@example.com',
+            schools=['SCH_A'],
+        )
+
+    def _active_limited_student(self, ssid, student_id, key):
+        from studata.models import CurrentStudent
+        return CurrentStudent.objects.create(
+            stu_annual_key=key,
+            ssid=ssid,
+            student_id=student_id,
+            student_name=f'Student {key}',
+            school_year='2025-2026',
+        )
+
+    def test_expired_assignment_is_not_effective(self):
+        self.user.role_assignments.create(
+            role=self.teacher,
+            expires_at=self.now - self.timedelta(minutes=5),
+        )
+        self.assertNotIn('Teacher', self.user.role_names())
+        self.assertFalse(self.user.effective_roles().filter(id=self.teacher.id).exists())
+
+    def test_sync_expired_assignment_applies_fallback_role(self):
+        self.user.role_assignments.create(role=self.school_view)
+        self.user.role_assignments.create(
+            role=self.teacher,
+            expires_at=self.now - self.timedelta(minutes=5),
+            fallback_role=self.school_view,
+        )
+
+        changed = self.user.sync_expired_role_assignments()
+
+        self.assertEqual(changed.get(self.teacher.id), self.school_view.id)
+        self.assertFalse(self.user.role_assignments.filter(role=self.teacher).exists())
+        self.assertTrue(self.user.effective_roles().filter(id=self.school_view.id).exists())
+
+    def test_limited_role_restricts_to_listed_ssid_and_student_id(self):
+        first = self._active_limited_student('SSID-1', 'LOCAL-1', 'key-1')
+        second = self._active_limited_student('SSID-2', 'LOCAL-2', 'key-2')
+        self._active_limited_student('SSID-3', 'LOCAL-3', 'key-3')
+
+        self.user.role_assignments.create(
+            role=self.limited_role,
+            limited_ssids=['SSID-1'],
+            limited_student_ids=['LOCAL-2'],
+        )
+        self.user.active_role = self.limited_role
+
+        keys = self.user.get_accessible_student_keys()
+        self.assertEqual(set(keys), {first.stu_annual_key, second.stu_annual_key})
+
+    def test_limited_role_without_students_grants_none(self):
+        self.user.role_assignments.create(role=self.limited_role)
+        self.user.active_role = self.limited_role
+
+        self.assertEqual(self.user.get_accessible_student_keys(), [])
+
+    def test_user_detail_saves_expiration_fallback_and_limited_students(self):
+        from datetime import timedelta
+
+        admin_role, _ = Role.objects.get_or_create(name='Project Admin')
+        admin = User.objects.create_superuser(
+            username='role_admin',
+            email='role_admin@example.com',
+            password='pass',
+        )
+        admin.roles.add(admin_role)
+        self.user.roles.add(self.school_view)
+
+        client = Client()
+        client.force_login(admin)
+        expires_at = (self.now + timedelta(days=7)).strftime('%Y-%m-%dT%H:%M')
+
+        response = client.post(
+            f'/users/manage/{self.user.id}/',
+            data={
+                'name': self.user.name,
+                'job_title': self.user.job_title,
+                'staff_id': self.user.staff_id or '',
+                'is_active': 'on',
+                'roles': [self.limited_role.id, self.school_view.id],
+                f'role_expires_{self.limited_role.id}': expires_at,
+                f'role_fallback_{self.limited_role.id}': self.school_view.id,
+                f'role_ssids_{self.limited_role.id}': 'SSID-1, SSID-2',
+                f'role_student_ids_{self.limited_role.id}': 'LOCAL-1\nLOCAL-2',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        assignment = self.user.role_assignments.get(role=self.limited_role)
+        self.assertIsNotNone(assignment.expires_at)
+        self.assertEqual(assignment.fallback_role_id, self.school_view.id)
+        self.assertEqual(assignment.limited_ssids, ['SSID-1', 'SSID-2'])
+        self.assertEqual(assignment.limited_student_ids, ['LOCAL-1', 'LOCAL-2'])
+
+        school_view_assignment = self.user.role_assignments.get(role=self.school_view)
+        self.assertIsNone(school_view_assignment.expires_at)
+
+
 class NavbarConfigSplitPanelTests(TestCase):
     def setUp(self):
         from users.models_pages import Page

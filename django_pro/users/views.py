@@ -7,9 +7,11 @@ from django.core.paginator import Paginator
 from django.core.cache import cache
 from django.db.models import Q, Count
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from zoneinfo import ZoneInfo
 from django.urls import reverse
 from urllib.parse import urlencode
+import re
 from .models import User, Role, School, UsageSession, PageVisit
 from .models_pages import Page
 from .context_processors import user_can_access_page
@@ -131,7 +133,146 @@ ROLE_SPECIFICATIONS = {
             'Add-on role that functions across any active role',
         ],
     },
+    'Limited Student Access': {
+        'badge': 'Limited Student Access',
+        'category': 'Specialist Roles',
+        'color': 'red',
+        'scope': 'Selected Students Only',
+        'student_scope_desc': 'Only the students explicitly listed on the user role assignment (by SSID or local student ID).',
+        'modules': ['Student Lists', 'Placement Cards', 'DESI Student List', 'Teacher Notes'],
+        'capabilities': [
+            'Access is limited to the selected SSIDs / local student IDs',
+            'Optional expiration automatically revokes the role at the configured time',
+            'Falls back to the selected role when the assignment expires',
+        ],
+    },
 }
+
+
+ROLE_EXPIRY_TIMEZONE = ZoneInfo('America/Los_Angeles')
+
+
+def parse_optional_datetime(value):
+    """Parse a ``datetime-local`` form value as district (Pacific) time."""
+    value = (value or '').strip()
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, ROLE_EXPIRY_TIMEZONE)
+    return parsed
+
+
+def split_student_identifiers(value):
+    """Split a free-form list of SSIDs / student IDs into unique values."""
+    identifiers = []
+    seen = set()
+    for token in re.split(r'[\s,;]+', value or ''):
+        token = token.strip()
+        if token and token not in seen:
+            seen.add(token)
+            identifiers.append(token)
+    return identifiers
+
+
+def roles_with_assignments(roles_qs, user_obj):
+    """Attach the user's RoleAssignment metadata to each role for templates."""
+    roles = list(roles_qs)
+    assignments = {
+        assignment.role_id: assignment
+        for assignment in user_obj.role_assignments.select_related('fallback_role')
+    }
+    for role in roles:
+        role.assignment = assignments.get(role.id)
+    return roles
+
+
+def update_role_assignments(user_obj, request, allowed_role_names=None):
+    """Create/update/delete role assignments including their metadata."""
+    existing = {a.role_id: a for a in user_obj.role_assignments.all()}
+
+    selected_ids = []
+    for raw_id in request.POST.getlist('roles'):
+        try:
+            role_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if role_id not in selected_ids:
+            selected_ids.append(role_id)
+
+    allowed_ids = None
+    if allowed_role_names is not None:
+        allowed_ids = set(
+            Role.objects.filter(name__in=allowed_role_names).values_list('id', flat=True)
+        )
+        selected_ids = [role_id for role_id in selected_ids if role_id in allowed_ids]
+
+    valid_roles = {role.id: role for role in Role.objects.filter(id__in=selected_ids)}
+    fallback_ids = set()
+    metadata = {}
+
+    for role_id in selected_ids:
+        if role_id not in valid_roles:
+            continue
+        expires_at = parse_optional_datetime(request.POST.get(f'role_expires_{role_id}'))
+
+        fallback_role = None
+        raw_fallback = (request.POST.get(f'role_fallback_{role_id}') or '').strip()
+        if raw_fallback:
+            try:
+                fallback_id = int(raw_fallback)
+            except (TypeError, ValueError):
+                fallback_id = None
+            if fallback_id and fallback_id != role_id:
+                if allowed_ids is None or fallback_id in allowed_ids:
+                    fallback_role = Role.objects.filter(id=fallback_id).first()
+                    if fallback_role:
+                        fallback_ids.add(fallback_role.id)
+
+        role = valid_roles[role_id]
+        if role.is_student_limited:
+            limited_ssids = split_student_identifiers(
+                request.POST.get(f'role_ssids_{role_id}')
+            )
+            limited_student_ids = split_student_identifiers(
+                request.POST.get(f'role_student_ids_{role_id}')
+            )
+        else:
+            limited_ssids = []
+            limited_student_ids = []
+
+        metadata[role_id] = {
+            'expires_at': expires_at,
+            'fallback_role': fallback_role,
+            'limited_ssids': limited_ssids,
+            'limited_student_ids': limited_student_ids,
+        }
+
+    keep_ids = set(selected_ids) | fallback_ids
+    if allowed_ids is not None:
+        # School admins must not touch roles outside their assignable set.
+        keep_ids |= {role_id for role_id in existing if role_id not in allowed_ids}
+
+    delete_ids = set(existing) - keep_ids
+    if delete_ids:
+        user_obj.role_assignments.filter(role_id__in=delete_ids).delete()
+
+    for role_id, values in metadata.items():
+        assignment, _ = user_obj.role_assignments.get_or_create(role_id=role_id)
+        assignment.expires_at = values['expires_at']
+        assignment.fallback_role = values['fallback_role']
+        assignment.limited_ssids = values['limited_ssids']
+        assignment.limited_student_ids = values['limited_student_ids']
+        assignment.save()
+
+    # Make sure a fallback role is actually assigned, otherwise the user would
+    # have nothing to switch to when the primary assignment expires.
+    for fallback_id in fallback_ids:
+        user_obj.role_assignments.get_or_create(role_id=fallback_id)
+
+    return selected_ids
 
 
 def user_is_project_admin(user: User) -> bool:
@@ -160,7 +301,11 @@ def get_allowed_schools_for_admin(user: User) -> list:
 
 def get_base_users_queryset(request):
     """Get the base queryset of users visible to the current user."""
-    users_qs = User.objects.prefetch_related('roles')
+    users_qs = User.objects.prefetch_related(
+        'roles',
+        'role_assignments__role',
+        'role_assignments__fallback_role',
+    )
 
     # Security: Restrict visibility for School Admins
     if not (request.user.is_superuser or user_is_project_admin(request.user)):
@@ -189,12 +334,18 @@ def apply_filters(users_qs, query='', role_filter='', school_filter='', job_titl
             | Q(staff_id__icontains=query)
         )
     
-    # Apply role filter
+    # Apply role filter (ignore expired assignments)
     if role_filter:
         if role_filter == 'none':
-            users_qs = users_qs.filter(roles__isnull=True)
+            users_qs = users_qs.filter(role_assignments__isnull=True)
         elif role_filter: # Ensure it's not empty string
-            users_qs = users_qs.filter(roles__id=role_filter)
+            now = timezone.now()
+            users_qs = users_qs.filter(
+                role_assignments__role_id=role_filter,
+            ).filter(
+                Q(role_assignments__expires_at__isnull=True)
+                | Q(role_assignments__expires_at__gt=now)
+            )
     
     # Apply school filter
     if school_filter:
@@ -279,7 +430,15 @@ def manage_users(request):
     # To see what roles are available given current other filters (school, job_title)
     # We apply all filters EXCEPT role
     qs_for_roles = apply_filters(base_qs, query, '', school_filter, job_title_filter)
-    all_roles = list(Role.objects.filter(users__in=qs_for_roles).distinct().order_by('name'))
+    now_for_facets = timezone.now()
+    all_roles = list(
+        Role.objects.filter(
+            assignments__user__in=qs_for_roles,
+        ).filter(
+            Q(assignments__expires_at__isnull=True)
+            | Q(assignments__expires_at__gt=now_for_facets)
+        ).distinct().order_by('name')
+    )
     
     # 2. Available Job Titles
     # Apply filters except job_title
@@ -338,9 +497,15 @@ def manage_users(request):
         User._school_cache[s['state_id']] = s['school_name']
 
     # Build rich roles directory cards
-    all_system_roles = Role.objects.annotate(user_count=Count('users')).order_by('name')
+    now = timezone.now()
+    active_assignment = Q(assignments__expires_at__isnull=True) | Q(
+        assignments__expires_at__gt=now
+    )
+    all_system_roles = Role.objects.annotate(
+        user_count=Count('assignments', filter=active_assignment, distinct=True)
+    ).order_by('name')
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
         all_system_roles = all_system_roles.filter(name__in=allowed_role_names)
 
     role_cards = []
@@ -354,7 +519,15 @@ def manage_users(request):
             'modules': [],
             'capabilities': [r.description] if r.description else ['Standard role access'],
         })
-        sample_users = list(r.users.filter(is_active=True).values('id', 'name', 'email')[:8])
+        sample_users = list(
+            User.objects.filter(
+                role_assignments__role=r,
+                is_active=True,
+            ).filter(
+                Q(role_assignments__expires_at__isnull=True)
+                | Q(role_assignments__expires_at__gt=now)
+            ).values('id', 'name', 'email').distinct()[:8]
+        )
         role_cards.append({
             'role': r,
             'id': r.id,
@@ -785,9 +958,15 @@ def user_detail(request, user_id):
     available_grades = GRADE_CHOICES
     
     # Filter options for School Admin
+    allowed_role_names = None
     if is_school and not is_proj:
         # 1. Restrict visible/assignable roles
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        allowed_role_names = [
+            'School Gr View',
+            'School View',
+            'Teacher',
+            'Limited Student Access',
+        ]
         roles_qs = roles_qs.filter(name__in=allowed_role_names)
         
         # 2. Restrict visible/assignable schools
@@ -800,29 +979,10 @@ def user_detail(request, user_id):
             user_obj.job_title = request.POST.get('job_title', '').strip()
             user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
             user_obj.is_active = request.POST.get('is_active') == 'on'
-        
-        # Update roles
-        role_ids = request.POST.getlist('roles')
-        
-        if is_school and not is_proj:
-            # Logic for School Admin:
-            # We cannot clear ALL roles if user has other roles (like Project Admin) that this admin can't see.
-            # We should only modify the roles that are "allowed".
-            
-            # 1. Get current roles that are NOT allowed (preserve them)
-            preserved_roles = user_obj.roles.exclude(name__in=allowed_role_names)
-            
-            # 2. Get new roles from form (ensure they ARE allowed)
-            new_allowed_roles = Role.objects.filter(id__in=role_ids, name__in=allowed_role_names)
-            
-            # 3. Set roles = preserved + new
-            user_obj.roles.set(list(preserved_roles) + list(new_allowed_roles))
-        else:
-            # Full Access
-            user_obj.roles.clear()
-            if role_ids:
-                 roles_objs = Role.objects.filter(id__in=role_ids)
-                 user_obj.roles.add(*roles_objs)
+
+        # Update roles together with their expiration / fallback / limited
+        # student metadata. School admins may only touch their allowed roles.
+        update_role_assignments(user_obj, request, allowed_role_names=allowed_role_names)
         
         # Update schools (JSONField list of state_ids)
         school_ids = request.POST.getlist('schools')
@@ -872,7 +1032,10 @@ def user_detail(request, user_id):
             # Return modal content with updated data
             context = {
                 'user_obj': user_obj,
-                'roles': roles_qs,
+                'roles': roles_with_assignments(roles_qs, user_obj),
+                'effective_role_ids': list(
+                    user_obj.effective_role_assignments().values_list('role_id', flat=True)
+                ),
                 'schools': schools_qs,
                 'available_grades': available_grades,
                 'is_modal': True,
@@ -887,7 +1050,10 @@ def user_detail(request, user_id):
     
     context = {
         'user_obj': user_obj,
-        'roles': roles_qs,
+        'roles': roles_with_assignments(roles_qs, user_obj),
+        'effective_role_ids': list(
+            user_obj.effective_role_assignments().values_list('role_id', flat=True)
+        ),
         'schools': schools_qs,
         'available_grades': available_grades,
         'is_modal': is_modal,
@@ -928,10 +1094,12 @@ def switch_role(request):
                 if 'active_role_id' in request.session:
                     del request.session['active_role_id']
             elif role_id:
-                # Verify user has this role
-                if request.user.roles.filter(id=role_id).exists():
+                # Verify user has this role and the assignment is not expired.
+                if request.user.effective_roles().filter(id=role_id).exists():
                     request.session['active_role_id'] = role_id
-                    role_name = request.user.roles.filter(id=role_id).values_list('name', flat=True).first()
+                    role_name = request.user.effective_roles().filter(
+                        id=role_id
+                    ).values_list('name', flat=True).first()
                 else:
                     error = "You do not have this role."
 
@@ -1073,7 +1241,8 @@ def search_users_for_role(request):
 
     results = []
     for u in users_qs:
-        has_role = bool(target_role and target_role in u.roles.all())
+        active_roles = list(u.effective_roles())
+        has_role = bool(target_role and target_role in active_roles)
         results.append({
             'id': u.id,
             'name': u.name or u.username,
@@ -1081,7 +1250,7 @@ def search_users_for_role(request):
             'staff_id': u.staff_id or '',
             'has_role': has_role,
             'schools': [s['school_name'] for s in u.assigned_schools_list[:2]],
-            'roles': [r.name for r in u.roles.all()[:3]],
+            'roles': [r.name for r in active_roles[:3]],
         })
     return JsonResponse({'users': results})
 
@@ -1096,7 +1265,7 @@ def add_users_to_role(request, role_id):
 
     role = get_object_or_404(Role, id=role_id)
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
         if role.name not in allowed_role_names:
             return JsonResponse({'error': 'You do not have permission to assign this role.'}, status=403)
 
@@ -1142,7 +1311,7 @@ def remove_user_from_role(request, role_id, user_id):
 
     role = get_object_or_404(Role, id=role_id)
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
         if role.name not in allowed_role_names:
             return JsonResponse({'error': 'Permission denied.'}, status=403)
 
