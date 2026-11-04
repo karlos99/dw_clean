@@ -232,6 +232,25 @@ from dataexploration.school_year_utils import resolve_relative_column_key
 from dataexploration.column_utils import test_metadata_matches
 
 
+class StudentAttendanceSummaryTests(SimpleTestCase):
+	def test_group_events_by_absence_type(self):
+		from dataexploration.attendance_columns import _group_events
+
+		events = [
+			{'date': '2025-10-01', 'code': 'UA', 'code_meaning': 'Uncleared Absence'},
+			{'date': '2025-10-02', 'code': 'S', 'code_meaning': 'Excused'},
+			{'date': '2025-09-15', 'code': 'S', 'code_meaning': 'Excused'},
+		]
+		groups = _group_events(events)
+		self.assertEqual(len(groups), 2)
+		self.assertEqual(groups[0]['label'], 'Excused')
+		self.assertEqual(groups[0]['count'], 2)
+		self.assertEqual(groups[1]['label'], 'Uncleared Absence')
+
+	def test_attendance_summary_partial_compiles(self):
+		get_template('dataexploration/partials/student_attendance_summary.html')
+
+
 class StudentSummaryDedupeTests(SimpleTestCase):
 	def test_dedupe_merges_duplicate_results_with_dfp(self):
 		from dataexploration.view_modules.student_data_utils import _dedupe_test_records

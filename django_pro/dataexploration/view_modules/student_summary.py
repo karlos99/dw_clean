@@ -16,6 +16,7 @@ from .student_data_utils import (
     get_student_details_cached,
     get_student_summary_partial_html_cached,
     get_student_incidents_cached,
+    get_student_attendance_cached,
     pivot_student_marks,
     filter_display_marks,
     _resolve_ssid,
@@ -51,13 +52,14 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
         )
         context['student_details'] = get_student_details_cached(ssid, user_id=user_id)
         context['student_incidents'] = get_student_incidents_cached(ssid, user_id=user_id)
+        context['student_attendance'] = get_student_attendance_cached(ssid, user_id=user_id)
         try:
             from landing.utils import get_summary_sections
             context['summary_sections'] = get_summary_sections(getattr(self.request, 'user', None))
         except Exception:
             context['summary_sections'] = {
                 'tests': True, 'grades': True, 'diploma': True, 'ag': True,
-                'on_track': True, 'cte': True, 'behavior': True,
+                'on_track': True, 'cte': True, 'behavior': True, 'attendance': True,
                 'recognition': True, 'flags': True,
             }
         return context
