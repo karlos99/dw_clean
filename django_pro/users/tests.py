@@ -1,3 +1,6 @@
+from contextlib import ExitStack
+from unittest.mock import patch
+
 from django.contrib.admin.sites import AdminSite
 from django.test import Client, TestCase
 
@@ -423,6 +426,122 @@ class RoleExpirationAndLimitedStudentTests(TestCase):
 
         school_view_assignment = self.user.role_assignments.get(role=self.school_view)
         self.assertIsNone(school_view_assignment.expires_at)
+
+
+class CounselorCaseloadTests(TestCase):
+    def setUp(self):
+        from unittest.mock import MagicMock
+
+        self.MagicMock = MagicMock
+        self.school_view, _ = Role.objects.get_or_create(name='School View')
+        self.user = User.objects.create_user(
+            username='counselor',
+            email='Counselor@Example.com',
+            schools=['SCH_A'],
+        )
+        self.user.role_assignments.create(role=self.school_view)
+
+        from studata.models import CurrentStudent
+
+        self.caseload_student = CurrentStudent.objects.create(
+            stu_annual_key='key-in-caseload',
+            ssid='SSID-1',
+            student_id='LOCAL-1',
+            student_name='Caseload Student',
+            school_year='2026-2027',
+        )
+        self.other_student = CurrentStudent.objects.create(
+            stu_annual_key='key-not-in-caseload',
+            ssid='SSID-2',
+            student_id='LOCAL-2',
+            student_name='Other Student',
+            school_year='2026-2027',
+        )
+
+    def _caseload_patch(self, rows):
+        queryset = self.MagicMock()
+        queryset.exists.return_value = bool(rows)
+        queryset.values_list.return_value = rows
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                'studata.models.CounselorAssignment.objects.filter',
+                return_value=queryset,
+            )
+        )
+        stack.enter_context(
+            patch(
+                'users.models.counselor_assignment_table_exists',
+                return_value=True,
+            )
+        )
+        return stack
+
+    def test_user_in_caseload_table_has_caseload_available(self):
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            self.assertTrue(self.user.has_counselor_caseload())
+            self.assertTrue(self.user.counselor_caseload_available)
+
+    def test_caseload_context_restricts_to_table_students(self):
+        # School View normally grants school-wide student access.
+        self.assertIsNone(self.user.get_accessible_student_keys())
+
+        self.user.active_caseload = True
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            keys = self.user.get_accessible_student_keys()
+
+        self.assertEqual(keys, [self.caseload_student.stu_annual_key])
+        self.assertNotIn(self.other_student.stu_annual_key, keys)
+
+    def test_caseload_ignores_prior_year_assignments(self):
+        self.user.active_caseload = True
+        with self._caseload_patch([
+            ('2026', 'SSID-1', 'LOCAL-1'),
+            ('2024', 'SSID-2', 'LOCAL-2'),
+        ]):
+            keys = self.user.get_accessible_student_keys()
+
+        self.assertEqual(keys, [self.caseload_student.stu_annual_key])
+
+    def test_switch_role_to_caseload_sets_session_flag(self):
+        client = Client()
+        client.force_login(self.user)
+
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            response = client.post('/users/switch-role/', {'role_id': 'caseload'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(client.session.get('active_caseload'))
+
+    def test_switching_back_to_a_role_clears_caseload(self):
+        client = Client()
+        client.force_login(self.user)
+        session = client.session
+        session['active_caseload'] = True
+        session.save()
+
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            response = client.post(
+                '/users/switch-role/',
+                {'role_id': self.school_view.id},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(client.session.get('active_caseload'))
+        self.assertEqual(
+            client.session.get('active_role_id'),
+            str(self.school_view.id),
+        )
+
+    def test_caseload_option_rejected_without_table_rows(self):
+        client = Client()
+        client.force_login(self.user)
+
+        with self._caseload_patch([]):
+            response = client.post('/users/switch-role/', {'role_id': 'caseload'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(client.session.get('active_caseload'))
 
 
 class NavbarConfigSplitPanelTests(TestCase):

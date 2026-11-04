@@ -1090,10 +1090,21 @@ def switch_role(request):
         # Handle Role Switch
         role_id = request.POST.get('role_id')
         if role_id is not None:
-            if role_id == 'all':
+            if role_id == 'caseload':
+                # Data-scope switch for users present in the counselor caseload
+                # table. Their assigned roles still govern page permissions.
+                if request.user.has_counselor_caseload():
+                    request.session['active_caseload'] = True
+                    role_name = 'My Caseload'
+                else:
+                    error = "You do not have a counselor caseload."
+            elif role_id == 'all':
+                request.session.pop('active_caseload', None)
                 if 'active_role_id' in request.session:
                     del request.session['active_role_id']
             elif role_id:
+                # Switching to a role always leaves the caseload-only view.
+                request.session.pop('active_caseload', None)
                 # Verify user has this role and the assignment is not expired.
                 if request.user.effective_roles().filter(id=role_id).exists():
                     request.session['active_role_id'] = role_id

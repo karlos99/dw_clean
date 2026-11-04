@@ -20,6 +20,25 @@ UNRESTRICTED_ROLE_NAMES = frozenset({
     '504_Admin',
 })
 
+# The caseload table is ETL-owned and may not exist yet in empty/test databases.
+_COUNSELOR_TABLE_EXISTS = None
+
+
+def counselor_assignment_table_exists():
+    """Whether the ETL-owned ``counselor_assigments`` table is present."""
+    global _COUNSELOR_TABLE_EXISTS
+    if _COUNSELOR_TABLE_EXISTS:
+        return True
+    try:
+        from django.db import connection
+
+        exists = 'counselor_assigments' in connection.introspection.table_names()
+    except Exception:
+        exists = False
+    if exists:
+        _COUNSELOR_TABLE_EXISTS = True
+    return exists
+
 class School(models.Model):
     name = models.CharField(max_length=255)
 
@@ -237,43 +256,126 @@ class User(AbstractUser):
             return limited_assignments[0]
         return None
 
+    @staticmethod
+    def _student_keys_for_identifiers(ssids, student_ids):
+        """Resolve SSIDs / local student IDs to ``stu_annual_key`` values."""
+        if not ssids and not student_ids:
+            return []
+
+        # Import here to avoid circular dependencies
+        from studata.models import CurrentStudent, StudentEnroll
+
+        query = Q()
+        if ssids:
+            query |= Q(ssid__in=ssids)
+        if student_ids:
+            query |= Q(student_id__in=student_ids)
+
+        key_set = set(
+            CurrentStudent.objects.filter(query)
+            .values_list('stu_annual_key', flat=True)
+            .distinct()
+        )
+        # Include historical enrollment keys so the same student remains
+        # visible when older school years are selected.
+        key_set.update(
+            StudentEnroll.objects.filter(query)
+            .exclude(stu_annual_key__isnull=True)
+            .exclude(stu_annual_key='')
+            .values_list('stu_annual_key', flat=True)
+            .distinct()
+        )
+        return sorted(key_set)
+
     def _limited_student_keys(self, assignment):
         cache_key = f'_limited_student_keys_{assignment.pk}'
         if hasattr(self, cache_key):
             return getattr(self, cache_key)
 
-        ssids = assignment.limited_ssids or []
-        student_ids = assignment.limited_student_ids or []
-
-        if not ssids and not student_ids:
-            keys = []
-        else:
-            # Import here to avoid circular dependencies
-            from studata.models import CurrentStudent, StudentEnroll
-
-            query = Q()
-            if ssids:
-                query |= Q(ssid__in=ssids)
-            if student_ids:
-                query |= Q(student_id__in=student_ids)
-
-            key_set = set(
-                CurrentStudent.objects.filter(query)
-                .values_list('stu_annual_key', flat=True)
-                .distinct()
-            )
-            # Include historical enrollment keys so the same student remains
-            # visible when older school years are selected.
-            key_set.update(
-                StudentEnroll.objects.filter(query)
-                .exclude(stu_annual_key__isnull=True)
-                .exclude(stu_annual_key='')
-                .values_list('stu_annual_key', flat=True)
-                .distinct()
-            )
-            keys = sorted(key_set)
-
+        keys = self._student_keys_for_identifiers(
+            assignment.limited_ssids or [],
+            assignment.limited_student_ids or [],
+        )
         setattr(self, cache_key, keys)
+        return keys
+
+    # ------------------------------------------------------------------
+    # Counselor caseload helpers
+    # ------------------------------------------------------------------
+    def has_counselor_caseload(self):
+        """Whether this user's email has rows in the counselor caseload table."""
+        cached = getattr(self, '_has_counselor_caseload', None)
+        if cached is not None:
+            return cached
+
+        email = (self.email or '').strip()
+        exists = False
+        if email and counselor_assignment_table_exists():
+            # Import here to avoid circular dependencies
+            from studata.models import CounselorAssignment
+
+            exists = CounselorAssignment.objects.filter(
+                counselor_email__iexact=email
+            ).exists()
+        self._has_counselor_caseload = exists
+        return exists
+
+    @property
+    def counselor_caseload_available(self):
+        return self.has_counselor_caseload()
+
+    def get_counselor_caseload_identifiers(self):
+        """Return ``(ssids, student_ids)`` from the counselor's latest caseload."""
+        cached = getattr(self, '_counselor_caseload_identifiers', None)
+        if cached is not None:
+            return cached
+
+        email = (self.email or '').strip()
+        ssids = []
+        student_ids = []
+        if email and counselor_assignment_table_exists():
+            # Import here to avoid circular dependencies
+            from studata.models import CounselorAssignment
+
+            rows = list(
+                CounselorAssignment.objects.filter(
+                    counselor_email__iexact=email
+                ).values_list('school_year_number', 'ssid', 'student_id')
+            )
+            # The table can hold multiple years. Use the most recent year's
+            # caseload so a prior-year assignment cannot reveal a student who
+            # is no longer assigned to this counselor.
+            years = [(year or '').strip() for year, _ssid, _student_id in rows]
+            latest_year = max((year for year in years if year), default='')
+            current_rows = [
+                (ssid, student_id)
+                for year, ssid, student_id in rows
+                if not latest_year or (year or '').strip() == latest_year
+            ]
+            ssids = sorted({
+                (ssid or '').strip()
+                for ssid, _student_id in current_rows
+                if (ssid or '').strip()
+            })
+            student_ids = sorted({
+                (student_id or '').strip()
+                for _ssid, student_id in current_rows
+                if (student_id or '').strip()
+            })
+
+        identifiers = (ssids, student_ids)
+        self._counselor_caseload_identifiers = identifiers
+        return identifiers
+
+    def get_counselor_caseload_keys(self):
+        """Student keys assigned to this counselor in ``counselor_assigments``."""
+        cached = getattr(self, '_counselor_caseload_keys', None)
+        if cached is not None:
+            return cached
+
+        ssids, student_ids = self.get_counselor_caseload_identifiers()
+        keys = self._student_keys_for_identifiers(ssids, student_ids)
+        self._counselor_caseload_keys = keys
         return keys
 
     def get_accessible_student_keys(self):
@@ -285,10 +387,15 @@ class User(AbstractUser):
 
         Membership-based: holding a school-wide role (e.g. Testing Coordinator)
         grants school-wide access regardless of which role is currently active.
-        Limited-student roles take precedence while they are the active role.
+        Limited-student roles take precedence while they are the active role. An
+        explicit counselor caseload context also takes precedence.
         """
         if self.is_superuser:
             return None
+
+        # Counselors can opt into a caseload-only view from the context switcher.
+        if getattr(self, 'active_caseload', False) and self.has_counselor_caseload():
+            return self.get_counselor_caseload_keys()
 
         limited_assignment = self._limited_role_assignment()
         if limited_assignment is not None:

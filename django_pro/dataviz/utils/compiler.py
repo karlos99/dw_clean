@@ -561,6 +561,85 @@ COLUMN_WHITELIST = {
 }
 
 
+def _append_student_access_filter(where_parts, params, user, active_tables):
+    """Inject row-level student access constraints into a compiled query.
+
+    Non-caseload users keep the existing behaviour (teacher/limited roles are
+    constrained through ``current_student`` / ``student_enroll``). When the
+    counselor caseload context is active, the filter is extended to datasets
+    whose base table is not current_student (e.g. ``results`` or analytics
+    tables) by matching SSID / local student ID / annual key columns.
+    """
+    if not hasattr(user, 'get_accessible_student_keys'):
+        return
+
+    keys = user.get_accessible_student_keys()
+    if keys is None:
+        return
+
+    if not keys:
+        where_parts.append('1=0')
+        return
+
+    keys = list(keys)
+    is_caseload = bool(getattr(user, 'active_caseload', False))
+
+    # Preserve the previous priority for normal role contexts.
+    if 'current_student' in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get('current_student', set()):
+        where_parts.append('"current_student"."stu_annual_key" = ANY(%s)')
+        params.append(keys)
+        return
+    if 'student_enroll' in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get('student_enroll', set()):
+        where_parts.append('"student_enroll"."stu_annual_key" = ANY(%s)')
+        params.append(keys)
+        return
+    if not is_caseload:
+        return
+
+    identifiers = None
+    if hasattr(user, 'get_counselor_caseload_identifiers'):
+        identifiers = user.get_counselor_caseload_identifiers()
+    caseload_ssids, caseload_student_ids = identifiers or ([], [])
+
+    ordered_tables = []
+    for preferred in (
+        'current_student', 'student_enroll', 'analytics_student_profile',
+        'analytics_student_results', 'results',
+    ):
+        if preferred in active_tables:
+            ordered_tables.append(preferred)
+    ordered_tables.extend(sorted(t for t in active_tables if t not in ordered_tables))
+
+    # First try annual keys on any table that exposes them.
+    for table in ordered_tables:
+        cols = COLUMN_WHITELIST.get(table, set())
+        if 'stu_annual_key' in cols:
+            where_parts.append(f'"{table}"."stu_annual_key" = ANY(%s)')
+            params.append(keys)
+            return
+
+    # Then fall back to shared student identifiers for caseload users.
+    for table in ordered_tables:
+        cols = COLUMN_WHITELIST.get(table, set())
+        if 'ssid' in cols and caseload_ssids:
+            where_parts.append(f'"{table}"."ssid" = ANY(%s)')
+            params.append(caseload_ssids)
+            return
+        if 'student_id' in cols and caseload_student_ids:
+            where_parts.append(f'"{table}"."student_id" = ANY(%s)')
+            params.append(caseload_student_ids)
+            return
+        if 'local_student_id' in cols and caseload_student_ids:
+            where_parts.append(f'"{table}"."local_student_id" = ANY(%s)')
+            params.append(caseload_student_ids)
+            return
+        if any(c in cols for c in ('ssid', 'student_id', 'local_student_id')):
+            # The table exposes student identifiers, but the caseload has no
+            # usable values for that identifier type.
+            where_parts.append('1=0')
+            return
+
+
 class SQLCompilationError(Exception):
     pass
 
@@ -844,6 +923,12 @@ def compile_dataset_to_sql(
         user_role = getattr(getattr(user, 'active_role', None), 'name', 'None')
         school_id = getattr(getattr(user, 'active_school', None), 'state_id', 'All')
         user_part = f":u{user.pk}:r{user_role}:s{school_id}"
+        if getattr(user, 'active_caseload', False) and hasattr(user, 'get_accessible_student_keys'):
+            keys = user.get_accessible_student_keys() or []
+            caseload_hash = hashlib.md5(
+                json.dumps(list(keys), sort_keys=True).encode()
+            ).hexdigest()[:12]
+            user_part += f":c{caseload_hash}"
     ds_hash = hashlib.md5(
         json.dumps({
             'base_table': dataset.base_table,
@@ -1074,19 +1159,8 @@ def compile_dataset_to_sql(
                     where_parts.append('"student_enroll"."grade" = ANY(%s)')
                     params.append(delegated_grades)
 
-        # Inject teacher / homeroom student-key restrictions
-        if hasattr(user, 'get_accessible_student_keys'):
-            keys = user.get_accessible_student_keys()
-            if keys is not None:
-                if keys:
-                    if 'current_student' in active_tables:
-                        where_parts.append('"current_student"."stu_annual_key" = ANY(%s)')
-                        params.append(list(keys))
-                    elif 'student_enroll' in active_tables:
-                        where_parts.append('"student_enroll"."stu_annual_key" = ANY(%s)')
-                        params.append(list(keys))
-                else:
-                    where_parts.append("1=0")  # No students assigned
+        # Inject teacher / limited-role / counselor-caseload restrictions.
+        _append_student_access_filter(where_parts, params, user, active_tables)
 
     # Status filter — callers pass this explicitly. Dataset compilation must not
     # implicitly restrict rows to Active when no status was selected.
@@ -1577,19 +1651,8 @@ def compile_aggregated_dataset_to_sql(
                     where_parts.append('"student_enroll"."grade" = ANY(%s)')
                     params.append(delegated_grades)
 
-        # Inject teacher / homeroom student-key restrictions
-        if hasattr(user, 'get_accessible_student_keys'):
-            keys = user.get_accessible_student_keys()
-            if keys is not None:
-                if keys:
-                    if 'current_student' in active_tables:
-                        where_parts.append('"current_student"."stu_annual_key" = ANY(%s)')
-                        params.append(list(keys))
-                    elif 'student_enroll' in active_tables:
-                        where_parts.append('"student_enroll"."stu_annual_key" = ANY(%s)')
-                        params.append(list(keys))
-                else:
-                    where_parts.append("1=0")  # No students assigned
+        # Inject teacher / limited-role / counselor-caseload restrictions.
+        _append_student_access_filter(where_parts, params, user, active_tables)
 
     from_where = from_sql
 

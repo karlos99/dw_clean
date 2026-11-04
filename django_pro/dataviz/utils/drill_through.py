@@ -26,7 +26,14 @@ def _drill_user_part(user) -> str:
         # Test doubles and lightweight service callers may not expose a
         # database identity; keep their cache entries isolated by instance.
         user_id = f'obj{id(user)}'
-    return f":u{user_id}:r{role_name}:s{school_id}"
+    caseload_part = ''
+    if getattr(user, 'active_caseload', False) and hasattr(user, 'get_accessible_student_keys'):
+        keys = user.get_accessible_student_keys() or []
+        key_hash = hashlib.md5(
+            json.dumps(list(keys), sort_keys=True).encode()
+        ).hexdigest()[:12]
+        caseload_part = f":c{key_hash}"
+    return f":u{user_id}:r{role_name}:s{school_id}{caseload_part}"
 
 
 def _drill_fetch_hash(chart, drill_filters: dict, extra_columns: list | None) -> str:
@@ -728,10 +735,13 @@ def _apply_user_access_filter(rows, cols, user):
         return rows, cols
 
     # Try to match student identifiers in the columns
-    student_id_cols = [c for c in cols if c in ('ssid', 'student_id', 'stu_annual_key', 'local_student_id')
-                       or c.endswith('.ssid') or c.endswith('.student_id')
-                       or c.endswith('.stu_annual_key') or c.endswith('.local_student_id')]
-    if not student_id_cols:
+    def _bare(col):
+        return str(col).split('.')[-1]
+
+    key_cols = [c for c in cols if _bare(c) == 'stu_annual_key']
+    ssid_cols = [c for c in cols if _bare(c) == 'ssid']
+    local_id_cols = [c for c in cols if _bare(c) in ('student_id', 'local_student_id')]
+    if not (key_cols or ssid_cols or local_id_cols):
         return rows, cols  # No student columns found — can't filter
 
     # Get accessible student keys
@@ -741,6 +751,15 @@ def _apply_user_access_filter(rows, cols, user):
         keys = user.get_accessible_student_keys()
         if keys is not None:
             accessible_keys = set(keys)
+
+    caseload_ssids = set()
+    caseload_student_ids = set()
+    if getattr(user, 'active_caseload', False) and hasattr(
+        user, 'get_counselor_caseload_identifiers'
+    ):
+        caseload_ssids, caseload_student_ids = user.get_counselor_caseload_identifiers()
+        caseload_ssids = set(caseload_ssids or [])
+        caseload_student_ids = set(caseload_student_ids or [])
 
     # Get permitted school IDs for school-level filtering
     permitted_schools = None
@@ -760,16 +779,28 @@ def _apply_user_access_filter(rows, cols, user):
 
     filtered = []
     for row in rows:
-        # Check student key access (teacher-level)
+        # Check student key access (teacher-level / counselor caseload)
         if accessible_keys is not None:
             matched = False
-            for col in student_id_cols:
+            for col in key_cols:
                 val = str(row.get(col, '')).strip()
                 if val and val in accessible_keys:
                     matched = True
                     break
+            if not matched and getattr(user, 'active_caseload', False):
+                for col in ssid_cols:
+                    val = str(row.get(col, '')).strip()
+                    if val and val in caseload_ssids:
+                        matched = True
+                        break
+                if not matched:
+                    for col in local_id_cols:
+                        val = str(row.get(col, '')).strip()
+                        if val and val in caseload_student_ids:
+                            matched = True
+                            break
             if not matched:
-                continue  # Skip — student not in teacher's roster
+                continue  # Skip — student not in the user's allowed roster
 
         # Check school access (school-level).  If permitted_schools is
         # None the user is truly unrestricted (already returned above).

@@ -59,6 +59,18 @@ class ActiveRoleMiddleware:
             else:
                 self._set_default_role(request)
 
+            # --- Counselor Caseload Context ---
+            # Layered on top of the active role: page permissions still come
+            # from the user's roles, while student data is limited to the
+            # counselor's caseload from the ETL table.
+            request.user.active_caseload = False
+            if request.session.get('active_caseload'):
+                if request.user.has_counselor_caseload():
+                    request.user.active_caseload = True
+                else:
+                    # The user was removed from the caseload table.
+                    request.session.pop('active_caseload', None)
+
             # --- School Context ---
             StudataSchool = apps.get_model('studata', 'School')
             

@@ -41,6 +41,21 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIsNotNone(result)
         self.assertIsNone(compile_sql.call_args.kwargs['limit'])
 
+    def test_caseload_access_filter_uses_ssid_for_results_dataset(self):
+        from dataviz.utils.compiler import _append_student_access_filter
+
+        user = SimpleNamespace(
+            active_caseload=True,
+            get_accessible_student_keys=lambda: ['key-1'],
+            get_counselor_caseload_identifiers=lambda: (['SSID-1'], ['LOCAL-1']),
+        )
+
+        where, params = [], []
+        _append_student_access_filter(where, params, user, {'results'})
+
+        self.assertEqual(where, ['"results"."ssid" = ANY(%s)'])
+        self.assertEqual(params, [['SSID-1']])
+
     @patch('dataviz.utils.status_filter.prepare_interactive_filters', return_value=({}, None))
     @patch('dataviz.utils.compiler.execute_compiled_query', return_value={
         'columns': ['grade', '__dv_value'], 'rows': [], 'error': None,
@@ -3352,6 +3367,47 @@ class ChartRenderCacheTests(TestCase):
         req5.user = self.user
         resp5 = chart_render_api(req5, chart.id)
         self.assertEqual(resp5.get('X-Chart-Cache'), 'MISS')
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_chart_render_applies_counselor_caseload_filters(self, mock_run_query):
+        from unittest.mock import MagicMock
+
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+        }
+        user = User.objects.create_user(
+            username='caseload_chart_user',
+            password='password',
+            email='counselor@example.com',
+        )
+        user.active_caseload = True
+        user.has_counselor_caseload = MagicMock(return_value=True)
+        user.get_accessible_student_keys = MagicMock(return_value=['key-1'])
+        user.get_counselor_caseload_identifiers = MagicMock(
+            return_value=(['SSID-1'], ['LOCAL-1'])
+        )
+
+        chart = SavedChart.objects.create(
+            name="Caseload Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=user,
+        )
+
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        req = RequestFactory().get(f'/api/charts/{chart.id}/render/')
+        req.user = user
+        response = chart_render_api(req, chart.id)
+
+        self.assertEqual(response.status_code, 200)
+        mock_run_query.assert_called_once()
+        _args, kwargs = mock_run_query.call_args
+        self.assertIs(kwargs.get('user'), user)
+        self.assertTrue(kwargs.get('apply_user_filters'))
 
     @patch('dataviz.utils.data_loader.run_column_query')
     def test_warm_published_page_charts_skips_drafts(self, mock_run_query):
