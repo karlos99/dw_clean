@@ -312,7 +312,7 @@
                                 <input type="hidden" name="crit_result_value[]" :value="critRow.rvalue">
                                 <!-- Multiple selection (checkboxes) for In List / Not In List -->
                                 <p x-show="valueNotRequired(critRow)" class="md:col-span-2 text-xs text-slate-600 italic py-1.5">
-                                    Matches when the student has no result for this assessment (blank/missing PL or SS). NS is not treated as empty.
+                                    Matches when there is no score for this assessment: missing result, blank PL/SS, or import placeholders (NS, N/A, NaN, etc.). No value needed.
                                 </p>
                                 <div x-show="!valueNotRequired(critRow) && !valueIsInput(critRow) && isMulti(critRow)"
                                      class="md:col-span-2 rounded border border-slate-300 bg-white px-2 py-1.5 max-h-32 overflow-y-auto space-y-1">

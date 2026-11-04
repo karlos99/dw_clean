@@ -509,12 +509,12 @@ class SupportDefaultRuleCriteria(models.Model):
         ('additional_info', 'Additional Info'),
     ]
     RESULT_OPERATOR_CHOICES = [
+        ('is_empty', 'Is Blank (missing / no score)'),
+        ('is_not_empty', 'Has Score'),
         ('in', 'In List'),
         ('not_in', 'Not In List'),
         ('is', 'Equals'),
         ('is_not', 'Does Not Equal'),
-        ('is_empty', 'Is Empty (no score)'),
-        ('is_not_empty', 'Has Value'),
         ('between', 'Between (min-max)'),
         ('gt', 'Greater Than'),
         ('gte', 'Greater or Equal'),

@@ -3078,6 +3078,24 @@ class DesiSupportDefaultRuleTests(TestCase):
         Result.objects.filter(ssid=self.student.ssid).update(pl="3")
         self.assertNotIn(self.opt.id, default_support_locks(self.student)["option_ids"])
 
+        Result.objects.filter(ssid=self.student.ssid).update(pl="NS")
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_result_in_list_ns_nan_matches_missing_score(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC in NS NaN", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="ELPAC", test_subject="summative",
+            school_year="2025-2026", result_field="pl", result_operator="in", result_value="NS,NaN",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
     def test_result_or_equals_three_or_is_empty(self):
         Test.objects.create(
             test_group_key="elpac-sum-2025", test_name="ELPAC",

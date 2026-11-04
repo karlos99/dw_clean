@@ -267,6 +267,21 @@ def _normalize_result_value(value):
     return str(value).strip()
 
 
+# Import placeholders (NaN, NS, N/A, …) mean no usable score — same as blank.
+_RESULT_SCORE_SENTINELS = frozenset({
+    'nan', 'ns', 'n/a', 'na', 'n/s', 'null', 'none',
+    'inf', '-inf', 'infinity', '-infinity',
+})
+
+
+def _result_value_is_present(value):
+    """True when a result field holds a real score, not missing or a sentinel."""
+    text = _normalize_result_value(value)
+    if not text:
+        return False
+    return text.lower() not in _RESULT_SCORE_SENTINELS
+
+
 def _result_to_float(value):
     try:
         return float(str(value).strip())
@@ -309,18 +324,25 @@ def _result_values_for_student(criterion, student, test_keys):
             if isinstance(raw_v, (dict, list)):
                 continue
             normalized = _normalize_result_value(raw_v)
-            if normalized != '':
+            if _result_value_is_present(normalized):
                 values.append(normalized)
         return values
 
     return [
         _normalize_result_value(v)
         for v in results.values_list(field, flat=True)
-        if _normalize_result_value(v) != ''
+        if _result_value_is_present(v)
     ]
 
 
 _RESULT_OPS_WITHOUT_VALUE = frozenset({'is_empty', 'is_not_empty'})
+
+
+def _wanted_values_are_blank_sentinels(wanted):
+    """True when every wanted value is an import placeholder (NS, NaN, …)."""
+    if not wanted:
+        return False
+    return all(w.lower() in _RESULT_SCORE_SENTINELS for w in wanted)
 
 
 def _match_result_values(criterion, values):
@@ -333,10 +355,25 @@ def _match_result_values(criterion, values):
         return bool(values)
     if op == 'in':
         wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
-        return any(v in wanted for v in values)
+        if not wanted:
+            return False
+        # Missing/blank scores match In List when the list is only NS/NaN-style sentinels.
+        if not values and _wanted_values_are_blank_sentinels(wanted):
+            return True
+        wanted_fold = {w.lower() for w in wanted}
+        return any(
+            v in wanted or _normalize_result_value(v).lower() in wanted_fold
+            for v in values
+        )
     if op == 'not_in':
         wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
-        return bool(values) and all(v not in wanted for v in values)
+        if not values:
+            return not _wanted_values_are_blank_sentinels(wanted)
+        wanted_fold = {w.lower() for w in wanted}
+        return all(
+            v not in wanted and _normalize_result_value(v).lower() not in wanted_fold
+            for v in values
+        )
     if op == 'is':
         return any(v == _normalize_result_value(raw) for v in values)
     if op == 'is_not':
@@ -770,14 +807,14 @@ class DefaultRuleEvalContext:
                 if isinstance(raw_v, (dict, list)):
                     continue
                 normalized = _normalize_result_value(raw_v)
-                if normalized != '':
+                if _result_value_is_present(normalized):
                     values.append(normalized)
             return values
 
         return [
             _normalize_result_value(row.get(field))
             for row in rows
-            if _normalize_result_value(row.get(field)) != ''
+            if _result_value_is_present(row.get(field))
         ]
 
     def schedule_matches(self, criterion, student):
