@@ -4,7 +4,6 @@ import io
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.core.cache import cache
 from django.http import HttpResponse, StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 
@@ -12,7 +11,6 @@ from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_column_distinct_values,
     get_all_available_columns,
-    _drill_user_part, _drill_fetch_hash, _drill_post_hash,
 )
 from dataviz.views.drill_views import _col_label, _parse_column_filters
 from dataexploration.column_utils import export_cell
@@ -212,56 +210,34 @@ def drill_export_csv_api(request, chart_id):
 
     column_filters = _parse_column_filters(request)
 
+    extra_cols = list(selected_columns) if selected_columns else []
+    for fk in drill_filters:
+        if fk.startswith(('test_', 'mark_')) and fk not in extra_cols:
+            extra_cols.append(fk)
+
     safe_name = chart.name.replace(' ', '_').replace('/', '_')[:50]
 
     def stream_csv():
-        user_part = _drill_user_part(request.user)
-        fetch_hash = _drill_fetch_hash(chart, drill_filters, selected_columns or None)
-        updated_ts = int(chart.updated_at.timestamp())
-        post_hash = _drill_post_hash(chart, fetch_hash)
-        sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
-        post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{post_hash}{user_part}"
-        cached = cache.get(post_key)
-        if cached is None:
-            execute_drill_query(
-                chart, drill_filters, columns=selected_columns, user=request.user,
-                page=1, per_page=50,
-                sort_by=sort_by, sort_dir=sort_dir,
-                column_filters=column_filters,
-                extra_columns=selected_columns or None,
-            )
-            cached = cache.get(post_key)
-
-        all_rows = list(cached[0]) if cached else []
-        if sort_by and all_rows:
-            reverse = sort_dir.lower() == 'desc'
-
-            def _sort_key(row):
-                v = row.get(sort_by, '') or ''
-                try:
-                    return (0, float(v))
-                except (ValueError, TypeError):
-                    return (1, str(v).lower())
-
-            all_rows.sort(key=_sort_key, reverse=reverse)
-
-        if column_filters and all_rows:
-            for fkey, fvals in column_filters.items():
-                if not fvals:
-                    continue
-                allowed = set(fvals) if isinstance(fvals, list) else {fvals}
-                all_rows = [r for r in all_rows if str(r.get(fkey, '')) in allowed]
-
-        cols = selected_columns or (cached[1] if cached else [])
-        if all_rows and cols:
-            yield ','.join([_col_label(c) for c in cols]) + '\n'
-            for row in all_rows:
-                yield ','.join(
-                    f'"{str(export_cell(row.get(c))).replace(chr(34), chr(34)+chr(34))}"'
-                    for c in cols
-                ) + '\n'
-        elif cached and cached[1]:
-            yield ','.join([_col_label(c) for c in cached[1]]) + '\n'
+        result = execute_drill_query(
+            chart, drill_filters, columns=selected_columns, user=request.user,
+            page=1, per_page=MAX_PER_PAGE,
+            sort_by=sort_by, sort_dir=sort_dir,
+            column_filters=column_filters,
+            extra_columns=extra_cols or None,
+            export_all=True,
+        )
+        if result.get('error'):
+            return
+        all_rows = list(result.get('rows') or [])
+        cols = selected_columns or result.get('columns') or []
+        if not cols:
+            return
+        yield ','.join([_col_label(c) for c in cols]) + '\n'
+        for row in all_rows:
+            yield ','.join(
+                f'"{str(export_cell(row.get(c))).replace(chr(34), chr(34)+chr(34))}"'
+                for c in cols
+            ) + '\n'
 
     response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="drill_{safe_name}.csv"'

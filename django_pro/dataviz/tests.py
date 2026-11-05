@@ -2110,6 +2110,24 @@ class DrillThroughResultAlignmentTests(TestCase):
         self.assertEqual(lines[0], 'Grade,Student Name')
         self.assertEqual(lines[1], '"5","Alice"')
 
+    @patch('dataviz.views.api.drill_api.execute_drill_query')
+    def test_drill_export_csv_fetches_all_rows_not_cache(self, mock_exec):
+        mock_exec.return_value = {
+            'rows': [
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5'},
+                {'ssid': '456', 'student_name': 'Bob', 'grade': '6'},
+            ],
+            'columns': ['grade', 'student_name'],
+        }
+        self.client.force_login(self.user)
+        response = self.client.get(f'/dataviz/api/drill/{self.chart.id}/export-csv/')
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode('utf-8')
+        lines = content.strip().split('\n')
+        self.assertEqual(len(lines), 3)
+        mock_exec.assert_called_once()
+        self.assertTrue(mock_exec.call_args.kwargs.get('export_all'))
+
 
 class GetAllAvailableColumnsTests(TestCase):
     def setUp(self):

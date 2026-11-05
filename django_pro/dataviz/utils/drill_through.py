@@ -838,6 +838,7 @@ def execute_drill_query(
     column_filters: dict | None = None,
     extra_columns: list | None = None,
     cursor: str | None = None,
+    export_all: bool = False,
 ) -> dict:
     """
     Run the chart's underlying query with drill_filters merged in.
@@ -937,7 +938,7 @@ def execute_drill_query(
             pk=chart.source_id,
         ).values_list('source_type', flat=True).first() == _Dataset.SOURCE_SQL
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
-    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
+    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by) and not export_all
     if sql_paginate:
         _fetch_hash = f"{_fetch_hash}:p{page}:c{cursor or ''}:n{per_page}:s{sort_by}:{sort_dir}"
     updated_ts = int(chart.updated_at.timestamp())
@@ -1538,7 +1539,10 @@ def execute_drill_query(
     all_columns = [c for c in all_columns if c.split('.')[-1] != 'stu_annual_key']
 
     total = sql_total_rows if sql_total_rows is not None else len(rows)
-    if sql_total_rows is not None:
+    if export_all:
+        paged = rows
+        total = len(rows)
+    elif sql_total_rows is not None:
         paged = rows
     else:
         start = (page - 1) * per_page
