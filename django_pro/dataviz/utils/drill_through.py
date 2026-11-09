@@ -109,7 +109,7 @@ def split_composite_value(val: str, expected_len: int) -> list:
     normalized = val.replace('\xa0', ' ').replace('\u200b', '').strip()
     
     # Try different separators in order of preference.
-    separators = [' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
+    separators = ['\n', ' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
     for sep in separators:
         if sep in normalized:
             parts = [p.strip() for p in normalized.split(sep)]
@@ -154,7 +154,9 @@ def _deduplicate_count_drill_rows(rows, chart):
 
     if chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
         return rows
-    if (chart.config or {}).get('agg', 'count') != 'count':
+    # count_unique counts one point per distinct student; make the drill show
+    # one row per student too (count charts already dedupe joined rows).
+    if (chart.config or {}).get('agg', 'count') not in ('count', 'count_unique'):
         return rows
 
     id_col = _find_id_col(rows[0])
@@ -400,6 +402,37 @@ def _apply_drill_row_filters(rows, drill_filters):
             else:
                 rows = [r for r in rows if str(r.get(col) or '').strip() == target]
     return rows
+
+
+def extract_page_filters(chart, params) -> dict:
+    """Collect ``pf_*`` drill params, honoring the chart's skip_page_filters.
+
+    Trend charts deliberately ignore page-level year filters when rendering
+    (``config.skip_page_filters``). The drill must ignore the same filters,
+    otherwise clicking a 2023-24 bar while the page defaults to 2025-26 drills
+    into a contradictory (often empty) row set.
+    """
+    if not params:
+        return {}
+    skip = {
+        str(k) for k in ((chart.config or {}).get('skip_page_filters') or [])
+    }
+    filters = {}
+    for key in params:
+        if not isinstance(key, str) or not key.startswith('pf_'):
+            continue
+        col = key[3:]
+        if not col or col in skip:
+            continue
+        if hasattr(params, 'getlist'):
+            vals = [v for v in params.getlist(key) if v]
+        else:
+            raw = params.get(key)
+            vals = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+            vals = [v for v in vals if v]
+        if vals:
+            filters[col] = vals if len(vals) > 1 else vals[0]
+    return filters
 
 
 def build_drill_filter(chart, params: dict) -> dict:

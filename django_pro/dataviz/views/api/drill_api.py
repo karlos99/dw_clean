@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, render
 from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_column_distinct_values,
-    get_all_available_columns,
+    get_all_available_columns, extract_page_filters,
 )
 from dataviz.views.drill_views import _col_label, _parse_column_filters
 from dataexploration.column_utils import export_cell
@@ -39,13 +39,9 @@ def drill_rows_api(request, chart_id):
         if params.get(f'skip_drill_{k}') != '1':
             drill_filters[k] = v
 
-    # Merge page-level filters (pf_* query params)
-    for key in params:
-        if key.startswith('pf_'):
-            vals = params.getlist(key)
-            vals = [v for v in vals if v]
-            if vals:
-                drill_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+    # Merge page-level filters (pf_* query params), honoring skip_page_filters.
+    for key, val in extract_page_filters(chart, params).items():
+        drill_filters[key] = val
 
     page_num = int(params.get('page', 1))
     per_page = min(int(params.get('per_page', 50)), MAX_PER_PAGE)
@@ -102,7 +98,10 @@ def drill_rows_api(request, chart_id):
 
     if request.headers.get('HX-Request'):
         return render(request, 'dataviz/partials/drill_rows.html', context)
-    return JsonResponse({k: v for k, v in context.items() if k not in ('rows', 'columns')})
+    payload = {k: v for k, v in context.items() if k not in ('rows', 'columns', 'chart')}
+    payload['chart_id'] = chart.pk
+    payload['chart_name'] = chart.name
+    return JsonResponse(payload)
 
 
 @login_required
@@ -161,13 +160,9 @@ def drill_filter_values_api(request, chart_id):
         if request.GET.get(f'skip_drill_{k}') != '1':
             drill_filters[k] = v
 
-    # Merge page-level filters
-    for key in request.GET:
-        if key.startswith('pf_'):
-            vals = request.GET.getlist(key)
-            vals = [v for v in vals if v]
-            if vals:
-                drill_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+    # Merge page-level filters, honoring skip_page_filters.
+    for key, val in extract_page_filters(chart, request.GET).items():
+        drill_filters[key] = val
 
     values = get_column_distinct_values(chart, drill_filters, column, request.user)
     return JsonResponse({'values': values})
@@ -190,13 +185,9 @@ def drill_export_csv_api(request, chart_id):
         if params.get(f'skip_drill_{k}') != '1':
             drill_filters[k] = v
 
-    # Merge page-level filters
-    for key in params:
-        if key.startswith('pf_'):
-            vals = params.getlist(key)
-            vals = [v for v in vals if v]
-            if vals:
-                drill_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+    # Merge page-level filters, honoring skip_page_filters.
+    for key, val in extract_page_filters(chart, params).items():
+        drill_filters[key] = val
 
     sort_by = params.get('sort_by', '')
     sort_dir = params.get('sort_dir', 'asc')

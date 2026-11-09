@@ -117,6 +117,10 @@ class DistrictRoleVisibilityTests(TestCase):
         teacher.active_role = self.teacher
         self.assertFalse(is_unrestricted(teacher))
 
+    def test_user_without_roles_cannot_see_school_students(self):
+        user = self._user('u_no_role', [], schools=['0110791'])
+        self.assertEqual(user.get_accessible_student_keys(), [])
+
     def test_district_view_gets_full_student_access(self):
         view_user = self._user('u_dv', [self.district_view])
         view_user.active_role = self.district_view

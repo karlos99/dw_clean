@@ -1580,10 +1580,44 @@ def _parse_pf_filters(get_params) -> dict:
     return filters
 
 
+def _normalize_grade_token(val):
+    s = str(val or '').strip()
+    if not s:
+        return s
+    upper = s.upper()
+    if upper in ('K', 'KG'):
+        return 'KN'
+    if upper in ('TK', 'KN'):
+        return upper
+    if s.isdigit():
+        return s.zfill(2)
+    return s
+
+
 def _apply_sql_dataset_row_filters(rows, filters):
     """Apply page/chart filters to SQL dataset rows (same rules as drill-through)."""
     if not rows or not filters:
         return rows
+    filters = dict(filters)
+    # Page grade filter may use raw ``grade`` while SQL datasets expose ``grade_label``.
+    if 'grade' in filters and 'grade_label' not in filters:
+        filters['grade_label'] = filters.pop('grade')
+    if 'grade_label' in filters:
+        from dataviz.utils.drill_through import _apply_drill_row_filters
+
+        raw = filters.pop('grade_label')
+        allowed = raw if isinstance(raw, list) else [raw]
+        norm_allowed = {_normalize_grade_token(v) for v in allowed}
+        str_allowed = {str(v).strip() for v in allowed}
+        rows = [
+            r for r in rows
+            if _normalize_grade_token(r.get('grade_label') or r.get('grade')) in norm_allowed
+            or str(r.get('grade_label') or '').strip() in str_allowed
+            or str(r.get('grade') or '').strip() in str_allowed
+        ]
+        if not filters:
+            return rows
+        return _apply_drill_row_filters(rows, filters)
     from dataviz.utils.drill_through import _apply_drill_row_filters
     return _apply_drill_row_filters(rows, filters)
 
@@ -1606,7 +1640,11 @@ def _dedupe_chart_rows(rows, cfg, *, used_aggregate=False):
     from dataviz.utils.compiler import dedupe_rows_by_ssid, dedupe_rows_by_stu_annual_key
     if cfg.get('one_row_per_stu_annual_key'):
         rows = dedupe_rows_by_stu_annual_key(rows)
-    if cfg.get('one_row_per_ssid') or cfg.get('student_share_percent'):
+    skip_pf = set(cfg.get('skip_page_filters') or [])
+    multi_year_trend = bool(cfg.get('multi_year_trend')) or 'test_year' in skip_pf
+    if cfg.get('one_row_per_ssid') or (
+        cfg.get('student_share_percent') and not multi_year_trend
+    ):
         rows = dedupe_rows_by_ssid(rows)
     return rows
 
@@ -1837,6 +1875,17 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # updated_at as an int-second timestamp busts the key on every chart save
     updated_ts = int(chart.updated_at.timestamp())
     config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
+    # Raw rows cached below are already narrowed by chart.source_filters +
+    # page filters (minus config.skip_page_filters) and by
+    # one_row_per_stu_annual_key. Include those in the data-cache key so two
+    # charts that share a dataset but use different filters cannot read each
+    # other's cached rows (e.g. a multi-year trend chart and a single-year
+    # school chart created in the same second).
+    filter_cfg_hash = hashlib.md5(json.dumps({
+        'source_filters': chart.source_filters or {},
+        'skip_page_filters': chart.config.get('skip_page_filters') or [],
+        'one_row_per_stu_annual_key': bool(chart.config.get('one_row_per_stu_annual_key')),
+    }, sort_keys=True, default=str).encode()).hexdigest()[:12]
     embed_suffix = 'e' if is_embed else 's'
     render_cache_key = (
         f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
@@ -1882,7 +1931,8 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
 
     source_part = (
         f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
-        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:{pf_hash}:{updated_ts}:'
+        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:'
+        f'{config_hash}:{filter_cfg_hash}:{pf_hash}:{updated_ts}:'
         f'{sync_version}{scope_suffix}'
     )
     data_cache_key = f'chart_data:{source_part}'

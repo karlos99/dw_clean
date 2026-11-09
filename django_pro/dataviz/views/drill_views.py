@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404, render
 from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_all_available_columns,
+    extract_page_filters,
 )
 from dataexploration.column_utils import get_mark_columns, get_test_columns
 from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
@@ -190,14 +191,9 @@ def drill_table(request, chart_id):
     }
     raw_drill_filters = build_drill_filter(chart, params)
 
-    # Merge page-level filters (pf_* query params)
-    page_filters = {}
-    for key in request.GET:
-        if key.startswith('pf_'):
-            vals = request.GET.getlist(key)
-            vals = [v for v in vals if v]
-            if vals:
-                page_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+    # Merge page-level filters (pf_* query params), except filters the chart
+    # explicitly skips (multi-year trend charts ignore year page filters).
+    page_filters = extract_page_filters(chart, request.GET)
 
     # Allow the user to remove individual drill filters
     active_drill_filters = {}

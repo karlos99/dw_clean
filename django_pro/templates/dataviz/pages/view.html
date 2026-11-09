@@ -498,7 +498,7 @@
 
     // SWR Instant Client Cache: Check sessionStorage for instant rendering
     try {
-      const cacheKey = `dv_chart_v4_${cid}_${filterKey}`;
+      const cacheKey = `dv_chart_v7_${cid}_${filterKey}`;
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
         const item = JSON.parse(cached);
@@ -546,7 +546,7 @@
           slot.innerHTML = payload.html;
           needsInit = true;
           try {
-            const cacheKey = `dv_chart_v4_${cid}_${filterKey}`;
+            const cacheKey = `dv_chart_v7_${cid}_${filterKey}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
           } catch (e) {}
         } else {
@@ -564,7 +564,7 @@
 <script>
   const _PAGE_SLUG = "{{ page.slug|escapejs }}";
   const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
-  const _STORAGE_KEY = 'pf_global';
+  const _STORAGE_KEY = 'pf_page_' + _PAGE_SLUG;
   const _PAGE_FILTER_COLS = {{ page_filter_cols_json|safe }};  // columns that exist on this page
   const _DEFAULT_FILTER_TAGS = {{ default_filter_tags_json|safe }};  // admin-configured defaults from the page builder
   const _HIDDEN_FILTER_COLS = new Set({{ hidden_filter_cols_json|safe }});
@@ -591,6 +591,21 @@
       else filters[col] = [filters[col], value];
     }
     return filters;
+  }
+
+  function _pageChartFilteredUrl(base, qs) {
+    // Base URLs already carry the server-rendered default pf_* values.
+    // Strip those first so a new filter replaces them instead of appending
+    // duplicate params (e.g. two different pf_test_year values).
+    const url = new URL(base, window.location.origin);
+    for (const key of [...url.searchParams.keys()]) {
+      if (key.startsWith('pf_')) url.searchParams.delete(key);
+    }
+    if (qs) {
+      const extra = new URLSearchParams(qs);
+      for (const [key, value] of extra.entries()) url.searchParams.append(key, value);
+    }
+    return url.pathname + '?' + url.searchParams.toString();
   }
 
   function _pageChartNearViewport(el) {
@@ -622,14 +637,16 @@
 
     slots.forEach(el => {
       const base = el.dataset.chartBaseUrl;
-      const url = qs ? base + '&' + qs : base;
+      const url = _pageChartFilteredUrl(base, qs);
       el.setAttribute('hx-get', url);
+      // Ensure later tab activation can reload this slot with the current
+      // filters, even if it was previously loaded from a hidden tab.
+      el.setAttribute('hx-trigger', 'reload');
       const match = base.match(/\/charts\/(\d+)\/render\//);
       if (!match || !_pageChartNearViewport(el) || !_pageChartUsesChangedFilter(el, affectedCols)) return;
       const cid = match[1];
       if (!slotByChartId[cid]) visible.push(cid);
       (slotByChartId[cid] ||= []).push(el);
-      el.setAttribute('hx-trigger', 'reload');
       el.innerHTML = _pageChartSkeleton();
     });
 
@@ -925,8 +942,18 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!show && window.disposeChartsIn) window.disposeChartsIn(panel);
       panel.hidden = !show;
     });
+    const qs = window._pageFilterQS || '';
     document.querySelectorAll('[data-tab-content="' + id + '"] .page-chart-slot').forEach(slot => {
-      if (window.htmx && !slot.dataset.tabLoaded) htmx.trigger(slot, 'reload');
+      if (!window.htmx) return;
+      const base = slot.dataset.chartBaseUrl;
+      if (!base) return;
+      // Rebuild the request from the current filter query and re-process the
+      // element so HTMX does not reuse an old cached path/trigger configuration.
+      const url = _pageChartFilteredUrl(base, qs);
+      slot.setAttribute('hx-get', url);
+      slot.setAttribute('hx-trigger', 'reload');
+      htmx.process(slot);
+      htmx.trigger(slot, 'reload');
     });
     if (window.initAllCharts) window.initAllCharts();
   }

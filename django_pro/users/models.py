@@ -402,6 +402,9 @@ class User(AbstractUser):
             return self._limited_student_keys(limited_assignment)
 
         role_names = self.role_names()
+        if not role_names:
+            return []
+
         if any(r in UNRESTRICTED_ROLE_NAMES or 'District' in r for r in role_names):
             return None
 

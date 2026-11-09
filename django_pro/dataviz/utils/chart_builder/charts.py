@@ -187,6 +187,12 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
 
         categories = sorted(adf[x_col].cast(pl.Utf8).unique().to_list())
         groups = sorted(adf[group_col].cast(pl.Utf8).unique().to_list())
+        group_order = [str(g) for g in (cfg.get('group_order') or [])]
+        if group_order:
+            groups = (
+                [g for g in group_order if g in groups]
+                + [g for g in groups if g not in group_order]
+            )
         stacks = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
 
         raw_vals = {}
