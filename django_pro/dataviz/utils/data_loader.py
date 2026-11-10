@@ -1514,6 +1514,12 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         active_school = getattr(user, 'active_school', None)
         school_id = active_school.state_id if active_school else 'All'
         user_part = f":u{user.pk}:r{role_name}:s{school_id}"
+        if getattr(user, 'active_caseload', False) and hasattr(user, 'get_accessible_student_keys'):
+            keys = user.get_accessible_student_keys() or []
+            caseload_hash = hashlib.md5(
+                json.dumps(list(keys), sort_keys=True).encode()
+            ).hexdigest()[:12]
+            user_part += f":c{caseload_hash}"
 
     config_hash = hashlib.md5(json.dumps({
         **config,

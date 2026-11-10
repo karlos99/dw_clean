@@ -764,6 +764,57 @@ class DesiWorkflowAndViewsTests(TestCase):
         rows = list(reader)
         self.assertEqual(rows[0], ['Student', 'TTS Support'])
 
+    def test_export_data_includes_default_assignment_rules_without_saved_record(self):
+        self.client.force_login(self.admin_user)
+        rule = SupportDefaultRule.objects.create(
+            name="Global TTS",
+            support=self.acc,
+            scope="all",
+            is_active=True,
+        )
+        rule.options.add(self.opt)
+
+        export_url = reverse('desi:export_data')
+        support_col_key = f'support__{self.acc.id}'
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'support_value_field': 'code',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+            f'include__{support_col_key}': 'on',
+            f'header__{support_col_key}': 'TTS Code',
+            f'order__{support_col_key}': '2',
+            'header__assessment_name': 'Assessment Name',
+            'order__assessment_name': '99',
+            'header__student_id': 'Local Student ID',
+            'order__student_id': '99',
+            'header__ssid': 'SSID',
+            'order__ssid': '99',
+            'header__stu_annual_key': 'Student Annual Key',
+            'order__stu_annual_key': '99',
+            'header__grade': 'Grade',
+            'order__grade': '99',
+            'header__school_name': 'School',
+            'order__school_name': '99',
+            'header__school_year': 'School Year',
+            'order__school_year': '99',
+            'header__assessment_subject': 'Assessment Subject',
+            'order__assessment_subject': '99',
+            'header__assessment_school_year': 'Assessment School Year',
+            'order__assessment_school_year': '99',
+            'header__assessment_completed': 'Assessment Completed',
+            'order__assessment_completed': '99',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        rows = list(reader)
+        self.assertEqual(rows[1][1], 'TTS')
+        self.assertFalse(
+            StudentAccommodation.objects.filter(student_annual_key=self.student.stu_annual_key).exists()
+        )
+
     def test_export_data_support_columns_can_use_option_code(self):
         self.client.force_login(self.admin_user)
         StudentAccommodation.objects.create(student_annual_key=self.student.stu_annual_key).options.add(self.opt)
@@ -815,6 +866,7 @@ class DesiWorkflowAndViewsTests(TestCase):
             student_id="blankid",
             student_name="Blank Student",
             grade="04",
+            status="Active",
             school_year="2025-2026"
         )
 
@@ -856,6 +908,35 @@ class DesiWorkflowAndViewsTests(TestCase):
         exported_students = [r[0] for r in rows[1:]]
         self.assertIn('Test Student', exported_students)
         self.assertNotIn('Blank Student', exported_students)
+
+    def test_export_data_excludes_inactive_students(self):
+        self.client.force_login(self.admin_user)
+        inactive = CurrentStudent.objects.create(
+            stu_annual_key="inactive_export_key",
+            ssid="inactivessid",
+            student_id="inactiveid",
+            student_name="Inactive Export Student",
+            grade="04",
+            status="Inactive",
+            school_year="2025-2026",
+        )
+        StudentAccommodation.objects.create(
+            student_annual_key=inactive.stu_annual_key,
+        ).options.add(self.opt)
+
+        export_url = reverse('desi:export_data')
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        exported_students = [r[0] for r in list(reader)[1:]]
+        self.assertIn('Test Student', exported_students)
+        self.assertNotIn('Inactive Export Student', exported_students)
 
     def test_export_endpoint_requires_valid_auth_token(self):
         endpoint_url = reverse('desi:export_data_endpoint')
@@ -3001,6 +3082,145 @@ class DesiSupportDefaultRuleTests(TestCase):
             local_student_id="dr3", school_year="2025-2026", pl="3",
         )
         self.assertNotIn(self.opt.id, default_support_locks(other)["option_ids"])
+
+    def test_result_is_empty_matches_missing_or_blank_pl(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC no score", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="ELPAC", test_subject="summative",
+            school_year="2025-2026", result_field="pl", result_operator="is_empty", result_value="",
+        )
+        # No Result row for this student.
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        Result.objects.create(
+            test_id="r-blank", test_group_key="elpac-sum-2025", ssid=self.student.ssid,
+            local_student_id="dr", school_year="2025-2026", pl="",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        Result.objects.filter(ssid=self.student.ssid).update(pl="3")
+        self.assertNotIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        Result.objects.filter(ssid=self.student.ssid).update(pl="NS")
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_result_in_list_ns_nan_matches_missing_score(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC in NS NaN", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="ELPAC", test_subject="summative",
+            school_year="2025-2026", result_field="pl", result_operator="in", result_value="NS,NaN",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_result_or_equals_three_or_is_empty(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC PL3 or blank", support=self.acc, scope="criteria", is_active=True
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", logic_operator="AND", order=0,
+            test_name="ELPAC", test_subject="summative", school_year="2025-2026",
+            result_field="pl", result_operator="is", result_value="3",
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", logic_operator="OR", order=1,
+            test_name="ELPAC", test_subject="summative", school_year="2025-2026",
+            result_field="pl", result_operator="is_empty", result_value="",
+        )
+
+        no_result = CurrentStudent.objects.create(
+            stu_annual_key="dr-nr", ssid="dr-nr", student_id="drnr",
+            student_name="No Result", grade="05", school_year="2025-2026",
+        )
+        pl3 = CurrentStudent.objects.create(
+            stu_annual_key="dr-pl3", ssid="dr-pl3", student_id="drpl3",
+            student_name="PL3", grade="05", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r-pl3", test_group_key="elpac-sum-2025", ssid=pl3.ssid,
+            local_student_id="drpl3", school_year="2025-2026", pl="3",
+        )
+        pl2 = CurrentStudent.objects.create(
+            stu_annual_key="dr-pl2", ssid="dr-pl2", student_id="drpl2",
+            student_name="PL2", grade="05", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r-pl2", test_group_key="elpac-sum-2025", ssid=pl2.ssid,
+            local_student_id="drpl2", school_year="2025-2026", pl="2",
+        )
+
+        locks_nr = default_support_locks(no_result)
+        self.assertIn(self.acc.id, locks_nr["support_ids"])
+        self.assertNotIn(self.opt.id, locks_nr["option_ids"])
+
+        locks_pl3 = default_support_locks(pl3)
+        self.assertIn(self.acc.id, locks_pl3["support_ids"])
+        self.assertNotIn(self.opt.id, locks_pl3["option_ids"])
+
+        locks_pl2 = default_support_locks(pl2)
+        self.assertNotIn(self.acc.id, locks_pl2["support_ids"])
+
+    def test_default_rule_form_persists_or_with_is_empty_criterion(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "OR empty save",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "crit_type[]": ["result", "result"],
+            "crit_logic_op[]": ["AND", "OR"],
+            "crit_field[]": ["", ""],
+            "crit_operator[]": ["", ""],
+            "crit_value[]": ["", ""],
+            "crit_test_name[]": ["ELPAC", "ELPAC"],
+            "crit_test_subject[]": ["summative", "summative"],
+            "crit_school_year[]": ["2025-2026", "2025-2026"],
+            "crit_result_field[]": ["pl", "pl"],
+            "crit_result_operator[]": ["is", "is_empty"],
+            "crit_result_value[]": ["3", ""],
+        })
+        self.assertEqual(response.status_code, 302)
+        criteria = list(
+            SupportDefaultRuleCriteria.objects.filter(rule__name="OR empty save").order_by("order")
+        )
+        self.assertEqual(len(criteria), 2)
+        self.assertEqual(criteria[0].result_operator, "is")
+        self.assertEqual(criteria[0].result_value, "3")
+        self.assertEqual(criteria[1].logic_operator, "OR")
+        self.assertEqual(criteria[1].result_operator, "is_empty")
+
+    def test_default_rule_edit_form_shows_or_connector(self):
+        rule = SupportDefaultRule.objects.create(
+            name="OR display", support=self.acc, scope="criteria", is_active=True,
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="demographic", order=0,
+            field_name="grade", operator="is", value="05",
+        )
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="demographic", order=1, logic_operator="OR",
+            field_name="grade", operator="is", value="06",
+        )
+        response = self.client.get(reverse("desi:support_default_rule_edit", args=[rule.id]))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("logic: 'OR'", content)
 
     def test_workspace_shows_locked_default_option(self):
         self._global_rule()

@@ -510,10 +510,25 @@ def page_filter_options_api(request, slug, filter_id):
 
     table = filter_def.get('source_table', '') or 'current_student'
     col   = filter_def.get('source_col', '')
-    if not col:
+    source_distinct_sql = (filter_def.get('source_distinct_sql') or '').strip()
+    source_where = (filter_def.get('source_where') or '').strip()
+    if not col and not source_distinct_sql:
         return JsonResponse({'values': []})
 
-    cache_key = f"dv_page_filter:{slug}:{filter_id}:{table}:{col}"
+    # Resolve {{This School Year}} / {{Last School Year}} before execution.
+    # ClickHouse treats the raw placeholder as a literal and silently returns
+    # no rows, which made page filter dropdowns empty.
+    if source_distinct_sql:
+        from dataviz.utils.data_loader import resolve_sql_year_placeholders
+
+        source_distinct_sql, placeholder_err = resolve_sql_year_placeholders(source_distinct_sql)
+        if placeholder_err:
+            return JsonResponse({'error': placeholder_err}, status=500)
+
+    cache_key = (
+        f"dv_page_filter:{slug}:{filter_id}:"
+        f"{hash((table, col, source_where, source_distinct_sql))}"
+    )
     cached = cache.get(cache_key)
     if cached is not None:
         values = cached
@@ -521,11 +536,28 @@ def page_filter_options_api(request, slug, filter_id):
         try:
             # Only route through ClickHouse when this table is actually mirrored
             # there — otherwise the data doesn't exist and Postgres is correct.
-            cursor_ctx = QueryExecutor(analytics=True).cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
+            use_ch = table in CLICKHOUSE_SYNCED_TABLES
+            cursor_ctx = (
+                QueryExecutor(analytics=True).cursor()
+                if use_ch else connections['default'].cursor()
+            )
             with cursor_ctx as cursor:
-                cursor.execute(
-                    f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}"'
-                )
+                if source_distinct_sql:
+                    cursor.execute(source_distinct_sql)
+                elif use_ch:
+                    col_ref = f'r.{col}' if col and col.replace('_', '').isalnum() else col
+                    conditions = [f"trim(toString({col_ref})) != ''"]
+                    if source_where:
+                        conditions.insert(0, f'({source_where})')
+                    cursor.execute(
+                        f'SELECT DISTINCT {col_ref} AS v FROM {table} AS r '
+                        f'WHERE {" AND ".join(conditions)} ORDER BY v'
+                    )
+                else:
+                    cursor.execute(
+                        f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL '
+                        f'ORDER BY "{col}"'
+                    )
                 values = [row[0] for row in cursor.fetchall()]
             cache.set(cache_key, values, 300)
         except Exception as exc:

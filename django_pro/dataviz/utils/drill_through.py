@@ -4,6 +4,7 @@ and execute the resulting query for the drill-through data table.
 """
 import hashlib
 import json
+import re
 
 from django.core.cache import cache
 
@@ -26,7 +27,14 @@ def _drill_user_part(user) -> str:
         # Test doubles and lightweight service callers may not expose a
         # database identity; keep their cache entries isolated by instance.
         user_id = f'obj{id(user)}'
-    return f":u{user_id}:r{role_name}:s{school_id}"
+    caseload_part = ''
+    if getattr(user, 'active_caseload', False) and hasattr(user, 'get_accessible_student_keys'):
+        keys = user.get_accessible_student_keys() or []
+        key_hash = hashlib.md5(
+            json.dumps(list(keys), sort_keys=True).encode()
+        ).hexdigest()[:12]
+        caseload_part = f":c{key_hash}"
+    return f":u{user_id}:r{role_name}:s{school_id}{caseload_part}"
 
 
 def _drill_fetch_hash(chart, drill_filters: dict, extra_columns: list | None) -> str:
@@ -102,7 +110,7 @@ def split_composite_value(val: str, expected_len: int) -> list:
     normalized = val.replace('\xa0', ' ').replace('\u200b', '').strip()
     
     # Try different separators in order of preference.
-    separators = [' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
+    separators = ['\n', ' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
     for sep in separators:
         if sep in normalized:
             parts = [p.strip() for p in normalized.split(sep)]
@@ -147,7 +155,9 @@ def _deduplicate_count_drill_rows(rows, chart):
 
     if chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
         return rows
-    if (chart.config or {}).get('agg', 'count') != 'count':
+    # count_unique counts one point per distinct student; make the drill show
+    # one row per student too (count charts already dedupe joined rows).
+    if (chart.config or {}).get('agg', 'count') not in ('count', 'count_unique'):
         return rows
 
     id_col = _find_id_col(rows[0])
@@ -393,6 +403,37 @@ def _apply_drill_row_filters(rows, drill_filters):
             else:
                 rows = [r for r in rows if str(r.get(col) or '').strip() == target]
     return rows
+
+
+def extract_page_filters(chart, params) -> dict:
+    """Collect ``pf_*`` drill params, honoring the chart's skip_page_filters.
+
+    Trend charts deliberately ignore page-level year filters when rendering
+    (``config.skip_page_filters``). The drill must ignore the same filters,
+    otherwise clicking a 2023-24 bar while the page defaults to 2025-26 drills
+    into a contradictory (often empty) row set.
+    """
+    if not params:
+        return {}
+    skip = {
+        str(k) for k in ((chart.config or {}).get('skip_page_filters') or [])
+    }
+    filters = {}
+    for key in params:
+        if not isinstance(key, str) or not key.startswith('pf_'):
+            continue
+        col = key[3:]
+        if not col or col in skip:
+            continue
+        if hasattr(params, 'getlist'):
+            vals = [v for v in params.getlist(key) if v]
+        else:
+            raw = params.get(key)
+            vals = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+            vals = [v for v in vals if v]
+        if vals:
+            filters[col] = vals if len(vals) > 1 else vals[0]
+    return filters
 
 
 def build_drill_filter(chart, params: dict) -> dict:
@@ -728,10 +769,13 @@ def _apply_user_access_filter(rows, cols, user):
         return rows, cols
 
     # Try to match student identifiers in the columns
-    student_id_cols = [c for c in cols if c in ('ssid', 'student_id', 'stu_annual_key', 'local_student_id')
-                       or c.endswith('.ssid') or c.endswith('.student_id')
-                       or c.endswith('.stu_annual_key') or c.endswith('.local_student_id')]
-    if not student_id_cols:
+    def _bare(col):
+        return str(col).split('.')[-1]
+
+    key_cols = [c for c in cols if _bare(c) == 'stu_annual_key']
+    ssid_cols = [c for c in cols if _bare(c) == 'ssid']
+    local_id_cols = [c for c in cols if _bare(c) in ('student_id', 'local_student_id')]
+    if not (key_cols or ssid_cols or local_id_cols):
         return rows, cols  # No student columns found — can't filter
 
     # Get accessible student keys
@@ -741,6 +785,15 @@ def _apply_user_access_filter(rows, cols, user):
         keys = user.get_accessible_student_keys()
         if keys is not None:
             accessible_keys = set(keys)
+
+    caseload_ssids = set()
+    caseload_student_ids = set()
+    if getattr(user, 'active_caseload', False) and hasattr(
+        user, 'get_counselor_caseload_identifiers'
+    ):
+        caseload_ssids, caseload_student_ids = user.get_counselor_caseload_identifiers()
+        caseload_ssids = set(caseload_ssids or [])
+        caseload_student_ids = set(caseload_student_ids or [])
 
     # Get permitted school IDs for school-level filtering
     permitted_schools = None
@@ -760,16 +813,28 @@ def _apply_user_access_filter(rows, cols, user):
 
     filtered = []
     for row in rows:
-        # Check student key access (teacher-level)
+        # Check student key access (teacher-level / counselor caseload)
         if accessible_keys is not None:
             matched = False
-            for col in student_id_cols:
+            for col in key_cols:
                 val = str(row.get(col, '')).strip()
                 if val and val in accessible_keys:
                     matched = True
                     break
+            if not matched and getattr(user, 'active_caseload', False):
+                for col in ssid_cols:
+                    val = str(row.get(col, '')).strip()
+                    if val and val in caseload_ssids:
+                        matched = True
+                        break
+                if not matched:
+                    for col in local_id_cols:
+                        val = str(row.get(col, '')).strip()
+                        if val and val in caseload_student_ids:
+                            matched = True
+                            break
             if not matched:
-                continue  # Skip — student not in teacher's roster
+                continue  # Skip — student not in the user's allowed roster
 
         # Check school access (school-level).  If permitted_schools is
         # None the user is truly unrestricted (already returned above).
@@ -794,6 +859,98 @@ def _apply_user_access_filter(rows, cols, user):
     return filtered, cols
 
 
+def _user_has_unrestricted_drill_access(user) -> bool:
+    """True when _apply_user_access_filter() would be a no-op."""
+    if not user:
+        return True
+    if getattr(user, 'is_superuser', False) or getattr(user, 'is_project_admin', False):
+        return True
+    try:
+        roles = [r.name for r in user.roles.all()]
+    except Exception:
+        return False
+    unrestricted = {'Project Admin', 'District Admin', 'District View'}
+    return any(name in unrestricted or 'District' in name for name in roles)
+
+
+def _drill_sql_string(value) -> str:
+    text = str(value).replace('\\', '\\\\').replace("'", "''")
+    return f"'{text}'"
+
+
+def _try_sql_dataset_filtered_fetch(chart, ds, drill_filters, user):
+    """Filter a custom-SQL dataset in ClickHouse before fetching rows.
+
+    SQL-backed datasets are otherwise fetched in full and filtered in Python.
+    That is prohibitively slow for large datasets such as iReady (~170k rows)
+    and is even worse for the long-format program datasets. This fast path is
+    limited to unrestricted users so row-level access control is never skipped.
+    Returns ``(rows, columns, error)`` or ``None`` to use the standard path.
+    """
+    if not _user_has_unrestricted_drill_access(user):
+        return None
+    if not getattr(ds, 'source_sql', ''):
+        return None
+    if (chart.config or {}).get('one_row_per_stu_annual_key'):
+        return None
+    if chart.chart_type in ('progress_growth', 'date_series', 'dynamic_summary_table'):
+        return None
+
+    mappings = ds.column_mappings or {}
+    alias_to_src = {}
+    for src, alias in mappings.items():
+        if isinstance(src, str) and isinstance(alias, str):
+            alias_to_src[alias] = src
+    for col in (ds.columns or []):
+        if isinstance(col, str):
+            alias_to_src.setdefault(col, col)
+
+    filters = dict(chart.source_filters or {})
+    filters.update(drill_filters or {})
+    if 'grade' in filters and 'grade_label' not in filters and 'grade_label' in alias_to_src:
+        filters['grade_label'] = filters.pop('grade')
+
+    conditions = []
+    for key, value in filters.items():
+        if not isinstance(key, str):
+            continue
+        src = alias_to_src.get(key)
+        if not src:
+            return None
+        if isinstance(value, dict):
+            return None
+        values = value if isinstance(value, (list, tuple, set)) else [value]
+        values = [str(v) for v in values if v is not None and str(v).strip() != '']
+        if not values:
+            continue
+        if any(v == '(Blank)' for v in values):
+            return None
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', src):
+            return None
+        literals = ', '.join(_drill_sql_string(v) for v in values)
+        conditions.append(f'__drill_src."{src}" IN ({literals})')
+
+    from dataviz.utils.compiler import apply_column_aliases, execute_compiled_query
+    from dataviz.utils.data_loader import resolve_sql_year_placeholders
+
+    source_sql, placeholder_err = resolve_sql_year_placeholders(ds.source_sql or '')
+    if placeholder_err or not source_sql.strip():
+        return None
+    source_sql = source_sql.strip().rstrip(';')
+    sql = f'SELECT * FROM ({source_sql}) AS __drill_src'
+    if conditions:
+        sql += ' WHERE ' + ' AND '.join(f'({c})' for c in conditions)
+    try:
+        result = execute_compiled_query(sql, [])
+    except Exception:
+        return None
+    if result.get('error'):
+        return None
+    rows = apply_column_aliases(result.get('rows') or [], mappings)
+    cols = list(rows[0].keys()) if rows else list(result.get('columns') or [])
+    return rows, cols, None
+
+
 @timed_fn('execute_drill_query')
 def execute_drill_query(
     chart,
@@ -807,6 +964,7 @@ def execute_drill_query(
     column_filters: dict | None = None,
     extra_columns: list | None = None,
     cursor: str | None = None,
+    export_all: bool = False,
 ) -> dict:
     """
     Run the chart's underlying query with drill_filters merged in.
@@ -906,7 +1064,7 @@ def execute_drill_query(
             pk=chart.source_id,
         ).values_list('source_type', flat=True).first() == _Dataset.SOURCE_SQL
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
-    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
+    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by) and not export_all
     if sql_paginate:
         _fetch_hash = f"{_fetch_hash}:p{page}:c{cursor or ''}:n{per_page}:s{sort_by}:{sort_dir}"
     updated_ts = int(chart.updated_at.timestamp())
@@ -963,20 +1121,24 @@ def execute_drill_query(
             one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
             if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
                 from dataviz.utils.compiler import load_dataset_result
-                # SQL-backed datasets are intentionally fetched without an
-                # application LIMIT: the authored SQL defines the source
-                # population, and drill filters must be applied to that full
-                # result before row pagination below.
-                ds_result = load_dataset_result(ds, apply_aliases=True, one_per_sak=one_per_sak)
-                error = ds_result.get('error')
-                if error:
-                    rows = []
-                    cols = []
+                fast = _try_sql_dataset_filtered_fetch(chart, ds, drill_filters, user)
+                if fast is not None:
+                    rows, cols, error = fast
                 else:
-                    rows = ds_result.get('rows', [])
-                    cols = list(rows[0].keys()) if rows else (ds_result.get('columns') or [])
-                    if user and rows:
-                        rows, cols = _apply_user_access_filter(rows, cols, user)
+                    # SQL-backed datasets are intentionally fetched without an
+                    # application LIMIT: the authored SQL defines the source
+                    # population, and drill filters must be applied to that full
+                    # result before row pagination below.
+                    ds_result = load_dataset_result(ds, apply_aliases=True, one_per_sak=one_per_sak)
+                    error = ds_result.get('error')
+                    if error:
+                        rows = []
+                        cols = []
+                    else:
+                        rows = ds_result.get('rows', [])
+                        cols = list(rows[0].keys()) if rows else (ds_result.get('columns') or [])
+                        if user and rows:
+                            rows, cols = _apply_user_access_filter(rows, cols, user)
             else:
                 merged_filters = dict(chart.source_filters or {})
                 merged_filters.update(drill_filters)
@@ -1507,7 +1669,10 @@ def execute_drill_query(
     all_columns = [c for c in all_columns if c.split('.')[-1] != 'stu_annual_key']
 
     total = sql_total_rows if sql_total_rows is not None else len(rows)
-    if sql_total_rows is not None:
+    if export_all:
+        paged = rows
+        total = len(rows)
+    elif sql_total_rows is not None:
         paged = rows
     else:
         start = (page - 1) * per_page

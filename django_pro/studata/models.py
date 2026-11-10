@@ -315,6 +315,37 @@ class TeacherAccess(models.Model):
         return f"{self.access_id} - {self.staff_name} - {self.student_id}"
 
 
+class CounselorAssignment(models.Model):
+    """Read-only counselor caseload rows (``counselor_assigments`` table, ETL-owned).
+
+    One row per student/counselor/school-year assignment. The table name keeps
+    the ETL spelling intentionally so the ORM maps to the existing table.
+    """
+
+    assignment_row_key = models.CharField(max_length=64, primary_key=True)
+    school_year_number = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    school_year = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    student_id = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    ssid = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    student_last_name = models.CharField(max_length=255, blank=True, null=True)
+    student_first_name = models.CharField(max_length=255, blank=True, null=True)
+    student_middle_name = models.CharField(max_length=255, blank=True, null=True)
+    school_name = models.CharField(max_length=255, blank=True, null=True)
+    grade = models.CharField(max_length=50, blank=True, null=True)
+    counselor_name = models.CharField(max_length=255, blank=True, null=True)
+    counselor_email = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+
+    class Meta:
+        db_table = 'counselor_assigments'
+        managed = False
+        verbose_name = 'Counselor Assignment'
+        verbose_name_plural = 'Counselor Assignments'
+        ordering = ['-school_year_number', 'counselor_name', 'student_last_name', 'student_first_name']
+
+    def __str__(self):
+        return f"{self.student_first_name or ''} {self.student_last_name or ''} → {self.counselor_name or self.counselor_email or ''}"
+
+
 class StudentRpc(models.Model):
     """Read-only per-student record/transcript row (``student_rpc`` table, ETL-owned).
 

@@ -3,24 +3,59 @@
 
 {% block content %}
 {% include "dataviz/submenu.html" %}
-<div class="w-full px-4 sm:px-6 lg:px-8 py-10">
-    <!-- Header -->
-    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+<div class="w-full px-4 sm:px-6 lg:px-8 py-10" id="dataset-index">
+    <div class="mb-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
             <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Visual Datasets</h1>
-            <p class="mt-1 text-sm text-slate-500">Build datasets from visual joins or custom SQL queries to feed chart visuals.</p>
+            <p class="mt-1 text-sm text-slate-500">Organize datasets in folders (e.g. <span class="font-mono text-slate-600">DESI / Student Supports</span>). {{ total_count }} total.</p>
         </div>
-        <div class="mt-4 sm:mt-0 flex flex-wrap gap-2">
-            <a href="{% url 'dataviz:dataset_new' %}?mode=sql" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition duration-300">
+        <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="openCreateFolderModal()"
+                    class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 transition">
+                New Folder
+            </button>
+            <a href="{% url 'dataviz:dataset_new' %}?mode=sql{% if current_path %}&amp;folder={{ current_path|urlencode }}{% endif %}"
+               class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 transition">
                 + SQL Dataset
             </a>
-            <a href="{% url 'dataviz:dataset_new' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300">
+            <a href="{% url 'dataviz:dataset_new' %}{% if current_path %}?folder={{ current_path|urlencode }}{% endif %}"
+               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 transition">
                 + Visual Dataset
             </a>
         </div>
     </div>
 
-    <!-- Datasets Table -->
+    <div class="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <a href="{% url 'dataviz:dataset_index' %}" class="hover:text-blue-600 font-semibold">Root</a>
+        {% for crumb in breadcrumbs %}
+        <span class="text-slate-300">/</span>
+        <a href="?folder={{ crumb.path|urlencode }}" class="hover:text-blue-600 truncate">{{ crumb.name }}</a>
+        {% endfor %}
+        {% if current_folder_label %}
+        <span class="ml-2 px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-bold uppercase tracking-wider">{{ current_folder_label }}</span>
+        {% endif %}
+    </div>
+
+    {% if subfolder_items %}
+    <div class="mb-8">
+        <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-3">Folders</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+            {% for item in subfolder_items %}
+            <div class="group relative flex flex-col items-center p-4 bg-white border border-slate-200 rounded-lg hover:border-blue-300 hover:shadow-md transition cursor-pointer"
+                 onclick="window.location.href='?folder={{ item.url_path|urlencode }}'">
+                <button type="button" class="absolute top-2 right-2 text-slate-300 hover:text-slate-600 text-lg leading-none opacity-0 group-hover:opacity-100"
+                        onclick="event.stopPropagation(); openFolderMenu('{{ item.full_path|escapejs }}', '{{ item.name|escapejs }}', {{ item.dataset_count }})">⋯</button>
+                <svg class="w-9 h-9 text-blue-400" fill="currentColor" viewBox="0 0 24 24"><path d="M20 18H4V8h16v10zm0-12h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
+                <span class="mt-2 text-xs font-semibold text-slate-700 text-center truncate w-full">{{ item.name }}</span>
+                {% if item.dataset_count %}
+                <span class="text-[10px] text-slate-400 tabular-nums">{{ item.dataset_count }} dataset{{ item.dataset_count|pluralize }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <div class="bg-white border border-slate-200 shadow rounded-none overflow-x-auto">
         {% if datasets %}
         <table class="min-w-full divide-y divide-slate-200">
@@ -30,23 +65,18 @@
                     <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Base Table</th>
                     <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Joins</th>
                     <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Created By</th>
-                    <th scope="col" class="px-6 py-3 class=text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Last Modified</th>
-                    <th scope="col" class="relative px-6 py-3">
-                        <span class="sr-only">Actions</span>
-                    </th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Last Modified</th>
+                    <th scope="col" class="relative px-6 py-3"><span class="sr-only">Actions</span></th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-slate-200" x-data="{ expandedId: null }">
                 {% for ds in datasets %}
-                <tr class="hover:bg-slate-50 transition cursor-pointer" @click="expandedId = expandedId === {{ ds.pk }} ? null : {{ ds.pk }}">
+                <tr class="hover:bg-slate-50 transition">
                     <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="flex items-center space-x-2">
-                           <svg class="w-4 h-4 text-slate-400 transition-transform duration-200" :class="{'rotate-90': expandedId === {{ ds.pk }}}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                           <div>
-                                <div class="text-sm font-bold text-slate-900">{{ ds.name }}</div>
-                                <div class="text-xs text-slate-500">{{ ds.description|truncatechars:50 }}</div>
-                           </div>
-                        </div>
+                        <h3 class="text-sm font-bold text-slate-900">
+                            <button type="button" class="text-left hover:text-blue-700" @click="expandedId = expandedId === {{ ds.pk }} ? null : {{ ds.pk }}">{{ ds.name }}</button>
+                        </h3>
+                        <div class="text-xs text-slate-500">{{ ds.description|truncatechars:50 }}</div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap">
                         <span class="inline-flex items-center px-2 py-0.5 rounded-none text-xs font-semibold border {% if ds.source_type == 'sql' %}bg-indigo-50 text-indigo-800 border-indigo-200{% else %}bg-slate-100 text-slate-800 border-slate-200{% endif %}">
@@ -56,14 +86,12 @@
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                         {% if ds.source_type == 'sql' %}—{% else %}{{ ds.joins|length }} Joins{% endif %}
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                        {{ ds.owner.name|default:ds.owner.email }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                        {{ ds.updated_at|date:"M d, Y H:i" }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" @click.stop>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{{ ds.owner.name|default:ds.owner.email }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{{ ds.updated_at|date:"M d, Y H:i" }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex justify-end space-x-3 items-center">
+                            <button type="button" class="text-slate-600 hover:text-slate-900 font-semibold"
+                                    onclick="openMoveModal({{ ds.pk }}, '{{ ds.name|escapejs }}')">Move</button>
                             <button hx-post="{% url 'dataviz:dataset_duplicate' ds.pk %}"
                                     hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                                     class="text-green-600 hover:text-green-900 font-semibold transition"
@@ -83,28 +111,24 @@
                             <strong class="text-slate-800">Impact Analysis:</strong>
                             <div class="mt-2 flex flex-col sm:flex-row sm:space-x-12 space-y-4 sm:space-y-0">
                                 <div>
-                                    <h4 class="font-semibold text-slate-600 mb-1">Charts using this Dataset ({{ ds.usage_charts|length }})</h4>
+                                    <h4 class="font-semibold text-slate-600 mb-1">Charts ({{ ds.usage_charts|length }})</h4>
                                     {% if ds.usage_charts %}
-                                        <ul class="list-disc pl-5 space-y-1">
+                                    <ul class="list-disc pl-5 space-y-1">
                                         {% for c in ds.usage_charts %}
-                                            <li><a href="{% url 'dataviz:chart_edit' c.id %}" target="_blank" class="text-blue-600 hover:underline">{{ c.name }}</a></li>
+                                        <li><a href="{% url 'dataviz:chart_edit' c.id %}" target="_blank" class="text-blue-600 hover:underline">{{ c.name }}</a></li>
                                         {% endfor %}
-                                        </ul>
-                                    {% else %}
-                                        <span class="text-slate-400 text-xs">No charts attached</span>
-                                    {% endif %}
+                                    </ul>
+                                    {% else %}<span class="text-slate-400 text-xs">None</span>{% endif %}
                                 </div>
                                 <div>
-                                    <h4 class="font-semibold text-slate-600 mb-1">Pages displaying this Dataset ({{ ds.usage_pages|length }})</h4>
+                                    <h4 class="font-semibold text-slate-600 mb-1">Pages ({{ ds.usage_pages|length }})</h4>
                                     {% if ds.usage_pages %}
-                                        <ul class="list-disc pl-5 space-y-1">
+                                    <ul class="list-disc pl-5 space-y-1">
                                         {% for p in ds.usage_pages %}
-                                            <li><a href="{% url 'dataviz:page_edit' p.slug %}" target="_blank" class="text-blue-600 hover:underline">{{ p.title }}</a></li>
+                                        <li><a href="{% url 'dataviz:page_edit' p.slug %}" target="_blank" class="text-blue-600 hover:underline">{{ p.title }}</a></li>
                                         {% endfor %}
-                                        </ul>
-                                    {% else %}
-                                        <span class="text-slate-400 text-xs">No pages attached</span>
-                                    {% endif %}
+                                    </ul>
+                                    {% else %}<span class="text-slate-400 text-xs">None</span>{% endif %}
                                 </div>
                             </div>
                         </div>
@@ -113,20 +137,156 @@
                 {% endfor %}
             </tbody>
         </table>
-        {% else %}
+        {% elif not subfolder_items %}
         <div class="text-center py-12">
-            <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m-9 1V4a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-            </svg>
-            <h3 class="mt-2 text-sm font-bold text-slate-900">No Datasets</h3>
-            <p class="mt-1 text-sm text-slate-500">Get started by creating a new database query configuration.</p>
-            <div class="mt-6">
-            <a href="{% url 'dataviz:dataset_new' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none transition">
-                    + Build Dataset
-                </a>
-            </div>
+            <h3 class="text-sm font-bold text-slate-900">No datasets{% if current_folder_label %} in this folder{% endif %}</h3>
+            <p class="mt-1 text-sm text-slate-500">Create a dataset or add a subfolder to get started.</p>
         </div>
+        {% else %}
+        <div class="text-center py-8 text-sm text-slate-500">No datasets in this folder — open a subfolder or create one here.</div>
         {% endif %}
     </div>
 </div>
+
+<!-- Create folder -->
+<div id="create-folder-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+    <div class="bg-white w-full max-w-md border border-slate-200 shadow-xl p-6">
+        <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">New Folder</h3>
+        <p class="mt-1 text-xs text-slate-500">Nested paths use <span class="font-mono">DESI / Reports</span>.</p>
+        <input type="text" id="create-folder-input" class="mt-4 w-full border border-slate-300 text-sm py-2 px-3"
+               placeholder="{% if current_folder_label %}{{ current_folder_label }} / {% endif %}Subfolder">
+        <div class="mt-4 flex justify-end gap-2">
+            <button type="button" onclick="closeModals()" class="px-4 py-2 text-xs font-semibold text-slate-600 border border-slate-300">Cancel</button>
+            <button type="button" onclick="submitCreateFolder()" class="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- Move dataset -->
+<div id="move-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+    <div class="bg-white w-full max-w-md border border-slate-200 shadow-xl p-6">
+        <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Move Dataset</h3>
+        <p id="move-modal-subtitle" class="mt-1 text-xs text-slate-500"></p>
+        <input type="text" id="move-folder-input" list="folder-datalist" class="mt-4 w-full border border-slate-300 text-sm py-2 px-3" placeholder="Folder path or leave empty for Root">
+        <datalist id="folder-datalist"></datalist>
+        <div class="mt-4 flex justify-end gap-2">
+            <button type="button" onclick="closeModals()" class="px-4 py-2 text-xs font-semibold text-slate-600 border border-slate-300">Cancel</button>
+            <button type="button" onclick="submitMove()" class="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700">Move</button>
+        </div>
+    </div>
+</div>
+
+<!-- Folder actions -->
+<div id="folder-action-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+    <div class="bg-white w-full max-w-md border border-slate-200 shadow-xl p-6">
+        <h3 id="folder-action-title" class="text-sm font-bold text-slate-900"></h3>
+        <div class="mt-4 space-y-2">
+            <button type="button" id="folder-rename-btn" class="w-full text-left px-3 py-2 text-sm border border-slate-200 hover:bg-slate-50">Rename folder</button>
+            <button type="button" id="folder-delete-btn" class="w-full text-left px-3 py-2 text-sm border border-red-200 text-red-700 hover:bg-red-50">Delete folder and datasets inside</button>
+        </div>
+        <button type="button" onclick="closeModals()" class="mt-4 w-full px-4 py-2 text-xs font-semibold text-slate-600 border border-slate-300">Close</button>
+    </div>
+</div>
+
+<script>
+const CSRF = '{{ csrf_token }}';
+const ALL_FOLDERS = {{ all_folders_json|safe }};
+const CURRENT_FOLDER = "{{ current_folder_label|escapejs }}";
+let _moveDatasetId = null;
+let _folderActionPath = '';
+
+function populateFolderDatalist() {
+    const dl = document.getElementById('folder-datalist');
+    if (!dl) return;
+    dl.innerHTML = '';
+    ALL_FOLDERS.forEach(function(path) {
+        const opt = document.createElement('option');
+        opt.value = path;
+        dl.appendChild(opt);
+    });
+}
+
+function closeModals() {
+    ['create-folder-modal', 'move-modal', 'folder-action-modal'].forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+}
+
+function openCreateFolderModal() {
+    const input = document.getElementById('create-folder-input');
+    input.value = CURRENT_FOLDER ? (CURRENT_FOLDER + ' / ') : '';
+    document.getElementById('create-folder-modal').classList.remove('hidden');
+    input.focus();
+}
+
+function openMoveModal(id, name) {
+    _moveDatasetId = id;
+    document.getElementById('move-modal-subtitle').textContent = name;
+    document.getElementById('move-folder-input').value = CURRENT_FOLDER;
+    document.getElementById('move-modal').classList.remove('hidden');
+    populateFolderDatalist();
+}
+
+function openFolderMenu(fullPath, name, count) {
+    _folderActionPath = fullPath;
+    document.getElementById('folder-action-title').textContent = name;
+    document.getElementById('folder-action-modal').classList.remove('hidden');
+    document.getElementById('folder-rename-btn').onclick = function() {
+        const leaf = prompt('New folder name (single segment, no /):', name);
+        if (!leaf || leaf.indexOf('/') >= 0) return;
+        fetch("{% url 'dataviz:dataset_folder_rename' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ folder: fullPath, name: leaf }),
+        }).then(r => r.json()).then(function(res) {
+            if (res.success) window.location.reload();
+            else alert(res.error || 'Rename failed');
+        });
+    };
+    document.getElementById('folder-delete-btn').onclick = function() {
+        if (!confirm('Delete folder "' + name + '" and all ' + count + ' dataset(s) inside? This cannot be undone.')) return;
+        fetch("{% url 'dataviz:dataset_folder_delete' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ folder: fullPath }),
+        }).then(r => r.json()).then(function(res) {
+            if (res.success) window.location.reload();
+            else alert(res.error || 'Delete failed');
+        });
+    };
+}
+
+function submitCreateFolder() {
+    const path = document.getElementById('create-folder-input').value.trim();
+    if (!path) return;
+    fetch("{% url 'dataviz:dataset_folder_create' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ folder: path }),
+    }).then(r => r.json()).then(function(res) {
+        if (res.success) {
+            const urlPath = (res.folder || path).split(' / ').map(encodeURIComponent).join('/');
+            window.location.href = '?folder=' + urlPath;
+        } else {
+            alert(res.error || 'Could not create folder');
+        }
+    });
+}
+
+function submitMove() {
+    if (!_moveDatasetId) return;
+    const folder = document.getElementById('move-folder-input').value.trim();
+    fetch("{% url 'dataviz:dataset_move' dataset_id=999999 %}".replace('999999', String(_moveDatasetId)), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ folder: folder }),
+    }).then(r => r.json()).then(function(res) {
+        if (res.success) window.location.reload();
+        else alert(res.error || 'Move failed');
+    });
+}
+
+document.addEventListener('DOMContentLoaded', populateFolderDatalist);
+</script>
 {% endblock %}

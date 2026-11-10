@@ -42,6 +42,7 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'results_with_tests', 'student_marks_list', 'nextyearlist_placement',
     'school', 'schedule_list', 'relative_year', 'mathr_recommendation',
     'student_attendance', 'student_incidents', 'analytics_student_incidents',
+    'analytics_student_attendance_weekly',
     'analytics_student_profile', 'analytics_student_results',
     'analytics_student_marks',     'analytics_ap_results', 'analytics_ap_awards',
     'analytics_sat_results', 'analytics_ib_results',

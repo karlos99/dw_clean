@@ -1091,74 +1091,74 @@
         <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-4 border-t border-slate-50">
 
           {# ── Chart Blueprint & Role Impact Guide (Top Banner) ── #}
-          <div class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-3.5 shadow-sm border border-slate-800 space-y-3">
+          <div class="bg-gradient-to-br from-indigo-50 via-white to-slate-50 text-slate-900 rounded-xl p-3.5 shadow-xs border border-slate-200 space-y-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="w-6 h-6 rounded-md bg-indigo-500/25 border border-indigo-400/30 flex items-center justify-center text-indigo-300 text-xs">
+                <span class="w-6 h-6 rounded-md bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 text-xs">
                   📊
                 </span>
                 <div>
-                  <span class="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block leading-tight">Mapping Impact Guide</span>
-                  <h4 class="text-xs font-semibold text-white leading-tight" x-text="CHART_NAMES[chartType] || chartType"></h4>
+                  <span class="text-[9px] font-bold uppercase tracking-wider text-indigo-600 block leading-tight">Mapping Impact Guide</span>
+                  <h4 class="text-xs font-semibold text-slate-900 leading-tight" x-text="CHART_NAMES[chartType] || chartType"></h4>
                 </div>
               </div>
-              <span class="text-[9px] bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 rounded-full px-2 py-0.5 truncate max-w-[200px]"
+              <span class="text-[9px] bg-white text-indigo-700 border border-indigo-200 rounded-full px-2 py-0.5 truncate max-w-[200px]"
                     x-text="meta.hint || ''"></span>
             </div>
 
             <!-- Role Impact Grid -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 border-t border-slate-800/80">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 border-t border-slate-200">
               <!-- Category (X) -->
-              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.x?.hide">
+              <div class="bg-white rounded-lg p-2 border border-slate-200 shadow-xs" x-show="!meta.x?.hide">
                 <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-3.5 h-3.5 rounded bg-indigo-400/20 text-indigo-300 text-[9px] font-bold flex items-center justify-center">X</span>
-                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.x?.lbl || 'Category Axis'"></span>
+                  <span class="w-3.5 h-3.5 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold flex items-center justify-center">X</span>
+                  <span class="text-[10px] font-semibold text-slate-600 truncate" x-text="meta.x?.lbl || 'Category Axis'"></span>
                 </div>
-                <div class="text-[11px] font-medium truncate" :class="xCols.length ? 'text-indigo-300 font-semibold' : 'text-slate-400 italic'"
+                <div class="text-[11px] font-medium truncate" :class="xCols.length ? 'text-indigo-700 font-semibold' : 'text-slate-400 italic'"
                      x-text="xCols.length ? xCols.map(c => colLabel(c)).join(' / ') : 'Not selected'"></div>
-                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Horizontal axis items</p>
+                <p class="text-[9px] text-slate-500 mt-0.5 leading-tight">Horizontal axis items</p>
               </div>
 
               <!-- Metric (Y) -->
-              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.y?.hide">
+              <div class="bg-white rounded-lg p-2 border border-slate-200 shadow-xs" x-show="!meta.y?.hide">
                 <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-3.5 h-3.5 rounded bg-emerald-400/20 text-emerald-300 text-[9px] font-bold flex items-center justify-center">Y</span>
-                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.y?.lbl || 'Value Axis'"></span>
+                  <span class="w-3.5 h-3.5 rounded bg-emerald-100 text-emerald-700 text-[9px] font-bold flex items-center justify-center">Y</span>
+                  <span class="text-[10px] font-semibold text-slate-600 truncate" x-text="meta.y?.lbl || 'Value Axis'"></span>
                 </div>
-                <div class="text-[11px] font-medium truncate" :class="yCol ? 'text-emerald-300 font-semibold' : 'text-slate-300'"
+                <div class="text-[11px] font-medium truncate" :class="yCol ? 'text-emerald-700 font-semibold' : 'text-slate-500'"
                      x-text="yCol ? (aggFunc.toUpperCase() + '(' + colLabel(yCol) + ')') : ('Count of rows')"></div>
-                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Controls height / size</p>
+                <p class="text-[9px] text-slate-500 mt-0.5 leading-tight">Controls height / size</p>
               </div>
 
               <!-- Series (S) -->
-              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.s?.hide">
+              <div class="bg-white rounded-lg p-2 border border-slate-200 shadow-xs" x-show="!meta.s?.hide">
                 <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-3.5 h-3.5 rounded bg-purple-400/20 text-purple-300 text-[9px] font-bold flex items-center justify-center">S</span>
-                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.s?.lbl || 'Series / Split'"></span>
+                  <span class="w-3.5 h-3.5 rounded bg-purple-100 text-purple-700 text-[9px] font-bold flex items-center justify-center">S</span>
+                  <span class="text-[10px] font-semibold text-slate-600 truncate" x-text="meta.s?.lbl || 'Series / Split'"></span>
                 </div>
-                <div class="text-[11px] font-medium truncate" :class="seriesCols.length ? 'text-purple-300 font-semibold' : 'text-slate-400 italic'"
+                <div class="text-[11px] font-medium truncate" :class="seriesCols.length ? 'text-purple-700 font-semibold' : 'text-slate-400 italic'"
                      x-text="seriesCols.length ? seriesCols.map(c => colLabel(c)).join(', ') : 'Single Series'"></div>
-                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Color division (stack/group)</p>
+                <p class="text-[9px] text-slate-500 mt-0.5 leading-tight">Color division (stack/group)</p>
               </div>
 
               <!-- Group (G) -->
-              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length">
+              <div class="bg-white rounded-lg p-2 border border-slate-200 shadow-xs" x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length">
                 <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-3.5 h-3.5 rounded bg-amber-400/20 text-amber-300 text-[9px] font-bold flex items-center justify-center">G</span>
-                  <span class="text-[10px] font-semibold text-slate-300 truncate">Group By</span>
+                  <span class="w-3.5 h-3.5 rounded bg-amber-100 text-amber-700 text-[9px] font-bold flex items-center justify-center">G</span>
+                  <span class="text-[10px] font-semibold text-slate-600 truncate">Group By</span>
                 </div>
-                <div class="text-[11px] font-medium truncate" :class="groupCol ? 'text-amber-300 font-semibold' : 'text-slate-400 italic'"
+                <div class="text-[11px] font-medium truncate" :class="groupCol ? 'text-amber-700 font-semibold' : 'text-slate-400 italic'"
                      x-text="groupCol ? colLabel(groupCol) : 'None'"></div>
-                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Clusters bars side-by-side</p>
+                <p class="text-[9px] text-slate-500 mt-0.5 leading-tight">Clusters bars side-by-side</p>
               </div>
             </div>
 
             <!-- Live Natural Language Summary -->
-            <div class="pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-slate-300 leading-snug">
-              <span class="text-indigo-400 font-bold shrink-0">💡</span>
+            <div class="pt-2 border-t border-slate-200 flex items-start gap-1.5 text-[11px] text-slate-600 leading-snug">
+              <span class="text-indigo-500 font-bold shrink-0">💡</span>
               <p>
-                Plotting <span class="text-emerald-300 font-semibold" x-text="yCol ? (aggFunc.toUpperCase() + ' of ' + colLabel(yCol)) : ('total record count')"></span>
-                across <span class="text-indigo-300 font-semibold" x-text="xCols.length ? xCols.map(c => colLabel(c)).join(' / ') : 'selected categories'"></span><template x-if="seriesCols.length"><span>, broken down by <span class="text-purple-300 font-semibold" x-text="seriesCols.map(c => colLabel(c)).join(', ')"></span></span></template><template x-if="groupCol"><span>, clustered by <span class="text-amber-300 font-semibold" x-text="colLabel(groupCol)"></span></span></template>.
+                Plotting <span class="text-emerald-700 font-semibold" x-text="yCol ? (aggFunc.toUpperCase() + ' of ' + colLabel(yCol)) : ('total record count')"></span>
+                across <span class="text-indigo-700 font-semibold" x-text="xCols.length ? xCols.map(c => colLabel(c)).join(' / ') : 'selected categories'"></span><template x-if="seriesCols.length"><span>, broken down by <span class="text-purple-700 font-semibold" x-text="seriesCols.map(c => colLabel(c)).join(', ')"></span></span></template><template x-if="groupCol"><span>, clustered by <span class="text-amber-700 font-semibold" x-text="colLabel(groupCol)"></span></span></template>.
               </p>
             </div>
           </div>
@@ -4220,7 +4220,7 @@ function chartBuilder() {
     colorMapSaveAsName:  '',
     colorMapPresetsLoaded: false,
     /* Element toggles */
-    showZoom:         existing ? (existing.config?.show_zoom !== false) : true,
+    showZoom:         existing ? (existing.config?.show_zoom === true) : false,
     showToolbox:      existing ? (existing.config?.show_toolbox !== false) : true,
     showGrid:         existing ? (existing.config?.show_grid !== false) : true,
     showAxisLabels:   existing ? (existing.config?.show_axis_labels !== false) : true,

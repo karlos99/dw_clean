@@ -53,6 +53,14 @@ from .dataset_views import (
     dataset_export_csv_api, dataloader_links_catalog_api, dataloader_links_preview_api,
     dataset_data_preview_api,
 )
+from .api.dataset_folder_api import (
+    dataset_folders_list_api,
+    dataset_folder_create_api,
+    dataset_folder_rename_api,
+    dataset_folder_delete_api,
+    dataset_move_api,
+    dataset_batch_move_api,
+)
 from .api.colormap_api import (
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
 )
@@ -74,6 +82,7 @@ __all__ = [
     'drill_rows_api', 'drill_columns_api', 'drill_filter_values_api',
     'drill_export_csv_api', 'drill_available_columns_api',
     'dataset_save_api', 'dataset_detail_api', 'dataset_list_api', 'dataset_preview_api', 'api_column_unique_values', 'dataset_filter_options_api', 'dataset_duplicate_api', 'dataset_export_csv_api', 'dataloader_links_catalog_api', 'dataloader_links_preview_api', 'dataset_data_preview_api',
+    'dataset_folders_list_api', 'dataset_folder_create_api', 'dataset_folder_rename_api', 'dataset_folder_delete_api', 'dataset_move_api', 'dataset_batch_move_api',
     'colormap_preset_save_api', 'colormap_preset_detail_api', 'colormap_preset_list_api',
     'home_dashboard_api',
 ]

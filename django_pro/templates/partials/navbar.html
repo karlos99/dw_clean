@@ -111,12 +111,12 @@
                 {% endif %}
 
                 <!-- Context Switcher -->
-                {% if user.roles.count >= 2 %}
+                {% if user.roles.count >= 2 or user.counselor_caseload_available %}
                 <div class="h-4 w-px bg-slate-700"></div>
                 <div class="relative" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
                     <button @click="open = !open" class="flex items-center gap-1.5 py-2 text-xs font-medium uppercase tracking-widest text-slate-400 hover:text-white transition focus:outline-none">
                         <span class="truncate max-w-[200px]">
-                            {% if user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
+                            {% if user.active_caseload %}My Caseload{% elif user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
                         </span>
                         <svg class="h-3 w-3 transition-transform duration-200" :class="open && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
@@ -130,11 +130,19 @@
                             {% for role in user.roles.all %}
                             <form method="POST" action="{% url 'users:switch_role' %}">
                                 {% csrf_token %}
-                                <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition {% if user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
+                                <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition {% if not user.active_caseload and user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
                                     {{ role.name }}
                                 </button>
                             </form>
                             {% endfor %}
+                            {% if user.counselor_caseload_available %}
+                            <form method="POST" action="{% url 'users:switch_role' %}">
+                                {% csrf_token %}
+                                <button type="submit" name="role_id" value="caseload" class="w-full text-left px-4 py-2.5 text-xs uppercase tracking-wider text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition border-t border-slate-100 {% if user.active_caseload %}font-bold{% endif %}">
+                                    My Caseload
+                                </button>
+                            </form>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -426,17 +434,25 @@
             </div>
             {% endif %}
 
-            {% if user.roles.count >= 2 %}
+            {% if user.roles.count >= 2 or user.counselor_caseload_available %}
             <div class="pt-2 mt-2 border-t border-slate-800">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1 px-1">Switch Role</p>
                 {% for role in user.roles.all %}
                 <form method="POST" action="{% url 'users:switch_role' %}">
                     {% csrf_token %}
-                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-xs uppercase tracking-wider text-slate-400 hover:text-blue-400 {% if user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
+                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-xs uppercase tracking-wider text-slate-400 hover:text-blue-400 {% if not user.active_caseload and user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
                         {{ role.name }}
                     </button>
                 </form>
                 {% endfor %}
+                {% if user.counselor_caseload_available %}
+                <form method="POST" action="{% url 'users:switch_role' %}">
+                    {% csrf_token %}
+                    <button type="submit" name="role_id" value="caseload" class="w-full text-left py-2 text-xs uppercase tracking-wider text-rose-400 hover:text-rose-300 {% if user.active_caseload %}text-rose-400 font-bold{% endif %}">
+                        My Caseload
+                    </button>
+                </form>
+                {% endif %}
             </div>
             {% endif %}
 
@@ -597,12 +613,12 @@
                 {% endif %}
 
                 <!-- Context Switcher -->
-                {% if user.roles.count >= 2 %}
+                {% if user.roles.count >= 2 or user.counselor_caseload_available %}
                 <div class="h-4 w-px bg-slate-700"></div>
                 <div class="relative" x-data="{ open: false }">
                     <button @click="open = !open" :class="navLabelClass()" class="flex items-center gap-1 px-3 py-2 text-slate-400 hover:text-white transition rounded-md focus:outline-none">
                         <span class="truncate max-w-[200px]">
-                            {% if user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
+                            {% if user.active_caseload %}My Caseload{% elif user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
                         </span>
                         <svg class="h-3 w-3 transition-transform duration-200" :class="open && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
@@ -616,11 +632,19 @@
                             {% for role in user.roles.all %}
                             <form method="POST" action="{% url 'users:switch_role' %}">
                                 {% csrf_token %}
-                                <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition {% if user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
+                                <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition {% if not user.active_caseload and user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
                                     {{ role.name }}
                                 </button>
                             </form>
                             {% endfor %}
+                            {% if user.counselor_caseload_available %}
+                            <form method="POST" action="{% url 'users:switch_role' %}">
+                                {% csrf_token %}
+                                <button type="submit" name="role_id" value="caseload" class="w-full text-left px-4 py-2 text-sm text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition border-t border-slate-100 {% if user.active_caseload %}font-bold{% endif %}">
+                                    My Caseload
+                                </button>
+                            </form>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -928,17 +952,25 @@
             </div>
             {% endif %}
 
-            {% if user.roles.count >= 2 %}
+            {% if user.roles.count >= 2 or user.counselor_caseload_available %}
             <div class="pt-2 mt-2 border-t border-slate-800">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1 px-1">Switch Role</p>
                 {% for role in user.roles.all %}
                 <form method="POST" action="{% url 'users:switch_role' %}">
                     {% csrf_token %}
-                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-sm text-slate-400 hover:text-blue-400 {% if user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
+                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-sm text-slate-400 hover:text-blue-400 {% if not user.active_caseload and user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
                         {{ role.name }}
                     </button>
                 </form>
                 {% endfor %}
+                {% if user.counselor_caseload_available %}
+                <form method="POST" action="{% url 'users:switch_role' %}">
+                    {% csrf_token %}
+                    <button type="submit" name="role_id" value="caseload" class="w-full text-left py-2 text-sm text-rose-400 hover:text-rose-300 {% if user.active_caseload %}text-rose-400 font-bold{% endif %}">
+                        My Caseload
+                    </button>
+                </form>
+                {% endif %}
             </div>
             {% endif %}
 

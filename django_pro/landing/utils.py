@@ -43,6 +43,7 @@ SUMMARY_SECTION_FIELDS = {
     'on_track': 'summary_show_on_track',
     'cte': 'summary_show_cte',
     'behavior': 'summary_show_behavior',
+    'attendance': 'summary_show_attendance',
     'recognition': 'summary_show_recognition',
     'flags': 'summary_show_flags',
 }

@@ -41,6 +41,21 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIsNotNone(result)
         self.assertIsNone(compile_sql.call_args.kwargs['limit'])
 
+    def test_caseload_access_filter_uses_ssid_for_results_dataset(self):
+        from dataviz.utils.compiler import _append_student_access_filter
+
+        user = SimpleNamespace(
+            active_caseload=True,
+            get_accessible_student_keys=lambda: ['key-1'],
+            get_counselor_caseload_identifiers=lambda: (['SSID-1'], ['LOCAL-1']),
+        )
+
+        where, params = [], []
+        _append_student_access_filter(where, params, user, {'results'})
+
+        self.assertEqual(where, ['"results"."ssid" = ANY(%s)'])
+        self.assertEqual(params, [['SSID-1']])
+
     @patch('dataviz.utils.status_filter.prepare_interactive_filters', return_value=({}, None))
     @patch('dataviz.utils.compiler.execute_compiled_query', return_value={
         'columns': ['grade', '__dv_value'], 'rows': [], 'error': None,
@@ -2095,6 +2110,24 @@ class DrillThroughResultAlignmentTests(TestCase):
         self.assertEqual(lines[0], 'Grade,Student Name')
         self.assertEqual(lines[1], '"5","Alice"')
 
+    @patch('dataviz.views.api.drill_api.execute_drill_query')
+    def test_drill_export_csv_fetches_all_rows_not_cache(self, mock_exec):
+        mock_exec.return_value = {
+            'rows': [
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5'},
+                {'ssid': '456', 'student_name': 'Bob', 'grade': '6'},
+            ],
+            'columns': ['grade', 'student_name'],
+        }
+        self.client.force_login(self.user)
+        response = self.client.get(f'/dataviz/api/drill/{self.chart.id}/export-csv/')
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode('utf-8')
+        lines = content.strip().split('\n')
+        self.assertEqual(len(lines), 3)
+        mock_exec.assert_called_once()
+        self.assertTrue(mock_exec.call_args.kwargs.get('export_all'))
+
 
 class GetAllAvailableColumnsTests(TestCase):
     def setUp(self):
@@ -2737,6 +2770,41 @@ class GroupTotalOptionTests(SimpleTestCase):
         self.assertNotIn('Total', opt['__category_names__'])
 
 
+class UniqueStudentShareOptionTests(SimpleTestCase):
+    def test_absence_level_percent_uses_unique_ssid_over_total(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'absence_category': 'No Absence', 'absence_pct': 0},
+            {'ssid': '1', 'absence_category': 'No Absence', 'absence_pct': 0},
+            {'ssid': '2', 'absence_category': 'Moderate Absence', 'absence_pct': 3},
+            {'ssid': '3', 'absence_category': 'Moderate Absence', 'absence_pct': 4},
+            {'ssid': '4', 'absence_category': 'Chronic Absence', 'absence_pct': 12},
+        ]
+        opt = build_option(rows, {'ssid': 'Students'}, {
+            'chart_type': 'bar',
+            'x_col': 'absence_category',
+            'y_col': 'absence_pct',
+            'agg': 'sum',
+            'show_percent': True,
+            'student_share_percent': True,
+            'category_order': [
+                'No Absence', 'Moderate Absence', 'High Absence', 'Chronic Absence',
+            ],
+            'sort_col': '__manual__',
+        })
+        cats = opt['__category_names__']
+        data = opt['series'][0]['data']
+        values = [
+            item['value'] if isinstance(item, dict) else item for item in data
+        ]
+        by_cat = dict(zip(cats, values))
+        self.assertEqual(by_cat['No Absence'], 25.0)
+        self.assertEqual(by_cat['Moderate Absence'], 50.0)
+        self.assertEqual(by_cat['Chronic Absence'], 25.0)
+        self.assertLessEqual(max(values), 100)
+
+
 class DateSeriesOptionTests(SimpleTestCase):
     def test_basic_count_line_per_date(self):
         from dataviz.utils.chart_builder import build_option
@@ -3317,6 +3385,47 @@ class ChartRenderCacheTests(TestCase):
         req5.user = self.user
         resp5 = chart_render_api(req5, chart.id)
         self.assertEqual(resp5.get('X-Chart-Cache'), 'MISS')
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_chart_render_applies_counselor_caseload_filters(self, mock_run_query):
+        from unittest.mock import MagicMock
+
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+        }
+        user = User.objects.create_user(
+            username='caseload_chart_user',
+            password='password',
+            email='counselor@example.com',
+        )
+        user.active_caseload = True
+        user.has_counselor_caseload = MagicMock(return_value=True)
+        user.get_accessible_student_keys = MagicMock(return_value=['key-1'])
+        user.get_counselor_caseload_identifiers = MagicMock(
+            return_value=(['SSID-1'], ['LOCAL-1'])
+        )
+
+        chart = SavedChart.objects.create(
+            name="Caseload Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=user,
+        )
+
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        req = RequestFactory().get(f'/api/charts/{chart.id}/render/')
+        req.user = user
+        response = chart_render_api(req, chart.id)
+
+        self.assertEqual(response.status_code, 200)
+        mock_run_query.assert_called_once()
+        _args, kwargs = mock_run_query.call_args
+        self.assertIs(kwargs.get('user'), user)
+        self.assertTrue(kwargs.get('apply_user_filters'))
 
     @patch('dataviz.utils.data_loader.run_column_query')
     def test_warm_published_page_charts_skips_drafts(self, mock_run_query):
@@ -4936,6 +5045,33 @@ class SqlDatasetTests(TestCase):
         ds = Dataset.objects.get(pk=data['id'])
         self.assertEqual(ds.source_type, Dataset.SOURCE_SQL)
         self.assertIn('SELECT', ds.source_sql)
+
+    @patch('dataviz.views.dataset_views.execute_sql_dataset')
+    def test_dataset_move_api_sets_folder(self, mock_execute):
+        from dataviz.models import Dataset
+
+        mock_execute.return_value = {
+            'columns': ['ssid'],
+            'rows': [{'ssid': '1'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        ds = Dataset.objects.create(
+            name='Folder Test DS',
+            owner=self.user,
+            base_table='current_student',
+            columns=['current_student.ssid'],
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f'/dataviz/api/datasets/{ds.pk}/move/',
+            data=json.dumps({'folder': 'DESI / Supports'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        ds.refresh_from_db()
+        self.assertEqual(ds.folder, 'DESI / Supports')
 
 
 class AssessmentEnrichmentRegressionTests(TestCase):

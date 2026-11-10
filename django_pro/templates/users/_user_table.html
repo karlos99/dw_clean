@@ -1,4 +1,4 @@
-{% load static %}
+{% load static tz %}
 
 <form method="POST" action="{% url 'users:bulk_update_users' %}" id="bulk-update-form"
       x-data="{ 
@@ -158,7 +158,7 @@
                     <label class="block text-xs font-semibold text-slate-700 mb-1.5">Target Role</label>
                     <select x-model="roleId" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="">— Select a Role —</option>
-                        {% for role in all_roles %}
+                        {% for role in bulk_assignable_roles %}
                         <option value="{{ role.id }}">{{ role.name }}</option>
                         {% endfor %}
                     </select>
@@ -272,19 +272,29 @@
                         <!-- Roles Badges -->
                         <td class="px-5 py-4">
                             <div class="flex flex-wrap gap-1 min-w-[140px] max-w-[240px]">
-                                {% for role in user_obj.roles.all %}
-                                <span class="px-2 py-0.5 inline-flex items-center text-[10px] font-bold rounded-full border
-                                    {% if role.name == 'Project Admin' %}bg-purple-100 text-purple-800 border-purple-200
-                                    {% elif role.name == 'District Admin' %}bg-indigo-100 text-indigo-800 border-indigo-200
-                                    {% elif role.name == 'District View' %}bg-blue-100 text-blue-800 border-blue-200
-                                    {% elif role.name == 'School Admin' %}bg-emerald-100 text-emerald-800 border-emerald-200
-                                    {% elif role.name == 'School Gr View' %}bg-teal-100 text-teal-800 border-teal-200
-                                    {% elif role.name == 'School View' %}bg-cyan-100 text-cyan-800 border-cyan-200
-                                    {% elif role.name == 'Teacher' %}bg-amber-100 text-amber-800 border-amber-200
-                                    {% elif role.name == 'Testing Coordinator' %}bg-rose-100 text-rose-800 border-rose-200
-                                    {% else %}bg-orange-100 text-orange-800 border-orange-200{% endif %}">
-                                    {{ role.name }}
+                                {% for assignment in user_obj.role_assignments.all %}
+                                {% if not assignment.is_expired %}
+                                <span class="px-2 py-0.5 inline-flex items-center gap-1 text-[10px] font-bold rounded-full border
+                                    {% if assignment.role.name == 'Project Admin' %}bg-purple-100 text-purple-800 border-purple-200
+                                    {% elif assignment.role.name == 'District Admin' %}bg-indigo-100 text-indigo-800 border-indigo-200
+                                    {% elif assignment.role.name == 'District View' %}bg-blue-100 text-blue-800 border-blue-200
+                                    {% elif assignment.role.name == 'School Admin' %}bg-emerald-100 text-emerald-800 border-emerald-200
+                                    {% elif assignment.role.name == 'School Gr View' %}bg-teal-100 text-teal-800 border-teal-200
+                                    {% elif assignment.role.name == 'School View' %}bg-cyan-100 text-cyan-800 border-cyan-200
+                                    {% elif assignment.role.name == 'Teacher' %}bg-amber-100 text-amber-800 border-amber-200
+                                    {% elif assignment.role.name == 'Testing Coordinator' %}bg-rose-100 text-rose-800 border-rose-200
+                                    {% elif assignment.role.is_student_limited %}bg-red-100 text-red-800 border-red-200
+                                    {% else %}bg-orange-100 text-orange-800 border-orange-200{% endif %}"
+                                    {% if assignment.expires_at %}title="Expires {{ assignment.expires_at|timezone:'America/Los_Angeles'|date:'M j, Y g:i A' }} PT"{% endif %}>
+                                    {% if assignment.role.is_student_limited %}
+                                    <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                                    {% endif %}
+                                    {{ assignment.role.name }}
+                                    {% if assignment.expires_at %}
+                                    <span class="font-normal opacity-70">· {{ assignment.expires_at|timezone:"America/Los_Angeles"|date:"M j" }}</span>
+                                    {% endif %}
                                 </span>
+                                {% endif %}
                                 {% empty %}
                                 <span class="text-[11px] text-slate-400 italic">No Role Assigned</span>
                                 {% endfor %}

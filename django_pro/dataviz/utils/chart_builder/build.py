@@ -393,6 +393,25 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
                     try: ya['max'] = float(y_max)
                     except (TypeError, ValueError): pass
 
+    zones = cfg.get('y_band_zones')
+    if isinstance(zones, list) and zones and option.get('series'):
+        mark_data = []
+        for zone in zones:
+            if not isinstance(zone, dict):
+                continue
+            y0, y1 = zone.get('y0'), zone.get('y1')
+            color = zone.get('color') or 'rgba(200,200,200,0.25)'
+            if y0 is None or y1 is None:
+                continue
+            mark_data.append([
+                {'yAxis': float(y0), 'itemStyle': {'color': color}},
+                {'yAxis': float(y1)},
+            ])
+        if mark_data:
+            target = option['series'][0]
+            if isinstance(target, dict):
+                target['markArea'] = {'silent': True, 'data': mark_data}
+
     # Apply bar category gap (legacy config / interactive editor)
     bar_gap = cfg.get('bar_category_gap')
     if bar_gap not in (None, ''):

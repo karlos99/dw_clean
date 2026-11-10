@@ -80,7 +80,12 @@
                 <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Dataset Name</label>
                 <input type="text" x-model="name" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g., Student Test Score Summary">
             </div>
-            <div class="md:col-span-2">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Folder</label>
+                <input type="text" x-model="folder" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g. DESI / Exports">
+                <p class="mt-1 text-[10px] text-slate-400">Use <span class="font-mono"> / </span> for nested folders (same as Data Pages).</p>
+            </div>
+            <div>
                 <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
                 <input type="text" x-model="description" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g., Combines student profile data with matching scale scores from test results.">
             </div>
@@ -946,6 +951,7 @@
         return {
             // Backend variables
             name: "{% if dataset %}{{ dataset.name|escapejs }}{% else %}{% endif %}",
+            folder: "{{ initial_folder|escapejs }}",
             description: "{% if dataset %}{{ dataset.description|escapejs }}{% else %}{% endif %}",
             baseTable: "{% if dataset %}{{ dataset.base_table|escapejs }}{% else %}{% endif %}",
             distinct: {% if dataset %}{% if dataset.distinct %}true{% else %}false{% endif %}{% else %}true{% endif %},
@@ -2445,6 +2451,7 @@
                         source_type: 'sql',
                         source_sql: this.sourceSql,
                         name: this.name,
+                        folder: this.folder,
                         description: this.description,
                         columns: this.sqlColumns,
                         column_mappings: activeMappings,
@@ -2468,6 +2475,7 @@
                 const payload = {
                     source_type: 'visual',
                     name: this.name,
+                    folder: this.folder,
                     description: this.description,
                     base_table: this.baseTable,
                     distinct: this.distinct,
