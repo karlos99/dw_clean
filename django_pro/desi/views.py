@@ -2183,7 +2183,11 @@ def _build_export_rows(
     max_students=None,
 ):
     """Build the export row dictionaries (used by both CSV and the preview)."""
-    students_qs = get_visible_students(user).filter(school_year=school_year).order_by('student_name')
+    students_qs = (
+        get_visible_students(user)
+        .filter(school_year=school_year, status='Active')
+        .order_by('student_name')
+    )
     if max_students is not None:
         students_qs = students_qs[:max_students]
     students = list(students_qs)
@@ -2519,7 +2523,7 @@ def _state_upload_inputs(request, user):
 
     students = list(
         get_visible_students(user)
-        .filter(school_year=school_year)
+        .filter(school_year=school_year, status='Active')
         .order_by('student_name')
     )
     return school_year, students

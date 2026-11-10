@@ -275,6 +275,22 @@ def update_role_assignments(user_obj, request, allowed_role_names=None):
     return selected_ids
 
 
+SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES = (
+    'School Gr View',
+    'School View',
+    'Teacher',
+    'Limited Student Access',
+)
+
+
+def bulk_assignable_roles_queryset(for_project_admin: bool):
+    """Roles that may be selected in the user-directory bulk add/remove modal."""
+    qs = Role.objects.order_by('name')
+    if for_project_admin:
+        return qs.exclude(name='Project Admin')
+    return qs.filter(name__in=SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES)
+
+
 def user_is_project_admin(user: User) -> bool:
     """Check if user has Project Admin role"""
     return user.is_authenticated and user.is_project_admin
@@ -505,8 +521,9 @@ def manage_users(request):
         user_count=Count('assignments', filter=active_assignment, distinct=True)
     ).order_by('name')
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
-        all_system_roles = all_system_roles.filter(name__in=allowed_role_names)
+        all_system_roles = all_system_roles.filter(
+            name__in=SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES,
+        )
 
     role_cards = []
     for r in all_system_roles:
@@ -559,6 +576,9 @@ def manage_users(request):
         'school_filter': school_filter,
         'all_job_titles': all_job_titles,
         'all_roles': all_roles,
+        'bulk_assignable_roles': list(
+            bulk_assignable_roles_queryset(is_proj),
+        ),
         'all_schools': all_schools,
         'sort_by': sort_by,
         'sort_order': sort_order,
@@ -961,12 +981,7 @@ def user_detail(request, user_id):
     allowed_role_names = None
     if is_school and not is_proj:
         # 1. Restrict visible/assignable roles
-        allowed_role_names = [
-            'School Gr View',
-            'School View',
-            'Teacher',
-            'Limited Student Access',
-        ]
+        allowed_role_names = list(SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES)
         roles_qs = roles_qs.filter(name__in=allowed_role_names)
         
         # 2. Restrict visible/assignable schools
@@ -1203,17 +1218,26 @@ def bulk_update_users(request):
         role_id = request.POST.get('role_id')
         if role_id:
             role = get_object_or_404(Role, id=role_id)
-            # Efficient M2M add
-            role.users.add(*users_to_update)
-            messages.success(request, f'Role "{role.name}" added to {count} users.')
+            if role.name == 'Project Admin':
+                messages.error(
+                    request,
+                    'The Project Admin role cannot be assigned in bulk.',
+                )
+            elif not bulk_assignable_roles_queryset(True).filter(pk=role.pk).exists():
+                messages.error(request, 'That role cannot be assigned in bulk.')
+            else:
+                role.users.add(*users_to_update)
+                messages.success(request, f'Role "{role.name}" added to {count} users.')
             
     elif action == 'remove_role':
         role_id = request.POST.get('role_id')
         if role_id:
             role = get_object_or_404(Role, id=role_id)
-            # Efficient M2M remove
-            role.users.remove(*users_to_update)
-            messages.success(request, f'Role "{role.name}" removed from {count} users.')
+            if not bulk_assignable_roles_queryset(True).filter(pk=role.pk).exists():
+                messages.error(request, 'That role cannot be removed in bulk.')
+            else:
+                role.users.remove(*users_to_update)
+                messages.success(request, f'Role "{role.name}" removed from {count} users.')
     
     # Build query string for redirect to preserve filters
     params = {}
@@ -1276,8 +1300,7 @@ def add_users_to_role(request, role_id):
 
     role = get_object_or_404(Role, id=role_id)
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
-        if role.name not in allowed_role_names:
+        if role.name not in SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES:
             return JsonResponse({'error': 'You do not have permission to assign this role.'}, status=403)
 
     import json
@@ -1322,8 +1345,7 @@ def remove_user_from_role(request, role_id, user_id):
 
     role = get_object_or_404(Role, id=role_id)
     if is_school and not is_proj:
-        allowed_role_names = ['School Gr View', 'School View', 'Teacher', 'Limited Student Access']
-        if role.name not in allowed_role_names:
+        if role.name not in SCHOOL_ADMIN_ASSIGNABLE_ROLE_NAMES:
             return JsonResponse({'error': 'Permission denied.'}, status=403)
 
     base_qs = get_base_users_queryset(request)

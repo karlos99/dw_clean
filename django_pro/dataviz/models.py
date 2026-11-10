@@ -450,6 +450,7 @@ class Dataset(models.Model):
     ]
 
     name = models.CharField(max_length=200)
+    folder = models.CharField(max_length=500, blank=True, default='')
     source_type = models.CharField(
         max_length=20,
         choices=SOURCE_TYPE_CHOICES,
@@ -502,6 +503,7 @@ class Dataset(models.Model):
         return {
             'id': self.pk,
             'name': self.name,
+            'folder': self.folder or '',
             'source_type': self.source_type or self.SOURCE_VISUAL,
             'source_sql': self.source_sql or '',
             'description': self.description,
@@ -517,6 +519,19 @@ class Dataset(models.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
         }
+
+
+class DataVizDatasetFolder(models.Model):
+    """Empty folder placeholder so dataset folders appear before any dataset is placed in them."""
+
+    path = models.CharField(max_length=500, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['path']
+
+    def __str__(self):
+        return self.path
 
 
 class RelativeYear(models.Model):

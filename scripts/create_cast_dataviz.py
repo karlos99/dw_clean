@@ -27,6 +27,9 @@ from pathlib import Path
 CAST_PREFIX = 'CAST •'
 CAA_PREFIX = 'CAA Science •'
 CHART_FOLDER = 'cast'
+DATASET_FOLDER = 'Assessments / CAST & CAA Science'
+DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
+DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 SOURCE_TABLE = 'results_with_tests'
 
 # Confirmed via ClickHouse discovery (Desert Sands); override if ``--discover`` differs.
@@ -57,6 +60,12 @@ PL_COLORS = {
 }
 
 MULTI_YEAR_SKIP_FILTERS = ['test_year', 'school_year']
+PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+RACE_ORDER = [
+    'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
+    'Multiple', 'American Indian or Alaska Native',
+    'Hawaiian/Pacific Islander', 'Missing',
+]
 
 # Match Data Explorer's default population: current_student rows that are
 # Active or Inactive. No_show rows (and results with no current_student row)
@@ -202,6 +211,8 @@ _STUDENT_SELECT = f"""
     coalesce(cs.ell, '') AS ell,
     coalesce(cs.sed, '') AS sed,
     coalesce(cs.sped, '') AS sped,
+    coalesce(cs.gate, '') AS gate,
+    coalesce(cs.foster, '') AS foster,
     coalesce(cs.status, '') AS status
 """
 
@@ -209,8 +220,10 @@ _STUDENT_DRILL = [
     'ssid', 'student_name', 'grade', 'grade_label', 'tested_grade_group',
     'level_band', 'school',
     'school_year', 'test_year', 'test_name', 'test_window', 'pl', 'ss',
-    'gender', 'race', 'ell', 'sed', 'sped',
+    'gender', 'race', 'ell', 'sed', 'sped', 'gate', 'foster',
 ]
+
+_PROGRAM_DRILL = _STUDENT_DRILL + ['migrant', 'program']
 
 _DOMAIN_DRILL = _STUDENT_DRILL + [
     'science_domain', 'science_domain_short', 'year_domain_label', 'domain_pl',
@@ -282,6 +295,33 @@ SELECT DISTINCT
 WHERE {test_match}
   AND {subject_match}
   AND {_PAGE_FILTER_SCIENCE_WHERE}{grade_clause}
+"""
+
+
+def _program_results_sql(base_sql: str) -> str:
+    """Long-format program membership rows on top of a student-result query."""
+    return f"""
+SELECT d.*, program
+FROM (
+    SELECT d.*, coalesce(m.migrant, '') AS migrant
+    FROM (
+{base_sql}
+    ) AS d
+    LEFT JOIN (
+        SELECT ssid, school_year, any(migrant) AS migrant
+        FROM student_enroll
+        WHERE ssid IS NOT NULL AND trim(ssid) != ''
+        GROUP BY ssid, school_year
+    ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
+) AS d
+ARRAY JOIN arrayConcat(
+    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
+    if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
+    if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
+    if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
+    if(upper(trim(coalesce(d.migrant, ''))) = 'Y', ['Migrant'], []),
+    if(upper(trim(coalesce(d.foster, ''))) = 'Y', ['Foster'], [])
+) AS program
 """
 
 
@@ -461,6 +501,18 @@ DATASET_SPECS = [
         'sql': _domain_results_sql(),
     },
     {
+        'name': f'{CAST_PREFIX} Student Program Results',
+        'description': (
+            'Long format: one row per CAST result per student program membership '
+            '(ELL, GATE, SED, SPED, Migrant, Foster). A student can appear in '
+            'more than one program row.'
+        ),
+        'columns': _PROGRAM_DRILL,
+        'sql': _program_results_sql(
+            _student_results_sql(CAST_TEST_MATCH, CAST_SUBJECT_MATCH)
+        ),
+    },
+    {
         'name': f'{CAST_PREFIX} PL & Domain Detail',
         'description': (
             'Combined detail source: one Overall PL row plus one row for each '
@@ -570,6 +622,44 @@ def _domain_grade_charts() -> list[dict]:
     return charts
 
 
+def _demographic_charts() -> list[dict]:
+    ds = f'{CAST_PREFIX} Student Results'
+    program_ds = f'{CAST_PREFIX} Student Program Results'
+    return [
+        {
+            'name': f'{CAST_PREFIX} PL by Race',
+            'chart_type': 'stacked_bar',
+            'dataset': ds,
+            'drill_columns': _STUDENT_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
+            'column_defs': {'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students'},
+            'config': _base_cfg(
+                'stacked_bar', 'CAST: PL by Race',
+                x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
+                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        },
+        {
+            'name': f'{CAST_PREFIX} PL by Student Program',
+            'chart_type': 'stacked_bar',
+            'dataset': program_ds,
+            'drill_columns': _PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
+            'column_defs': {
+                'program': 'Student Program', 'pl': 'Performance Level',
+                'ssid': 'Students',
+            },
+            'config': _base_cfg(
+                'stacked_bar', 'CAST: PL by Student Program',
+                x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
+                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=PROGRAM_ORDER,
+            ),
+        },
+    ]
+
+
 CHART_SPECS = [
     _overall_pl_chart(CAST_PREFIX, f'{CAST_PREFIX} Student Results', 'CAST'),
     _overall_pl_chart(CAA_PREFIX, f'{CAA_PREFIX} Student Results', 'CAA Science'),
@@ -625,6 +715,7 @@ CHART_SPECS = [
         ),
     },
     *_domain_grade_charts(),
+    *_demographic_charts(),
     {
         'name': f'{CAST_PREFIX} PL & Domain by School Table',
         'chart_type': 'summary_table',
@@ -661,7 +752,9 @@ PAGE_SPEC = {
         'Grade 08, and Grade 11-12. Multi-year trend charts ignore the Test Year '
         'filter. The detail table combines overall PL and each science domain PL '
         'by school. Only PL 1–4 are shown (PL 1 at the '
-        'bottom of stacks, PL 4 at the top). Click any chart to drill.'
+        'bottom of stacks, PL 4 at the top). The Demographics tab compares '
+        'performance levels by race and by student program membership '
+        '(ELL, GATE, SED, SPED, Migrant, Foster). Click any chart to drill.'
     ),
     'page_filters': [
         {
@@ -719,6 +812,7 @@ PAGE_SPEC = {
         'Middle',
         'High',
         'Science Domains',
+        'Demographics',
         'Detail Tables',
     ],
     'rows': [
@@ -759,6 +853,10 @@ PAGE_SPEC = {
             {'chart': f'{CAST_PREFIX} Life PL by Grade', 'gs_x': 4, 'gs_w': 4, 'gs_h': 7},
             {'chart': f'{CAST_PREFIX} Physical Sciences PL by Grade', 'gs_x': 8, 'gs_w': 4, 'gs_h': 7},
         ]},
+        {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
+            {'chart': f'{CAST_PREFIX} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+            {'chart': f'{CAST_PREFIX} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+        ]},
         {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
             {'chart': f'{CAST_PREFIX} PL & Domain by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
         ]},
@@ -777,9 +875,15 @@ def resolve_owner(owner_ref):
         if not user:
             raise SystemExit(f'No user found for "{owner_ref}".')
         return user
-    user = User.objects.filter(is_superuser=True).order_by('id').first()
-    if not user:
-        user = User.objects.order_by('id').first()
+    user = (
+        User.objects.filter(
+            first_name__iexact=DEFAULT_OWNER_NAME[0],
+            last_name__iexact=DEFAULT_OWNER_NAME[1],
+        ).first()
+        or User.objects.filter(email__iexact=DEFAULT_OWNER_EMAIL).first()
+        or User.objects.filter(is_superuser=True).order_by('id').first()
+        or User.objects.order_by('id').first()
+    )
     if not user:
         raise SystemExit('No users exist to own the CAST page.')
     return user
@@ -805,27 +909,33 @@ def enable_dataset_tables():
 
 
 def upsert_dataset(spec, owner):
-    from dataviz.models import Dataset
+    from dataviz.models import Dataset, DataVizDatasetFolder
 
     mappings = {c: c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'],
-        owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_SQL,
-            'source_sql': spec['sql'],
-            'base_table': SOURCE_TABLE,
-            'distinct': False,
-            'columns': spec['columns'],
-            'column_mappings': mappings,
-            'joins': [],
-            'filters': [],
-            'status_filter': [],
-            'order_by': [],
-            'description': spec['description'],
-        },
-    )
-    print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
+    folder = spec.get('folder', DATASET_FOLDER)
+    dataset = Dataset.objects.filter(name=spec['name']).order_by('id').first()
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+    else:
+        dataset.owner = owner
+    dataset.source_type = Dataset.SOURCE_SQL
+    dataset.source_sql = spec['sql']
+    dataset.base_table = SOURCE_TABLE
+    dataset.distinct = False
+    dataset.columns = spec['columns']
+    dataset.column_mappings = mappings
+    dataset.joins = []
+    dataset.filters = []
+    dataset.status_filter = []
+    dataset.order_by = []
+    dataset.description = spec['description']
+    dataset.folder = folder
+    dataset.save()
+    if folder:
+        parts = folder.split(' / ')
+        for i in range(1, len(parts) + 1):
+            DataVizDatasetFolder.objects.get_or_create(path=' / '.join(parts[:i]))
+    print(f'  dataset ready: {dataset.name} (#{dataset.pk}) folder={dataset.folder or "(root)"}')
     return dataset
 
 
@@ -838,14 +948,15 @@ def upsert_chart(spec, datasets, owner):
         raise SystemExit(f'Refusing to write chart outside CAST/CAA set: {raw_name}')
     folder_name = f'{CHART_FOLDER} / {raw_name}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(owner=owner, name=raw_name).first()
+    chart = SavedChart.objects.filter(name=raw_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart.objects.filter(owner=owner, name=folder_name).first()
+        chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart(owner=owner, name=folder_name)
+        chart = SavedChart(name=folder_name)
     else:
         # Rename legacy root-level charts into the assessment folder.
         chart.name = folder_name
+    chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
     chart.source_type = SavedChart.SOURCE_DATASET

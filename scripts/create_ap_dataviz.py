@@ -18,6 +18,9 @@ from pathlib import Path
 SOURCE_TABLE = 'analytics_ap_results'
 AP_PREFIX = 'AP •'
 CHART_FOLDER = 'ap'
+DATASET_FOLDER = 'Assessments / AP Results'
+DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
+DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 PERFORMANCE_COL_GROUP_SEP = ' · '
 
 _STUDENT_SELECT = """
@@ -55,6 +58,8 @@ _STUDENT_SELECT = """
     coalesce(cs.ell, cc.ell, '') AS ell,
     coalesce(cs.sed, cc.sed, '') AS sed,
     coalesce(cs.sped, cc.sped, '') AS sped,
+    coalesce(cs.gate, cc.gate, '') AS gate,
+    coalesce(cs.foster, cc.foster, '') AS foster,
     coalesce(cs.status, cc.status, '') AS status,
     if(dsch.state_id != '', 1, 0) AS district_school
 """
@@ -144,11 +149,12 @@ WHERE r.award_year IS NOT NULL AND trim(r.award_year) != ''
 
 _STUDENT_SELECT_COLS = [
     'ssid', 'student_name', 'school', 'enrolled_school', 'grade', 'grade_label',
-    'grade_display', 'level_band', 'gender', 'race', 'ell', 'sed', 'sped', 'status',
-    'district_school',
+    'grade_display', 'level_band', 'gender', 'race', 'ell', 'sed', 'sped',
+    'gate', 'foster', 'status', 'district_school',
 ]
 
 _EXAM_DRILL = _STUDENT_SELECT_COLS + ['test_year', 'exam_name', 'exam_group', 'subject_exam', 'exam_grade', 'year_score', 'school_year_label', 'score_num', 'score_valid', 'passed', 'pass_pct', 'exam_id', 'exam_count']
+_EXAM_PROGRAM_DRILL = _EXAM_DRILL + ['migrant', 'program']
 _STUDENT_DRILL = _STUDENT_SELECT_COLS + [
     'test_year', 'exam_count', 'best_score', 'scored_3_plus', 'scored_3_plus_pct',
 ]
@@ -179,6 +185,12 @@ GRADE_ORDER = [
     '9th', '10th', '11th', '12th', 'Kindergarten', '1st', '2nd', '3rd',
     '4th', '5th', '6th', '7th', '8th',
 ]
+PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+RACE_ORDER = [
+    'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
+    'Multiple', 'American Indian or Alaska Native',
+    'Hawaiian/Pacific Islander', 'Missing',
+]
 
 
 def _year_alias(year: str) -> str:
@@ -188,6 +200,33 @@ def _year_alias(year: str) -> str:
 
 def _exam_results_sql() -> str:
     return f"""{_EXAM_SELECT}{_AP_JOINS}WHERE {_AP_WHERE}"""
+
+
+def _program_results_sql(base_sql: str) -> str:
+    """Long-format program membership rows on top of AP exam results."""
+    return f"""
+SELECT d.*, program
+FROM (
+    SELECT d.*, coalesce(m.migrant, '') AS migrant
+    FROM (
+{base_sql}
+    ) AS d
+    LEFT JOIN (
+        SELECT ssid, school_year, any(migrant) AS migrant
+        FROM student_enroll
+        WHERE ssid IS NOT NULL AND trim(ssid) != ''
+        GROUP BY ssid, school_year
+    ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
+) AS d
+ARRAY JOIN arrayConcat(
+    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
+    if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
+    if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
+    if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
+    if(upper(trim(coalesce(d.migrant, ''))) = 'Y', ['Migrant'], []),
+    if(upper(trim(coalesce(d.foster, ''))) = 'Y', ['Foster'], [])
+) AS program
+"""
 
 
 def _student_results_sql() -> str:
@@ -207,6 +246,8 @@ SELECT
     any(ell) AS ell,
     any(sed) AS sed,
     any(sped) AS sped,
+    any(gate) AS gate,
+    any(foster) AS foster,
     any(status) AS status,
     any(district_school) AS district_school,
     count() AS exam_count,
@@ -320,6 +361,15 @@ DATASET_SPECS = [
         'sql': _exam_results_sql(),
     },
     {
+        'name': f'{AP_PREFIX} Student Program Results',
+        'description': (
+            'One row per AP exam per student program membership '
+            '(ELL, GATE, SED, SPED, Migrant, Foster).'
+        ),
+        'columns': _EXAM_PROGRAM_DRILL,
+        'sql': _program_results_sql(_exam_results_sql()),
+    },
+    {
         'name': f'{AP_PREFIX} Student Results',
         'description': 'One row per AP student/year with exam count and 3+ performance flags.',
         'columns': _STUDENT_DRILL,
@@ -338,6 +388,7 @@ def _chart_specs() -> list[dict]:
     exam_ds = f'{AP_PREFIX} Exam Results'
     student_ds = f'{AP_PREFIX} Student Results'
     award_ds = f'{AP_PREFIX} Scholar Awards'
+    program_ds = f'{AP_PREFIX} Student Program Results'
     charts = [
         {
             'name': f'{AP_PREFIX} Students Who Took AP by Year',
@@ -452,6 +503,36 @@ def _chart_specs() -> list[dict]:
             ),
         },
         {
+            'name': f'{AP_PREFIX} Pass Rate by Race',
+            'chart_type': 'bar',
+            'dataset': exam_ds,
+            'source_filters': {'score_valid': [1]},
+            'drill_columns': _EXAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
+            'column_defs': {'race': 'Race', 'pass_pct': 'Pass Rate %'},
+            'config': _base_cfg(
+                'AP: Pass Rate by Race (assessments scoring 3+)',
+                x_col='race', y_col='pass_pct', agg='avg',
+                agg_decimals=1, y_axis_max=100, y_axis_min=0,
+                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        },
+        {
+            'name': f'{AP_PREFIX} Pass Rate by Student Program',
+            'chart_type': 'bar',
+            'dataset': program_ds,
+            'source_filters': {'score_valid': [1]},
+            'drill_columns': _EXAM_PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
+            'column_defs': {'program': 'Student Program', 'pass_pct': 'Pass Rate %'},
+            'config': _base_cfg(
+                'AP: Pass Rate by Student Program (assessments scoring 3+)',
+                x_col='program', y_col='pass_pct', agg='avg',
+                agg_decimals=1, y_axis_max=100, y_axis_min=0,
+                sort_col='__manual__', category_order=PROGRAM_ORDER,
+            ),
+        },
+        {
             'name': f'{AP_PREFIX} AP Scholar Trends',
             'chart_type': 'stacked_bar',
             'dataset': award_ds,
@@ -527,6 +608,8 @@ PAGE_SPEC = {
         'awards, assessment-based pass rates by school and exam, subject performance, and school-level exam history. All charts and tables use all available AP years; '
         'year is shown directly in the performance and detail tables. School is the enrollment school in the AP year. '
         'Enrolled School (current) filters by the current enrollment school. '
+        'The Demographics tab compares pass rates by race and by student program '
+        'membership (ELL, GATE, SED, SPED, Migrant, Foster). '
         'Click a chart or table cell to drill into AP exam records.'
     ),
     'page_filters': [
@@ -589,7 +672,7 @@ ORDER BY v
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
     ],
-    'tabs': ['Overview', 'School Participation', 'Performance', 'AP Scholar', 'Detail Tables'],
+    'tabs': ['Overview', 'School Participation', 'Performance', 'AP Scholar', 'Demographics', 'Detail Tables'],
     'rows': [
         {'tab': 'Overview', 'label': 'Participation', 'sections': [
             {'chart': f'{AP_PREFIX} Students Who Took AP by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
@@ -613,6 +696,10 @@ ORDER BY v
         ]},
         {'tab': 'AP Scholar', 'label': 'AP Scholar awards', 'sections': [
             {'chart': f'{AP_PREFIX} AP Scholar Trends', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+        ]},
+        {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
+            {'chart': f'{AP_PREFIX} Pass Rate by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+            {'chart': f'{AP_PREFIX} Pass Rate by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
         ]},
         {'tab': 'Detail Tables', 'label': 'AP scores by school', 'sections': [
             {'chart': f'{AP_PREFIX} Scores by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -763,7 +850,18 @@ def resolve_owner(ref: str):
         if not user:
             raise SystemExit(f'No user found for "{ref}".')
         return user
-    return User.objects.filter(is_superuser=True).order_by('id').first() or User.objects.order_by('id').first()
+    user = (
+        User.objects.filter(
+            first_name__iexact=DEFAULT_OWNER_NAME[0],
+            last_name__iexact=DEFAULT_OWNER_NAME[1],
+        ).first()
+        or User.objects.filter(email__iexact=DEFAULT_OWNER_EMAIL).first()
+        or User.objects.filter(is_superuser=True).order_by('id').first()
+        or User.objects.order_by('id').first()
+    )
+    if not user:
+        raise SystemExit('No users exist to own the AP page.')
+    return user
 
 
 def enable_dataset_tables():
@@ -785,23 +883,33 @@ def enable_dataset_tables():
 
 
 def upsert_dataset(spec, owner):
-    from dataviz.models import Dataset
+    from dataviz.models import Dataset, DataVizDatasetFolder
 
     mappings = {c: c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'], owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_SQL,
-            'source_sql': spec['sql'],
-            'base_table': SOURCE_TABLE,
-            'distinct': False,
-            'columns': spec['columns'],
-            'column_mappings': mappings,
-            'joins': [], 'filters': [], 'status_filter': [], 'order_by': [],
-            'description': spec['description'],
-        },
-    )
-    print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
+    folder = spec.get('folder', DATASET_FOLDER)
+    dataset = Dataset.objects.filter(name=spec['name']).order_by('id').first()
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+    else:
+        dataset.owner = owner
+    dataset.source_type = Dataset.SOURCE_SQL
+    dataset.source_sql = spec['sql']
+    dataset.base_table = SOURCE_TABLE
+    dataset.distinct = False
+    dataset.columns = spec['columns']
+    dataset.column_mappings = mappings
+    dataset.joins = []
+    dataset.filters = []
+    dataset.status_filter = []
+    dataset.order_by = []
+    dataset.description = spec['description']
+    dataset.folder = folder
+    dataset.save()
+    if folder:
+        parts = folder.split(' / ')
+        for i in range(1, len(parts) + 1):
+            DataVizDatasetFolder.objects.get_or_create(path=' / '.join(parts[:i]))
+    print(f'  dataset ready: {dataset.name} (#{dataset.pk}) folder={dataset.folder or "(root)"}')
     return dataset
 
 
@@ -810,9 +918,10 @@ def upsert_chart(spec, datasets, owner):
 
     folder_name = f'{CHART_FOLDER} / {spec["name"]}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(owner=owner, name=folder_name).first()
+    chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart(owner=owner, name=folder_name)
+        chart = SavedChart(name=folder_name)
+    chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
     chart.source_type = SavedChart.SOURCE_DATASET

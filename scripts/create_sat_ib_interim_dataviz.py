@@ -15,6 +15,9 @@ import os
 import sys
 from pathlib import Path
 
+DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
+DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
+
 _STUDENT_STATUS_MATCH = "coalesce(cs.status, '') IN ('Active', 'Inactive')"
 
 _GRADE_FROM = ['KN', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
@@ -67,6 +70,8 @@ _COMMON_STUDENT_SELECT = f"""
     coalesce(cs.ell, cc.ell, '') AS ell,
     coalesce(cs.sed, cc.sed, '') AS sed,
     coalesce(cs.sped, cc.sped, '') AS sped,
+    coalesce(cs.gate, cc.gate, '') AS gate,
+    coalesce(cs.foster, cc.foster, '') AS foster,
     coalesce(cs.status, cc.status, '') AS status,
     if(dsch.state_id != '', 1, 0) AS district_school
 """
@@ -91,10 +96,44 @@ LEFT JOIN current_student AS cc
 """
 
 
+def _program_results_sql(base_sql: str) -> str:
+    """Long-format program membership rows on top of a student-result query."""
+    return f"""
+SELECT d.*, program
+FROM (
+    SELECT d.*, coalesce(m.migrant, '') AS migrant
+    FROM (
+{base_sql}
+    ) AS d
+    LEFT JOIN (
+        SELECT ssid, school_year, any(migrant) AS migrant
+        FROM student_enroll
+        WHERE ssid IS NOT NULL AND trim(ssid) != ''
+        GROUP BY ssid, school_year
+    ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
+) AS d
+ARRAY JOIN arrayConcat(
+    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
+    if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
+    if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
+    if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
+    if(upper(trim(coalesce(d.migrant, ''))) = 'Y', ['Migrant'], []),
+    if(upper(trim(coalesce(d.foster, ''))) = 'Y', ['Foster'], [])
+) AS program
+"""
+
+
 _STUDENT_COLS = [
     'ssid', 'student_name', 'school', 'enrolled_school', 'grade', 'grade_label',
     'grade_display', 'level_band', 'gender', 'race', 'ell', 'sed', 'sped',
-    'status', 'district_school',
+    'gate', 'foster', 'status', 'district_school',
+]
+
+PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+RACE_ORDER = [
+    'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
+    'Multiple', 'American Indian or Alaska Native',
+    'Hawaiian/Pacific Islander', 'Missing',
 ]
 
 SAT_YEAR_LABEL = '2026-27'
@@ -268,6 +307,7 @@ SAT_DRILL = _STUDENT_COLS + [
     'test_year', 'test_date', 'total_score', 'ebrw_score', 'math_score',
     'percentile_state_total', 'total_band',
 ]
+SAT_PROGRAM_DRILL = SAT_DRILL + ['migrant', 'program']
 
 
 # ── IB ───────────────────────────────────────────────────────────────────────
@@ -303,6 +343,7 @@ IB_DRILL = _STUDENT_COLS + [
     'category_level', 'final_grade', 'predicted_grade', 'grade_num', 'predicted_num',
     'grade_valid', 'pass_pct', 'exam_count',
 ]
+IB_PROGRAM_DRILL = IB_DRILL + ['migrant', 'program']
 
 
 # ── Interim ─────────────────────────────────────────────────────────────────
@@ -326,6 +367,7 @@ SELECT
 WHERE {INTERIM_WHERE}
 """
 INTERIM_DRILL = _STUDENT_COLS + ['test_year', 'test_name', 'subject', 'test_subject', 'pl']
+INTERIM_PROGRAM_DRILL = INTERIM_DRILL + ['migrant', 'program']
 
 
 def _chart_specs_sat() -> list[dict]:
@@ -393,6 +435,32 @@ def _chart_specs_sat() -> list[dict]:
                 'st_col_mode': 'values', 'st_agg_func': 'count', 'st_value_col': '',
                 'st_col_order': SCORE_BANDS,
             },
+        },
+        {
+            'name': 'SAT • Average Total Score by Race',
+            'chart_type': 'bar',
+            'dataset': ds,
+            'drill_columns': SAT_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
+            'column_defs': {'race': 'Race', 'total_score': 'Average Total Score'},
+            'config': _base_cfg(
+                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Race',
+                x_col='race', y_col='total_score', agg='avg', agg_decimals=0,
+                y_axis_min=0, sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        },
+        {
+            'name': 'SAT • Average Total Score by Student Program',
+            'chart_type': 'bar',
+            'dataset': 'SAT • Student Program Results',
+            'drill_columns': SAT_PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
+            'column_defs': {'program': 'Student Program', 'total_score': 'Average Total Score'},
+            'config': _base_cfg(
+                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Student Program',
+                x_col='program', y_col='total_score', agg='avg', agg_decimals=0,
+                y_axis_min=0, sort_col='__manual__', category_order=PROGRAM_ORDER,
+            ),
         },
     ]
 
@@ -483,6 +551,36 @@ def _chart_specs_ib() -> list[dict]:
                 'st_col_mode': 'values', 'st_agg_func': 'count', 'st_value_col': '',
             },
         },
+        {
+            'name': 'IB • Average Final Grade by Race',
+            'chart_type': 'bar',
+            'dataset': ds,
+            'source_filters': {'grade_valid': [1]},
+            'drill_columns': IB_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
+            'column_defs': {'race': 'Race', 'grade_num': 'Average Final Grade'},
+            'config': _base_cfg(
+                f'IB {IB_YEAR_LABEL}: Average Final Grade by Race',
+                x_col='race', y_col='grade_num', agg='avg', agg_decimals=2,
+                y_axis_max=7, y_axis_min=0, sort_col='__manual__',
+                category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        },
+        {
+            'name': 'IB • Average Final Grade by Student Program',
+            'chart_type': 'bar',
+            'dataset': 'IB • Student Program Results',
+            'source_filters': {'grade_valid': [1]},
+            'drill_columns': IB_PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
+            'column_defs': {'program': 'Student Program', 'grade_num': 'Average Final Grade'},
+            'config': _base_cfg(
+                f'IB {IB_YEAR_LABEL}: Average Final Grade by Student Program',
+                x_col='program', y_col='grade_num', agg='avg', agg_decimals=2,
+                y_axis_max=7, y_axis_min=0, sort_col='__manual__',
+                category_order=PROGRAM_ORDER,
+            ),
+        },
     ]
 
 
@@ -550,6 +648,39 @@ def _chart_specs_interim() -> list[dict]:
                 sort_col='_value', sort_dir='desc', x_label_rotation=30,
             ),
         })
+        charts.append({
+            'name': f'Interim • {label} PL by Race',
+            'chart_type': 'stacked_bar',
+            'dataset': ds,
+            'source_filters': {'test_name': [test_name]},
+            'drill_columns': INTERIM_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
+            'column_defs': {'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                f'Interim {label}: PL by Race',
+                x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
+                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        })
+        charts.append({
+            'name': f'Interim • {label} PL by Student Program',
+            'chart_type': 'stacked_bar',
+            'dataset': 'Interim • Student Program Results',
+            'source_filters': {'test_name': [test_name]},
+            'drill_columns': INTERIM_PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
+            'column_defs': {
+                'program': 'Student Program', 'pl': 'Performance Level',
+                'ssid': 'Students',
+            },
+            'config': _stacked_cfg(
+                f'Interim {label}: PL by Student Program',
+                x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
+                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=PROGRAM_ORDER,
+            ),
+        })
     charts.extend([
         {
             'name': 'Interim • PL by Test and Subject Table',
@@ -587,11 +718,12 @@ def _page_sat() -> dict:
         'title': 'SAT Results', 'slug': 'sat-results', 'folder': 'sat', 'menu_order': 7,
         'description': (
             f'Assessment year: {SAT_YEAR_LABEL}. SAT participation, average Total/EBRW/Math '
-            'scores, score distribution, and school-level score bands. School is the '
-            'enrollment school for the SAT year.'
+            'scores, score distribution, school-level score bands, and results by '
+            'race and student program membership (ELL, GATE, SED, SPED, Migrant, Foster). '
+            'School is the enrollment school for the SAT year.'
         ),
         'page_filters': _page_filters(SAT_JOINS, SAT_WHERE),
-        'tabs': ['Overview', 'Score Bands', 'Detail Tables'],
+        'tabs': ['Overview', 'Score Bands', 'Demographics', 'Detail Tables'],
         'rows': [
             {'tab': 'Overview', 'label': 'Participation and averages', 'sections': [
                 {'chart': 'SAT • Students by School', 'gs_x': 0, 'gs_w': 6, 'gs_h': 7},
@@ -599,6 +731,10 @@ def _page_sat() -> dict:
             ]},
             {'tab': 'Score Bands', 'label': 'Total score distribution', 'sections': [
                 {'chart': 'SAT • Total Score Bands', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
+            ]},
+            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
+                {'chart': 'SAT • Average Total Score by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+                {'chart': 'SAT • Average Total Score by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
             ]},
             {'tab': 'Detail Tables', 'label': 'Score bands by school', 'sections': [
                 {'chart': 'SAT • Score Bands by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -612,11 +748,12 @@ def _page_ib() -> dict:
         'title': 'IB Results', 'slug': 'ib-results', 'folder': 'ib', 'menu_order': 8,
         'description': (
             f'Assessment years: {IB_YEAR_LABEL}. IB participation, exam counts by '
-            'level/category, average final grades, percent scoring 4+, and subject '
-            'performance.'
+            'level/category, average final grades, percent scoring 4+, subject '
+            'performance, and results by race and student program membership '
+            '(ELL, GATE, SED, SPED, Migrant, Foster).'
         ),
         'page_filters': _page_filters(IB_JOINS, IB_WHERE),
-        'tabs': ['Overview', 'Participation', 'Performance'],
+        'tabs': ['Overview', 'Participation', 'Performance', 'Demographics'],
         'rows': [
             {'tab': 'Overview', 'label': 'Participation by year and level', 'sections': [
                 {'chart': 'IB • Students by Year', 'gs_x': 0, 'gs_w': 6, 'gs_h': 7},
@@ -629,6 +766,10 @@ def _page_ib() -> dict:
                 {'chart': 'IB • Average Final Grade by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
                 {'chart': 'IB • Percent Scoring 4+ by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
                 {'chart': 'IB • Performance by Subject Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+            ]},
+            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
+                {'chart': 'IB • Average Final Grade by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+                {'chart': 'IB • Average Final Grade by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
             ]},
         ],
     }
@@ -649,6 +790,12 @@ def _page_interim() -> dict:
         rows.append({'tab': label, 'label': 'PL by school', 'sections': [
             {'chart': f'Interim • {label} PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
         ]})
+    for test_name in INTERIM_TESTS:
+        label = INTERIM_TEST_LABELS[test_name]
+        rows.append({'tab': 'Demographics', 'label': f'{label}: race and student programs', 'sections': [
+            {'chart': f'Interim • {label} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+            {'chart': f'Interim • {label} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+        ]})
     rows.extend([
         {'tab': 'Detail Tables', 'label': 'PL by test and subject', 'sections': [
             {'chart': 'Interim • PL by Test and Subject Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -662,10 +809,12 @@ def _page_interim() -> dict:
         'folder': 'interim_assessments', 'menu_order': 9,
         'description': (
             'Interim Math, Interim ELA, and Interim ELPAC performance levels by subject '
-            'and school. Use the Math/ELA/ELPAC tabs for subject-level breakdowns.'
+            'and school, plus results by race and student program membership '
+            '(ELL, GATE, SED, SPED, Migrant, Foster). Use the Math/ELA/ELPAC tabs '
+            'for subject-level breakdowns.'
         ),
         'page_filters': _page_filters(INTERIM_JOINS, INTERIM_WHERE),
-        'tabs': ['Overview', 'Math', 'ELA', 'ELPAC', 'Detail Tables'],
+        'tabs': ['Overview', 'Math', 'ELA', 'ELPAC', 'Demographics', 'Detail Tables'],
         'rows': rows,
     }
 
@@ -676,18 +825,42 @@ DATASET_SPECS = [
         'description': 'One row per SAT result with score bands and student demographics.',
         'columns': SAT_DRILL,
         'sql': SAT_SELECT,
+        'folder': 'Assessments / SAT Results',
+    },
+    {
+        'name': 'SAT • Student Program Results',
+        'description': 'One row per SAT result per student program membership.',
+        'columns': SAT_PROGRAM_DRILL,
+        'sql': _program_results_sql(SAT_SELECT),
+        'folder': 'Assessments / SAT Results',
     },
     {
         'name': 'IB • Exam Results',
         'description': 'One row per IB exam result with final and predicted grades.',
         'columns': IB_DRILL,
         'sql': IB_SELECT,
+        'folder': 'Assessments / IB Results',
+    },
+    {
+        'name': 'IB • Student Program Results',
+        'description': 'One row per IB exam per student program membership.',
+        'columns': IB_PROGRAM_DRILL,
+        'sql': _program_results_sql(IB_SELECT),
+        'folder': 'Assessments / IB Results',
     },
     {
         'name': 'Interim • Results',
         'description': 'One row per Interim Math/ELA/ELPAC result with PL and subject.',
         'columns': INTERIM_DRILL,
         'sql': INTERIM_SELECT,
+        'folder': 'Assessments / Interim Assessments',
+    },
+    {
+        'name': 'Interim • Student Program Results',
+        'description': 'One row per Interim result per student program membership.',
+        'columns': INTERIM_PROGRAM_DRILL,
+        'sql': _program_results_sql(INTERIM_SELECT),
+        'folder': 'Assessments / Interim Assessments',
     },
 ]
 CHART_SPECS = _chart_specs_sat() + _chart_specs_ib() + _chart_specs_interim()
@@ -735,7 +908,18 @@ def resolve_owner(ref: str):
         if not user:
             raise SystemExit(f'No user found for "{ref}".')
         return user
-    return User.objects.filter(is_superuser=True).order_by('id').first() or User.objects.order_by('id').first()
+    user = (
+        User.objects.filter(
+            first_name__iexact=DEFAULT_OWNER_NAME[0],
+            last_name__iexact=DEFAULT_OWNER_NAME[1],
+        ).first()
+        or User.objects.filter(email__iexact=DEFAULT_OWNER_EMAIL).first()
+        or User.objects.filter(is_superuser=True).order_by('id').first()
+        or User.objects.order_by('id').first()
+    )
+    if not user:
+        raise SystemExit('No users exist to own these pages.')
+    return user
 
 
 def enable_dataset_tables():
@@ -757,23 +941,33 @@ def enable_dataset_tables():
 
 
 def upsert_dataset(spec, owner):
-    from dataviz.models import Dataset
+    from dataviz.models import Dataset, DataVizDatasetFolder
 
     mappings = {c: c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'], owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_SQL,
-            'source_sql': spec['sql'],
-            'base_table': spec['columns'] and 'current_student',
-            'distinct': False,
-            'columns': spec['columns'],
-            'column_mappings': mappings,
-            'joins': [], 'filters': [], 'status_filter': [], 'order_by': [],
-            'description': spec['description'],
-        },
-    )
-    print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
+    folder = spec.get('folder', '')
+    dataset = Dataset.objects.filter(name=spec['name']).order_by('id').first()
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+    else:
+        dataset.owner = owner
+    dataset.source_type = Dataset.SOURCE_SQL
+    dataset.source_sql = spec['sql']
+    dataset.base_table = spec['columns'] and 'current_student'
+    dataset.distinct = False
+    dataset.columns = spec['columns']
+    dataset.column_mappings = mappings
+    dataset.joins = []
+    dataset.filters = []
+    dataset.status_filter = []
+    dataset.order_by = []
+    dataset.description = spec['description']
+    dataset.folder = folder
+    dataset.save()
+    if folder:
+        parts = folder.split(' / ')
+        for i in range(1, len(parts) + 1):
+            DataVizDatasetFolder.objects.get_or_create(path=' / '.join(parts[:i]))
+    print(f'  dataset ready: {dataset.name} (#{dataset.pk}) folder={dataset.folder or "(root)"}')
     return dataset
 
 
@@ -783,9 +977,10 @@ def upsert_chart(spec, datasets, owner):
     folder = PAGE_SPECS_BY_CHART[spec['name']]['folder']
     folder_name = f'{folder} / {spec["name"]}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(owner=owner, name=folder_name).first()
+    chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart(owner=owner, name=folder_name)
+        chart = SavedChart(name=folder_name)
+    chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
     chart.source_type = SavedChart.SOURCE_DATASET

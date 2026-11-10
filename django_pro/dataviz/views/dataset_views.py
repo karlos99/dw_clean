@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import logging
+from collections import defaultdict
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponseForbidden
@@ -11,7 +12,9 @@ from django.views.decorators.http import require_POST, require_GET
 from django.views.generic import TemplateView
 from django.db import connection
 
-from dataviz.models import Dataset
+from dataviz.models import Dataset, DataVizDatasetFolder, SavedChart, DataVizPageSection
+from dataviz.utils.dataset_folders import all_dataset_folder_paths, folder_contents_q
+from dataviz.utils.page_publish import build_page_tree, folder_path_from_url, collect_folder_paths
 from dataviz.utils.compiler import (
     compile_dataset_to_sql, execute_compiled_query,
     generate_column_aliases, apply_column_aliases,
@@ -87,19 +90,11 @@ def _populate_visual_dataset_fields(ds: Dataset, data: dict) -> str | None:
     return None
 
 
-@login_required
-def dataset_index(request):
-    """List all visual datasets."""
-    if not is_project_admin(request.user):
-        return HttpResponseForbidden('Project Admins only.')
-
-    datasets_qs = Dataset.objects.all().order_by('-updated_at')[:200]
-    datasets = list(datasets_qs)
-    
-    from dataviz.models import SavedChart, DataVizPageSection
-    from collections import defaultdict
-    
+def _attach_dataset_usage(datasets):
+    """Annotate datasets with charts/pages that reference them."""
     dataset_ids = [ds.pk for ds in datasets]
+    if not dataset_ids:
+        return
     
     charts_using_ds = SavedChart.objects.filter(
         source_type=SavedChart.SOURCE_DATASET,
@@ -128,7 +123,67 @@ def dataset_index(request):
         ds.usage_charts = ds_charts.get(ds.pk, [])
         ds.usage_pages = list(ds_pages.get(ds.pk, {}).values())
 
-    return render(request, 'dataviz/datasets/index.html', {'datasets': datasets})
+
+@login_required
+def dataset_index(request):
+    """List visual datasets in a folder tree."""
+    if not is_project_admin(request.user):
+        return HttpResponseForbidden('Project Admins only.')
+
+    current_path = request.GET.get('folder', '').strip().strip('/')
+
+    datasets_qs = Dataset.objects.all().order_by('-updated_at')[:500]
+    datasets_all = list(datasets_qs)
+    extra_paths = list(DataVizDatasetFolder.objects.values_list('path', flat=True))
+    root = build_page_tree(datasets_all, extra_folder_paths=extra_paths)
+
+    path_parts = [p for p in current_path.split('/') if p]
+    display_curr = root
+    breadcrumbs = []
+    running_path = []
+    for part in path_parts:
+        if part in display_curr['folders']:
+            running_path.append(part)
+            display_curr = display_curr['folders'][part]
+            breadcrumbs.append({'name': part, 'path': '/'.join(running_path)})
+        else:
+            display_curr = root
+            breadcrumbs = []
+            current_path = ''
+            break
+
+    folder_datasets = list(display_curr['pages'])
+    _attach_dataset_usage(folder_datasets)
+
+    parent_folder = folder_path_from_url(current_path)
+    subfolder_items = []
+    for name in sorted(display_curr['folders'].keys()):
+        full_path = f"{parent_folder} / {name}".strip(' / ') if parent_folder else name
+        url_path = f"{current_path}/{name}" if current_path else name
+        ds_count = Dataset.objects.filter(folder_contents_q('folder', full_path)).count()
+        subfolder_items.append({
+            'name': name,
+            'full_path': full_path,
+            'url_path': url_path,
+            'dataset_count': ds_count,
+        })
+
+    all_folders = sorted(set(collect_folder_paths(root)) | set(all_dataset_folder_paths()))
+
+    def _folder_qs():
+        return f'?folder={current_path}' if current_path else ''
+
+    return render(request, 'dataviz/datasets/index.html', {
+        'datasets': folder_datasets,
+        'subfolder_items': subfolder_items,
+        'all_folders': all_folders,
+        'all_folders_json': json.dumps(all_folders),
+        'current_path': current_path,
+        'current_folder_label': parent_folder,
+        'breadcrumbs': breadcrumbs,
+        'folder_query': _folder_qs(),
+        'total_count': len(datasets_all),
+    })
 
 
 class DatasetBuilderView(ProjectAdminMixin, TemplateView):
@@ -229,8 +284,16 @@ class DatasetBuilderView(ProjectAdminMixin, TemplateView):
         except Exception:
             logger.exception("Failed to load assessment columns for dataset builder")
 
+        initial_folder = ''
+        if existing_dataset:
+            initial_folder = existing_dataset.folder or ''
+        else:
+            from dataviz.utils.page_publish import folder_path_from_url
+            initial_folder = folder_path_from_url(self.request.GET.get('folder', '').strip())
+
         context.update({
             'dataset': existing_dataset,
+            'initial_folder': initial_folder,
             'schema_json': json.dumps(schema_json),
             'tables': tables,
             'explorer_groups_json': json.dumps(explorer_groups),
@@ -262,9 +325,12 @@ def dataset_save_api(request):
         if not name:
             return JsonResponse({'success': False, 'error': 'Dataset name is required.'}, status=400)
 
+        from dataviz.utils.page_publish import normalize_page_folder
+
         ds = Dataset(owner=request.user)
         ds.name = name
         ds.description = description
+        ds.folder = normalize_page_folder(data.get('folder', ''))
 
         if _is_sql_dataset(data):
             err = _apply_sql_dataset_fields(ds, data)
@@ -273,6 +339,8 @@ def dataset_save_api(request):
         if err:
             return JsonResponse({'success': False, 'error': err}, status=400)
 
+        if ds.folder:
+            DataVizDatasetFolder.objects.get_or_create(path=ds.folder)
         ds.save()
         return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
     except Exception as e:
@@ -305,8 +373,12 @@ def dataset_detail_api(request, dataset_id):
             if not name:
                 return JsonResponse({'success': False, 'error': 'Dataset name is required.'}, status=400)
 
+            from dataviz.utils.page_publish import normalize_page_folder
+
             ds.name = name
             ds.description = description
+            if 'folder' in data:
+                ds.folder = normalize_page_folder(data.get('folder', ''))
 
             if _is_sql_dataset(data):
                 err = _apply_sql_dataset_fields(ds, data)
@@ -315,6 +387,8 @@ def dataset_detail_api(request, dataset_id):
             if err:
                 return JsonResponse({'success': False, 'error': err}, status=400)
 
+            if ds.folder:
+                DataVizDatasetFolder.objects.get_or_create(path=ds.folder)
             ds.save()
             return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
         except Exception as e:

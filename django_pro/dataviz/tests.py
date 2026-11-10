@@ -5046,6 +5046,33 @@ class SqlDatasetTests(TestCase):
         self.assertEqual(ds.source_type, Dataset.SOURCE_SQL)
         self.assertIn('SELECT', ds.source_sql)
 
+    @patch('dataviz.views.dataset_views.execute_sql_dataset')
+    def test_dataset_move_api_sets_folder(self, mock_execute):
+        from dataviz.models import Dataset
+
+        mock_execute.return_value = {
+            'columns': ['ssid'],
+            'rows': [{'ssid': '1'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        ds = Dataset.objects.create(
+            name='Folder Test DS',
+            owner=self.user,
+            base_table='current_student',
+            columns=['current_student.ssid'],
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(
+            f'/dataviz/api/datasets/{ds.pk}/move/',
+            data=json.dumps({'folder': 'DESI / Supports'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        ds.refresh_from_db()
+        self.assertEqual(ds.folder, 'DESI / Supports')
+
 
 class AssessmentEnrichmentRegressionTests(TestCase):
     def test_augment_passes_school_year_from_rows_and_column_keys(self):

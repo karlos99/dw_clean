@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 SOURCE_TABLE = 'results_with_tests'
+DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
+DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 
 _STUDENT_STATUS_MATCH = "coalesce(cs.status, '') IN ('Active', 'Inactive')"
 
@@ -115,6 +117,8 @@ _STUDENT_SELECT = f"""
     coalesce(cs.ell, '') AS ell,
     coalesce(cs.sed, '') AS sed,
     coalesce(cs.sped, '') AS sped,
+    coalesce(cs.gate, '') AS gate,
+    coalesce(cs.foster, '') AS foster,
     coalesce(cs.status, '') AS status
 """
 
@@ -122,6 +126,14 @@ _STUDENT_DRILL = [
     'ssid', 'student_name', 'grade', 'grade_label', 'grade_display', 'level_band',
     'school', 'school_window', 'enrolled_school', 'school_year', 'test_year', 'test_window',
     'test_name', 'subject', 'pl', 'ss', 'gender', 'race', 'ell', 'sed', 'sped',
+    'gate', 'foster',
+]
+_PROGRAM_DRILL = _STUDENT_DRILL + ['migrant', 'program']
+PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+RACE_ORDER = [
+    'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
+    'Multiple', 'American Indian or Alaska Native',
+    'Hawaiian/Pacific Islander', 'Missing',
 ]
 
 
@@ -184,6 +196,7 @@ CONFIGS = [
         'prefix': 'DIBELS •',
         'slug': 'dibels',
         'folder': 'dibels',
+        'dataset_folder': 'Assessments / DIBELS',
         'menu_order': 3,
         'test_match': "lower(trim(r.test_name)) = 'dibbles'",
         'series': [('', None)],
@@ -211,6 +224,7 @@ CONFIGS = [
         'prefix': 'mClass Math •',
         'slug': 'mclass-math',
         'folder': 'mclass_math',
+        'dataset_folder': 'Assessments / mClass Math',
         'menu_order': 4,
         'test_match': "lower(trim(r.test_name)) = 'mclass math'",
         'series': [('', "lower(trim(r.subject)) = 'math'")],
@@ -238,6 +252,7 @@ CONFIGS = [
         'prefix': 'iReady •',
         'slug': 'iready',
         'folder': 'iready',
+        'dataset_folder': 'Assessments / iReady',
         'menu_order': 5,
         'test_match': "lower(trim(r.test_name)) = 'iready'",
         'series': [
@@ -283,6 +298,10 @@ def _dataset_name(cfg, suffix: str) -> str:
     return f"{_series_name(cfg, suffix)} • Student Results"
 
 
+def _program_dataset_name(cfg, suffix: str) -> str:
+    return f"{_series_name(cfg, suffix)} • Student Program Results"
+
+
 def _chart_prefix(cfg, suffix: str) -> str:
     return f"{_series_name(cfg, suffix)} •"
 
@@ -310,6 +329,33 @@ SELECT DISTINCT
 {_STUDENT_SELECT}
 {_RESULTS_JOINS}
 WHERE {_page_where(cfg, subject_match)}
+"""
+
+
+def _program_results_sql(base_sql: str) -> str:
+    """Long-format program membership rows on top of a student-result query."""
+    return f"""
+SELECT d.*, program
+FROM (
+    SELECT d.*, coalesce(m.migrant, '') AS migrant
+    FROM (
+{base_sql}
+    ) AS d
+    LEFT JOIN (
+        SELECT ssid, school_year, any(migrant) AS migrant
+        FROM student_enroll
+        WHERE ssid IS NOT NULL AND trim(ssid) != ''
+        GROUP BY ssid, school_year
+    ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
+) AS d
+ARRAY JOIN arrayConcat(
+    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
+    if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
+    if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
+    if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
+    if(upper(trim(coalesce(d.migrant, ''))) = 'Y', ['Migrant'], []),
+    if(upper(trim(coalesce(d.foster, ''))) = 'Y', ['Foster'], [])
+) AS program
 """
 
 
@@ -436,11 +482,23 @@ def _page_filters(cfg) -> list[dict]:
 def _dataset_specs(cfg) -> list[dict]:
     specs = []
     for suffix, subject_match in cfg['series']:
+        base_sql = _student_results_sql(cfg, subject_match)
         specs.append({
             'name': _dataset_name(cfg, suffix),
             'description': f"{_series_name(cfg, suffix)} scorable PL results.",
             'columns': _STUDENT_DRILL,
-            'sql': _student_results_sql(cfg, subject_match),
+            'sql': base_sql,
+            'folder': cfg['dataset_folder'],
+        })
+        specs.append({
+            'name': _program_dataset_name(cfg, suffix),
+            'description': (
+                f"{_series_name(cfg, suffix)} results expanded to one row per "
+                "student program membership (ELL, GATE, SED, SPED, Migrant, Foster)."
+            ),
+            'columns': _PROGRAM_DRILL,
+            'sql': _program_results_sql(base_sql),
+            'folder': cfg['dataset_folder'],
         })
     return specs
 
@@ -526,6 +584,39 @@ def _series_charts(cfg, suffix, subject_match, dataset) -> list[dict]:
             },
         },
     ]
+    charts.extend([
+        {
+            'name': f'{prefix} PL by Race',
+            'chart_type': 'stacked_bar',
+            'dataset': base_dataset,
+            'drill_columns': _STUDENT_DRILL,
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
+            'column_defs': {
+                'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students',
+            },
+            'config': _base_cfg(
+                cfg, f'{_series_name(cfg, suffix)}: PL by Race',
+                x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
+                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+            ),
+        },
+        {
+            'name': f'{prefix} PL by Student Program',
+            'chart_type': 'stacked_bar',
+            'dataset': _program_dataset_name(cfg, suffix),
+            'drill_columns': _PROGRAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
+            'column_defs': {
+                'program': 'Student Program', 'pl': 'Performance Level',
+                'ssid': 'Students',
+            },
+            'config': _base_cfg(
+                cfg, f'{_series_name(cfg, suffix)}: PL by Student Program',
+                x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
+                sort_col='__manual__', category_order=PROGRAM_ORDER,
+            ),
+        },
+    ])
     return charts
 
 
@@ -538,7 +629,7 @@ def _chart_specs(cfg) -> list[dict]:
 
 def _page_spec(cfg) -> dict:
     if cfg['key'] == 'iready':
-        tabs = ['Overview', 'ELA', 'Math', 'Detail Tables']
+        tabs = ['Overview', 'ELA', 'Math', 'Demographics', 'Detail Tables']
         rows = [
             {'tab': 'Overview', 'label': 'ELA & Math by window', 'sections': [
                 {'chart': 'iReady ELA • Overall PL by Window', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
@@ -556,6 +647,14 @@ def _page_spec(cfg) -> dict:
             {'tab': 'Math', 'label': 'By school', 'sections': [
                 {'chart': 'iReady Math • PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
+            {'tab': 'Demographics', 'label': 'ELA: race and student programs', 'sections': [
+                {'chart': 'iReady ELA • PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+                {'chart': 'iReady ELA • PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            ]},
+            {'tab': 'Demographics', 'label': 'Math: race and student programs', 'sections': [
+                {'chart': 'iReady Math • PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+                {'chart': 'iReady Math • PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            ]},
             {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
                 {'chart': 'iReady ELA • PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
                 {'chart': 'iReady Math • PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -563,7 +662,7 @@ def _page_spec(cfg) -> dict:
         ]
     else:
         prefix = cfg['prefix']
-        tabs = ['Overview', 'By Grade', 'By School', 'Detail Tables']
+        tabs = ['Overview', 'By Grade', 'By School', 'Demographics', 'Detail Tables']
         rows = [
             {'tab': 'Overview', 'label': 'Performance levels by window', 'sections': [
                 {'chart': f'{prefix} Overall PL by Window', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
@@ -574,6 +673,10 @@ def _page_spec(cfg) -> dict:
             {'tab': 'By School', 'label': 'School breakdown', 'sections': [
                 {'chart': f'{prefix} PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
+            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
+                {'chart': f'{prefix} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
+                {'chart': f'{prefix} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            ]},
             {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
                 {'chart': f'{prefix} PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
             ]},
@@ -583,7 +686,9 @@ def _page_spec(cfg) -> dict:
         'slug': cfg['slug'],
         'folder': cfg['folder'],
         'description': (
-            cfg['description'] + ' Students are limited to the current school-year '
+            cfg['description'] + ' The Demographics tab compares performance '
+            'levels by race and by student program membership (ELL, GATE, SED, '
+            'SPED, Migrant, Foster). Students are limited to the current school-year '
             'roster. Tested School is the testing-year school; Enrolled School '
             '(current) filters by the current enrollment school. Test Year filters the administration year; charts compare the available '
             'assessment windows. All bar '
@@ -721,8 +826,18 @@ def resolve_owner(owner_ref):
         if not user:
             raise SystemExit(f'No user found for "{owner_ref}".')
         return user
-    user = User.objects.filter(is_superuser=True).order_by('id').first()
-    return user or User.objects.order_by('id').first()
+    user = (
+        User.objects.filter(
+            first_name__iexact=DEFAULT_OWNER_NAME[0],
+            last_name__iexact=DEFAULT_OWNER_NAME[1],
+        ).first()
+        or User.objects.filter(email__iexact=DEFAULT_OWNER_EMAIL).first()
+        or User.objects.filter(is_superuser=True).order_by('id').first()
+        or User.objects.order_by('id').first()
+    )
+    if not user:
+        raise SystemExit('No users exist to own these pages.')
+    return user
 
 
 def enable_dataset_tables():
@@ -744,23 +859,33 @@ def enable_dataset_tables():
 
 
 def upsert_dataset(spec, owner):
-    from dataviz.models import Dataset
+    from dataviz.models import Dataset, DataVizDatasetFolder
 
     mappings = {c: c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'], owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_SQL,
-            'source_sql': spec['sql'],
-            'base_table': SOURCE_TABLE,
-            'distinct': False,
-            'columns': spec['columns'],
-            'column_mappings': mappings,
-            'joins': [], 'filters': [], 'status_filter': [], 'order_by': [],
-            'description': spec['description'],
-        },
-    )
-    print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
+    folder = spec.get('folder', '')
+    dataset = Dataset.objects.filter(name=spec['name']).order_by('id').first()
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+    else:
+        dataset.owner = owner
+    dataset.source_type = Dataset.SOURCE_SQL
+    dataset.source_sql = spec['sql']
+    dataset.base_table = SOURCE_TABLE
+    dataset.distinct = False
+    dataset.columns = spec['columns']
+    dataset.column_mappings = mappings
+    dataset.joins = []
+    dataset.filters = []
+    dataset.status_filter = []
+    dataset.order_by = []
+    dataset.description = spec['description']
+    dataset.folder = folder
+    dataset.save()
+    if folder:
+        parts = folder.split(' / ')
+        for i in range(1, len(parts) + 1):
+            DataVizDatasetFolder.objects.get_or_create(path=' / '.join(parts[:i]))
+    print(f'  dataset ready: {dataset.name} (#{dataset.pk}) folder={dataset.folder or "(root)"}')
     return dataset
 
 
@@ -770,9 +895,10 @@ def upsert_chart(spec, datasets, folder, owner):
     raw_name = spec['name']
     folder_name = f'{folder} / {raw_name}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(owner=owner, name=folder_name).first()
+    chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart(owner=owner, name=folder_name)
+        chart = SavedChart(name=folder_name)
+    chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
     chart.source_type = SavedChart.SOURCE_DATASET

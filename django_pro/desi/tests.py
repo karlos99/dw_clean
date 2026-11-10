@@ -866,6 +866,7 @@ class DesiWorkflowAndViewsTests(TestCase):
             student_id="blankid",
             student_name="Blank Student",
             grade="04",
+            status="Active",
             school_year="2025-2026"
         )
 
@@ -907,6 +908,35 @@ class DesiWorkflowAndViewsTests(TestCase):
         exported_students = [r[0] for r in rows[1:]]
         self.assertIn('Test Student', exported_students)
         self.assertNotIn('Blank Student', exported_students)
+
+    def test_export_data_excludes_inactive_students(self):
+        self.client.force_login(self.admin_user)
+        inactive = CurrentStudent.objects.create(
+            stu_annual_key="inactive_export_key",
+            ssid="inactivessid",
+            student_id="inactiveid",
+            student_name="Inactive Export Student",
+            grade="04",
+            status="Inactive",
+            school_year="2025-2026",
+        )
+        StudentAccommodation.objects.create(
+            student_annual_key=inactive.stu_annual_key,
+        ).options.add(self.opt)
+
+        export_url = reverse('desi:export_data')
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        exported_students = [r[0] for r in list(reader)[1:]]
+        self.assertIn('Test Student', exported_students)
+        self.assertNotIn('Inactive Export Student', exported_students)
 
     def test_export_endpoint_requires_valid_auth_token(self):
         endpoint_url = reverse('desi:export_data_endpoint')

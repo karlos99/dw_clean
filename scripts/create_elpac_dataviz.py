@@ -28,6 +28,9 @@ from pathlib import Path
 
 ELPAC_PREFIX = 'ELPAC Summative •'
 CHART_FOLDER = 'elpac_summative'
+DATASET_FOLDER = 'Assessments / ELPAC Summative'
+DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
+DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 SOURCE_TABLE = 'results_with_tests'
 
 # Confirmed via ClickHouse discovery (Desert Sands); override if ``--discover`` differs.
@@ -994,9 +997,15 @@ def resolve_owner(owner_ref):
         if not user:
             raise SystemExit(f'No user found for "{owner_ref}".')
         return user
-    user = User.objects.filter(is_superuser=True).order_by('id').first()
-    if not user:
-        user = User.objects.order_by('id').first()
+    user = (
+        User.objects.filter(
+            first_name__iexact=DEFAULT_OWNER_NAME[0],
+            last_name__iexact=DEFAULT_OWNER_NAME[1],
+        ).first()
+        or User.objects.filter(email__iexact=DEFAULT_OWNER_EMAIL).first()
+        or User.objects.filter(is_superuser=True).order_by('id').first()
+        or User.objects.order_by('id').first()
+    )
     if not user:
         raise SystemExit('No users exist to own the ELPAC page.')
     return user
@@ -1022,27 +1031,33 @@ def enable_dataset_tables():
 
 
 def upsert_dataset(spec, owner):
-    from dataviz.models import Dataset
+    from dataviz.models import Dataset, DataVizDatasetFolder
 
     mappings = {c: c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'],
-        owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_SQL,
-            'source_sql': spec['sql'],
-            'base_table': SOURCE_TABLE,
-            'distinct': False,
-            'columns': spec['columns'],
-            'column_mappings': mappings,
-            'joins': [],
-            'filters': [],
-            'status_filter': [],
-            'order_by': [],
-            'description': spec['description'],
-        },
-    )
-    print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
+    folder = spec.get('folder', DATASET_FOLDER)
+    dataset = Dataset.objects.filter(name=spec['name']).order_by('id').first()
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+    else:
+        dataset.owner = owner
+    dataset.source_type = Dataset.SOURCE_SQL
+    dataset.source_sql = spec['sql']
+    dataset.base_table = SOURCE_TABLE
+    dataset.distinct = False
+    dataset.columns = spec['columns']
+    dataset.column_mappings = mappings
+    dataset.joins = []
+    dataset.filters = []
+    dataset.status_filter = []
+    dataset.order_by = []
+    dataset.description = spec['description']
+    dataset.folder = folder
+    dataset.save()
+    if folder:
+        parts = folder.split(' / ')
+        for i in range(1, len(parts) + 1):
+            DataVizDatasetFolder.objects.get_or_create(path=' / '.join(parts[:i]))
+    print(f'  dataset ready: {dataset.name} (#{dataset.pk}) folder={dataset.folder or "(root)"}')
     return dataset
 
 
@@ -1055,14 +1070,15 @@ def upsert_chart(spec, datasets, owner):
         raise SystemExit(f'Refusing to write chart outside ELPAC set: {raw_name}')
     folder_name = f'{CHART_FOLDER} / {raw_name}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(owner=owner, name=raw_name).first()
+    chart = SavedChart.objects.filter(name=raw_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart.objects.filter(owner=owner, name=folder_name).first()
+        chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart(owner=owner, name=folder_name)
+        chart = SavedChart(name=folder_name)
     else:
         # Rename legacy root-level charts into the assessment folder.
         chart.name = folder_name
+    chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
     chart.source_type = SavedChart.SOURCE_DATASET

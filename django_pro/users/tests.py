@@ -288,6 +288,30 @@ class UserSchoolsAndRoleManagementTests(TestCase):
         self.assertIn('Project Admin', card_names)
         self.assertIn('Teacher', card_names)
 
+    def test_bulk_assignable_roles_include_district_view_not_project_admin(self):
+        Role.objects.get_or_create(name='District View')
+        resp = self.client.get('/users/manage/')
+        bulk_names = [r.name for r in resp.context['bulk_assignable_roles']]
+        self.assertIn('District View', bulk_names)
+        self.assertIn('School View', bulk_names)
+        self.assertNotIn('Project Admin', bulk_names)
+
+    def test_bulk_add_role_rejects_project_admin(self):
+        target = User.objects.create_user(
+            username='bulk_target',
+            email='bulk_target@example.com',
+        )
+        resp = self.client.post(
+            '/users/manage/bulk-update/',
+            {
+                'action': 'add_role',
+                'role_id': self.role_admin.id,
+                'user_ids': [target.id],
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(target.roles.filter(id=self.role_admin.id).exists())
+
     def test_search_users_for_role(self):
         resp = self.client.get('/users/manage/users-search/?q=Alice')
         self.assertEqual(resp.status_code, 200)
