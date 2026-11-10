@@ -917,6 +917,49 @@ class IBColumnKeyTests(SimpleTestCase):
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('dataLoader_ibexamresult', where_clauses[0])
 		self.assertIn('cs.ssid IN', where_clauses[0])
+		self.assertIn('jsonb_array_elements', where_clauses[0])
+
+
+class IBColumnDiscoveryTests(TestCase):
+	def test_get_ib_columns_includes_non_primary_exam_subjects(self):
+		from django.core.cache import cache
+		from dataLoader.models import IBExamResult, IBImportLog, IBImportStatus
+		from dataexploration.column_utils import get_ib_columns, ib_column_key
+
+		import_log = IBImportLog.objects.create(
+			name='IB discovery test',
+			filename='discovery.csv',
+			school_year='2024-2025',
+			status=IBImportStatus.COMPLETED,
+			is_published=True,
+		)
+		IBExamResult.objects.create(
+			import_log=import_log,
+			record_key='cand123|2024-2025',
+			ssid='9000000099',
+			personal_code='cand123',
+			candidate_name='Test, Student',
+			school_year='2024-2025',
+			subject='ECONOMICS',
+			level='HL',
+			grade='6',
+			exam_results=[
+				{'subject': 'ECONOMICS', 'level': 'HL', 'grade': '6'},
+				{'subject': 'BIOLOGY', 'level': 'SL', 'grade': '5'},
+				{'subject': 'VISUAL ARTS', 'level': 'HL', 'grade': '4'},
+			],
+		)
+
+		cache.clear()
+		structure = get_ib_columns()
+		subjects = structure.get('2024-2025', {}).get('subjects', {})
+		self.assertIn('ECONOMICS', subjects)
+		self.assertIn('BIOLOGY', subjects)
+		self.assertIn('VISUAL ARTS', subjects)
+		self.assertEqual(
+			subjects['BIOLOGY']['PL'],
+			ib_column_key('2024-2025', 'BIOLOGY', kind='PL'),
+		)
 
 
 class SurveyDataResolutionTests(SimpleTestCase):

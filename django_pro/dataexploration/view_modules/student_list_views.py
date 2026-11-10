@@ -1794,27 +1794,37 @@ def _load_students(request):
                         order_by_expr = "_sort._v"
                         params.append(sat_info['year'])
             elif sort_by.startswith('ib_'):
-                from dataexploration.column_utils import parse_ib_column_key
+                from dataexploration.column_utils import (
+                    parse_ib_column_key,
+                    ib_subject_row_match_sql,
+                    ib_row_value_sql,
+                )
                 _parsed = parse_ib_column_key(sort_by)
                 if _parsed:
-                    target_field = 'grade' if _parsed['kind'] == 'PL' else ('category' if _parsed['kind'] == 'CAT' else 'level')
-                    sub_params = [_parsed['year']]
-                    lvl_clause = ""
-                    if _parsed.get('level'):
-                        lvl_clause = " AND level = %s" if not list_uses_pg else " AND r.level = %s"
-                        sub_params.append(_parsed['level'])
-
+                    subj_like = f"%{_parsed['subj_slug']}%"
                     if list_uses_pg:
+                        value_expr, value_extra = ib_row_value_sql(
+                            _parsed['kind'], level=_parsed.get('level'),
+                        )
+                        sub_params = [_parsed['year'], subj_like, subj_like]
+                        if _parsed['kind'] != 'CAT':
+                            sub_params.extend([subj_like, *value_extra, subj_like])
                         sort_join_sql = (
                             " LEFT JOIN ("
-                            f" SELECT r.ssid AS _k, r.{target_field} AS _v"
+                            f" SELECT r.ssid AS _k, ({value_expr}) AS _v"
                             ' FROM "dataLoader_ibexamresult" r'
                             ' INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id'
-                            f" WHERE r.school_year = %s AND il.is_published = true{lvl_clause}"
-                            " AND lower(regexp_replace(r.subject, '[^A-Za-z0-9_]+', '_', 'g')) LIKE lower(%s)"
+                            f" WHERE r.school_year = %s AND il.is_published = true"
+                            f" AND {ib_subject_row_match_sql('r', '%s')}"
                             " ) _sort ON _sort._k = cs.ssid"
                         )
                     else:
+                        target_field = 'grade' if _parsed['kind'] == 'PL' else ('category' if _parsed['kind'] == 'CAT' else 'level')
+                        sub_params = [_parsed['year']]
+                        lvl_clause = ""
+                        if _parsed.get('level'):
+                            lvl_clause = " AND level = %s"
+                            sub_params.append(_parsed['level'])
                         sort_join_sql = (
                             " LEFT JOIN ("
                             f" SELECT ssid AS _k, any({target_field}) AS _v"
@@ -1824,7 +1834,7 @@ def _load_students(request):
                             " GROUP BY ssid"
                             " ) _sort ON _sort._k = cs.ssid"
                         )
-                    sub_params.append(f"%{_parsed['subj_slug'].lower()}%")
+                        sub_params.append(subj_like.lower())
                     order_by_expr = "nullIf(_sort._v, '')"
                     params.extend(sub_params)
             elif is_mtss_column(sort_by):
@@ -3021,22 +3031,33 @@ def _load_students(request):
                 )
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
-                target_field = 'grade' if parsed['kind'] == 'PL' else ('category' if parsed['kind'] == 'CAT' else 'level')
+                from dataexploration.column_utils import ib_subject_row_match_sql, ib_row_value_sql
+                subj_slug_param = f"%{parsed['subj_slug']}%"
+                value_expr, value_extra = ib_row_value_sql(
+                    parsed['kind'], level=parsed.get('level'),
+                )
                 sub_clauses = [
                     'r.school_year = %s',
                     'il.is_published = true',
-                    f'r.{target_field} IS NOT NULL',
-                    f"r.{target_field} <> ''",
+                    ib_subject_row_match_sql('r', '%s'),
+                    f"({value_expr}) IS NOT NULL",
+                    f"({value_expr}) <> ''",
                 ]
-                sub_params = [parsed['year']]
+                sub_params = [parsed['year'], subj_slug_param, subj_slug_param]
+                if parsed['kind'] != 'CAT':
+                    sub_params.extend([subj_slug_param, *value_extra, subj_slug_param])
                 if parsed.get('level'):
-                    sub_clauses.append('r.level = %s')
-                    sub_params.append(parsed['level'])
-                sub_clauses.append("REGEXP_REPLACE(r.subject, '[^A-Za-z0-9_]+', '_', 'g') ILIKE %s")
-                sub_params.append(f"%{parsed['subj_slug']}%")
+                    from dataexploration.column_utils import ib_exam_results_json_sql
+                    ej = ib_exam_results_json_sql('r')
+                    sub_clauses.append(
+                        f"(EXISTS (SELECT 1 FROM jsonb_array_elements({ej}) AS elem "
+                        f"WHERE UPPER(NULLIF(TRIM(elem->>'level'), '')) = UPPER(%s))"
+                        f" OR (jsonb_array_length({ej}) = 0 AND UPPER(NULLIF(TRIM(r.level), '')) = UPPER(%s)))"
+                    )
+                    sub_params.extend([parsed['level'], parsed['level']])
 
                 options_query = f"""
-                    SELECT DISTINCT r.{target_field} AS v
+                    SELECT DISTINCT ({value_expr}) AS v
                     FROM "dataLoader_ibexamresult" r
                     INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
                     INNER JOIN current_student cs ON r.ssid = cs.ssid

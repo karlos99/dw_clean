@@ -788,37 +788,57 @@ def apply_column_filters(
             continue
 
         if col.startswith('ib_'):
-            from dataexploration.column_utils import parse_ib_column_key
+            from dataexploration.column_utils import (
+                parse_ib_column_key,
+                ib_exam_results_json_sql,
+                ib_subject_row_match_sql,
+                ib_row_value_sql,
+            )
             parsed = parse_ib_column_key(col)
             if not parsed:
                 continue
-            target_field = 'grade' if parsed['kind'] == 'PL' else ('category' if parsed['kind'] == 'CAT' else 'level')
+            subj_slug_param = f"%{parsed['subj_slug']}%"
+            value_expr, value_extra = ib_row_value_sql(
+                parsed['kind'], slug_placeholder='%s', level=parsed.get('level'),
+            )
+            ej = ib_exam_results_json_sql('r')
             sub_clauses = [
                 'r.school_year = %s',
                 'il.is_published = true',
+                ib_subject_row_match_sql('r', '%s'),
             ]
-            sub_params = [parsed['year']]
+            sub_params = [parsed['year'], subj_slug_param, subj_slug_param]
             if parsed.get('level'):
-                sub_clauses.append('r.level = %s')
-                sub_params.append(parsed['level'])
-            sub_clauses.append("REGEXP_REPLACE(r.subject, '[^A-Za-z0-9_]+', '_', 'g') ILIKE %s")
-            sub_params.append(f"%{parsed['subj_slug']}%")
+                sub_clauses.append(
+                    f"("
+                    f"EXISTS ("
+                    f"SELECT 1 FROM jsonb_array_elements({ej}) AS elem "
+                    f"WHERE UPPER(NULLIF(TRIM(elem->>'level'), '')) = UPPER(%s)"
+                    f")"
+                    f" OR (jsonb_array_length({ej}) = 0 AND UPPER(NULLIF(TRIM(r.level), '')) = UPPER(%s))"
+                    f")"
+                )
+                sub_params.extend([parsed['level'], parsed['level']])
 
             sub_base = (
                 'SELECT r.ssid FROM "dataLoader_ibexamresult" r '
                 'INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id '
                 f"WHERE {' AND '.join(sub_clauses)} "
             )
+            if parsed['kind'] == 'CAT':
+                per_value_params = []
+            else:
+                per_value_params = [subj_slug_param, *value_extra, subj_slug_param]
             conditions = []
             if real_values:
-                conditions.append(f"cs.ssid IN ({sub_base} AND r.{target_field} = ANY(%s))")
-                params.extend(sub_params + [[str(v) for v in real_values]])
+                conditions.append(f"cs.ssid IN ({sub_base} AND ({value_expr}) = ANY(%s))")
+                params.extend(sub_params + per_value_params + [[str(v) for v in real_values]])
             if has_blank:
                 conditions.append(
                     f"(cs.ssid NOT IN ({sub_base}) OR "
-                    f"cs.ssid IN ({sub_base} AND (r.{target_field} IS NULL OR r.{target_field} = '')))"
+                    f"cs.ssid IN ({sub_base} AND (({value_expr}) IS NULL OR ({value_expr}) = '')))"
                 )
-                params.extend(sub_params + sub_params)
+                params.extend(sub_params + per_value_params + sub_params + per_value_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue
