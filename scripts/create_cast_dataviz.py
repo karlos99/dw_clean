@@ -27,6 +27,7 @@ from pathlib import Path
 CAST_PREFIX = 'CAST •'
 CAA_PREFIX = 'CAA Science •'
 CHART_FOLDER = 'cast'
+CHART_ROOT_FOLDER = 'Assessment_pages'
 DATASET_FOLDER = 'Assessments / CAST & CAA Science'
 DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
 DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
@@ -946,15 +947,18 @@ def upsert_chart(spec, datasets, owner):
     allowed_prefixes = (CAST_PREFIX, CAA_PREFIX)
     if not raw_name.startswith(allowed_prefixes):
         raise SystemExit(f'Refusing to write chart outside CAST/CAA set: {raw_name}')
-    folder_name = f'{CHART_FOLDER} / {raw_name}'
+    folder_name = f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / {raw_name}'
+    old_folder_name = f'{CHART_FOLDER} / {raw_name}'
     dataset = datasets[spec['dataset']]
-    chart = SavedChart.objects.filter(name=raw_name).order_by('id').first()
+    chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
-        chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
+        chart = SavedChart.objects.filter(name=old_folder_name).order_by('id').first()
+    if chart is None:
+        chart = SavedChart.objects.filter(name=raw_name).order_by('id').first()
     if chart is None:
         chart = SavedChart(name=folder_name)
     else:
-        # Rename legacy root-level charts into the assessment folder.
+        # Rename legacy root-level / old-folder charts into the new root folder.
         chart.name = folder_name
     chart.owner = owner
     chart.chart_type = spec['chart_type']
@@ -974,18 +978,26 @@ def upsert_chart(spec, datasets, owner):
 
 
 def move_assessment_charts_to_folder(owner):
-    """Move any remaining root-level CAST/CAA charts into the cast folder."""
+    """Move all CAST/CAA charts under Assessment_pages / cast."""
     from dataviz.models import SavedChart
 
+    new_prefix = f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / '
+    old_prefix = f'{CHART_FOLDER} / '
     moved = 0
-    for chart in SavedChart.objects.filter(owner=owner):
-        if chart.name.startswith(f'{CHART_FOLDER} / '):
+    for chart in SavedChart.objects.all():
+        name = chart.name or ''
+        if name.startswith(new_prefix):
             continue
-        if chart.name.startswith((CAST_PREFIX, CAA_PREFIX)):
-            chart.name = f'{CHART_FOLDER} / {chart.name}'
-            chart.save(update_fields=['name'])
-            moved += 1
-    print(f'  moved {moved} legacy chart(s) into {CHART_FOLDER}/')
+        if name.startswith(old_prefix):
+            chart.name = f'{CHART_ROOT_FOLDER} / {name}'
+        elif name.startswith((CAST_PREFIX, CAA_PREFIX)):
+            chart.name = new_prefix + name
+        else:
+            continue
+        chart.owner = owner
+        chart.save(update_fields=['name', 'owner'])
+        moved += 1
+    print(f'  moved {moved} legacy chart(s) into {new_prefix}')
 
 
 def upsert_page(spec, charts, owner):

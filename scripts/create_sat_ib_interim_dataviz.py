@@ -15,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 
+CHART_ROOT_FOLDER = 'Assessment_pages'
 DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
 DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 
@@ -975,11 +976,19 @@ def upsert_chart(spec, datasets, owner):
     from dataviz.models import SavedChart
 
     folder = PAGE_SPECS_BY_CHART[spec['name']]['folder']
-    folder_name = f'{folder} / {spec["name"]}'
+    raw_name = spec['name']
+    folder_name = f'{CHART_ROOT_FOLDER} / {folder} / {raw_name}'
+    old_folder_name = f'{folder} / {raw_name}'
     dataset = datasets[spec['dataset']]
     chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
+        chart = SavedChart.objects.filter(name=old_folder_name).order_by('id').first()
+    if chart is None:
+        chart = SavedChart.objects.filter(name=raw_name).order_by('id').first()
+    if chart is None:
         chart = SavedChart(name=folder_name)
+    else:
+        chart.name = folder_name
     chart.owner = owner
     chart.chart_type = spec['chart_type']
     chart.config = spec['config']
@@ -995,6 +1004,37 @@ def upsert_chart(spec, datasets, owner):
     chart.save()
     print(f'  chart ready:   {chart.name} (#{chart.pk})')
     return chart
+
+
+def move_assessment_charts_to_folder(owner):
+    """Move SAT/IB/Interim charts under Assessment_pages / <folder>."""
+    from dataviz.models import SavedChart
+
+    mapping = {
+        'sat': ('SAT •',),
+        'ib': ('IB •',),
+        'interim_assessments': ('Interim •',),
+    }
+    moved = 0
+    for chart in SavedChart.objects.all():
+        name = chart.name or ''
+        for folder, raw_prefixes in mapping.items():
+            new_prefix = f'{CHART_ROOT_FOLDER} / {folder} / '
+            old_prefix = f'{folder} / '
+            if name.startswith(new_prefix):
+                break
+            if name.startswith(old_prefix):
+                chart.name = f'{CHART_ROOT_FOLDER} / {name}'
+            elif name.startswith(raw_prefixes):
+                chart.name = new_prefix + name
+            else:
+                continue
+            chart.owner = owner
+            chart.save(update_fields=['name', 'owner'])
+            moved += 1
+            break
+    if moved:
+        print(f'  moved {moved} legacy chart(s) into {CHART_ROOT_FOLDER}/')
 
 
 def upsert_page(spec, charts, owner):
@@ -1162,6 +1202,7 @@ def main():
     enable_dataset_tables()
     datasets = {spec['name']: upsert_dataset(spec, owner) for spec in DATASET_SPECS}
     charts = {spec['name']: upsert_chart(spec, datasets, owner) for spec in CHART_SPECS}
+    move_assessment_charts_to_folder(owner)
     delete_obsolete_charts(owner)
     for spec in PAGE_SPECS:
         page = upsert_page(spec, charts, owner)
