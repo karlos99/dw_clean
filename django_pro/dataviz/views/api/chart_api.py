@@ -401,6 +401,8 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
     if (cfg.get('student_share_percent') or cfg.get('one_row_per_ssid')
             or cfg.get('one_row_per_stu_annual_key')):
         return None
+    if _sql_needs_postgres(ds.source_sql or ''):
+        return None
 
     alias_to_src = _sql_dataset_alias_map(ds, column_mappings)
 
@@ -537,6 +539,8 @@ def _clickhouse_aggregate_sql_table(ds, cfg, filters, column_mappings, *,
     if str(cfg.get('st_col_mode', 'values')) != 'values':
         return None
     if str(cfg.get('st_agg_func', 'count') or 'count').lower() != 'count':
+        return None
+    if _sql_needs_postgres(ds.source_sql or ''):
         return None
 
     row_col = cfg.get('st_row_col') or ''
@@ -2452,7 +2456,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     ctx = {
         'option_json':       option_json,
         'chart_id':          chart.pk,
-        'drill_enabled':     '1',
+        'drill_enabled':     '0' if chart_cfg.get('disable_drill') else '1',
         'drill_source':      drill_source,
         'drill_source_id':   drill_source_id,
         'drill_source_name': drill_source_name,
