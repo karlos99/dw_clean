@@ -41,6 +41,7 @@ def get_all_ddl():
         CREATE_ANALYTICS_CCGI_COLLEGE_APPLICATION,
         CREATE_ANALYTICS_CCGI_APPLICATION_STATUS,
         CREATE_ANALYTICS_STUDENT_INCIDENTS,
+        CREATE_ANALYTICS_STUDENT_ATTENDANCE_WEEKLY,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -79,6 +80,7 @@ ANALYTICS_TABLE_NAMES = (
     # so they are not invisible in the system funnel charts.
     'analytics_ccgi_application_status',
     'analytics_student_incidents',
+    'analytics_student_attendance_weekly',
 )
 
 
@@ -316,25 +318,49 @@ SETTINGS index_granularity = 8192
 
 CREATE_STUDENT_ATTENDANCE = """
 CREATE TABLE IF NOT EXISTS student_attendance (
+    attendance_row_key String,
     stu_annual_key String,
     ssid String,
     student_id Nullable(String),
+    school_year String,
+    school_year_number Nullable(String),
+    school_short_name Nullable(String),
     last_name Nullable(String),
     first_name Nullable(String),
-    school_short_name Nullable(String),
-    school_year String,
-    student_status Nullable(String),
-    absent_fte Nullable(Float64),
-    tardy_count Nullable(Int32),
-    days_enrolled Nullable(Int32),
-    attendance_percent Nullable(Float64),
+    absent_fte Nullable(String),
+    tardy_count Nullable(String),
+    days_enrolled Nullable(String),
+    attendance_percent Nullable(String),
+    absents_percent Nullable(String),
     absence_dates Nullable(String),
+    tardy_dates Nullable(String),
     updated_at Nullable(DateTime64)
 )
 ENGINE = MergeTree
-ORDER BY (school_year, ssid, stu_annual_key)
+ORDER BY (school_year, ssid, attendance_row_key)
 SETTINGS index_granularity = 8192
 """
+
+# Column order must match PostgreSQL ``student_attendance`` for postgresql() reads.
+STUDENT_ATTENDANCE_PG_COLUMNS = (
+    'attendance_row_key',
+    'stu_annual_key',
+    'ssid',
+    'student_id',
+    'school_year',
+    'school_year_number',
+    'school_short_name',
+    'last_name',
+    'first_name',
+    'absent_fte',
+    'tardy_count',
+    'days_enrolled',
+    'attendance_percent',
+    'absents_percent',
+    'absence_dates',
+    'tardy_dates',
+    'updated_at',
+)
 
 CREATE_STUDENT_INCIDENTS = """
 CREATE TABLE IF NOT EXISTS student_incidents (
@@ -748,6 +774,28 @@ ORDER BY (school_year, system, application_status, ssid)
 SETTINGS index_granularity = 8192
 """
 
+CREATE_ANALYTICS_STUDENT_ATTENDANCE_WEEKLY = """
+CREATE TABLE IF NOT EXISTS analytics_student_attendance_weekly (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    grade_label Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    school_week Int32,
+    week_start_date Nullable(String),
+    week_end_date Nullable(String),
+    week_label Nullable(String),
+    attendance_rate_week Float64
+)
+ENGINE = MergeTree
+ORDER BY (school_year, school_week, ssid)
+SETTINGS index_granularity = 8192
+"""
+
 CREATE_ANALYTICS_STUDENT_INCIDENTS = """
 CREATE TABLE IF NOT EXISTS analytics_student_incidents (
     ssid String,
@@ -840,5 +888,14 @@ COLUMN_MIGRATION_DDL = (
     "ADD COLUMN IF NOT EXISTS uc_gpa Nullable(Float64)",
     "ALTER TABLE analytics_dbuilder_panorama_survey "
     "ADD COLUMN IF NOT EXISTS response_value Nullable(UInt8) AFTER response",
+    "ALTER TABLE student_attendance DROP COLUMN IF EXISTS student_status",
+    "ALTER TABLE student_attendance "
+    "ADD COLUMN IF NOT EXISTS attendance_row_key String DEFAULT ''",
+    "ALTER TABLE student_attendance "
+    "ADD COLUMN IF NOT EXISTS school_year_number Nullable(String)",
+    "ALTER TABLE student_attendance "
+    "ADD COLUMN IF NOT EXISTS absents_percent Nullable(String)",
+    "ALTER TABLE student_attendance "
+    "ADD COLUMN IF NOT EXISTS tardy_dates Nullable(String)",
 )
 

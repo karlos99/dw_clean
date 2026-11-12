@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '18'
+_CHART_PIPELINE_VERSION = '21'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -69,7 +69,7 @@ def _measure_display_label(y_col, agg, column_defs=None, col_mappings=None) -> s
 
 
 def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
-                                  allow_limit=False, column_defs=None):
+                                  allow_limit=False, column_defs=None, user=None):
     """Return compact chart rows for visual datasets ClickHouse can aggregate.
 
     Chart builders historically received every matching row and aggregated it
@@ -88,6 +88,9 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
     """
     chart_type = cfg.get('chart_type', 'bar')
     if chart_type not in _CLICKHOUSE_AGGREGATE_CHARTS:
+        return None
+    # Unique-student share charts need per-row SSIDs for the denominator.
+    if cfg.get('student_share_percent') or cfg.get('one_row_per_ssid'):
         return None
 
     x_cols = cfg.get('x_cols') or []
@@ -176,7 +179,7 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
     try:
         sql, params = compile_aggregated_dataset_to_sql(
             ds, x_full_list[:1], y_full, aggregation, series_col=series_full,
-            user=None, limit=limit_val, interactive_filters=resolved_interactive,
+            user=user, limit=limit_val, interactive_filters=resolved_interactive,
             one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
             date_bucket=(cfg.get('x_date_bucket') or '').strip().lower() or None,
             status_filter=status_val,
@@ -488,7 +491,7 @@ def _calc_measures(cfg, ds, index):
     return measures, row_cols, calc_ids
 
 
-def _clickhouse_aggregate_table_cells(ds, cfg, filters, column_mappings, *, column_defs=None):
+def _clickhouse_aggregate_table_cells(ds, cfg, filters, column_mappings, *, column_defs=None, user=None):
     """Return pre-aggregated pivot cells for a summary table or dynamic pivot.
 
     The table builders cross-tabulate raw rows in Polars. This computes the
@@ -603,7 +606,7 @@ def _clickhouse_aggregate_table_cells(ds, cfg, filters, column_mappings, *, colu
     try:
         sql, params = compile_aggregated_dataset_to_sql(
             ds, row_full[:1], y_full, sql_aggregation, series_col=col_full,
-            user=None, limit=None, interactive_filters=resolved_interactive,
+            user=user, limit=None, interactive_filters=resolved_interactive,
             one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
             status_filter=status_val,
             extra_group_cols=row_full[1:],
@@ -1010,7 +1013,7 @@ def _cfg_from_post(post):
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
-        'show_zoom':         bool(post.get('show_zoom', '1')),
+        'show_zoom':         post.get('show_zoom') == '1',
         'show_toolbox':      bool(post.get('show_toolbox', '1')),
         'show_grid':         bool(post.get('show_grid', '1')),
         'show_axis_labels':  bool(post.get('show_axis_labels', '1')),
@@ -1248,7 +1251,10 @@ def chart_preview_api(request):
             res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
             if res.get('error'):
                 return _error(res['error'])
-            aliased_rows = res.get('rows', [])
+            aliased_rows = _apply_sql_dataset_row_filters(
+                res.get('rows', []), source_filters or {},
+            )
+            aliased_rows = _dedupe_chart_rows(aliased_rows, cfg)
             cfg = _remap_config_cols(cfg, col_mappings)
         else:
             active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
@@ -1275,8 +1281,9 @@ def chart_preview_api(request):
             if res.get('error'):
                 return _error(res['error'])
             aliased_rows = res.get('rows', [])
-            if one_per_sak and aggregated is None:
-                aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
+            aliased_rows = _dedupe_chart_rows(
+                aliased_rows, cfg, used_aggregate=aggregated is not None,
+            )
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
         _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
@@ -1573,10 +1580,79 @@ def _parse_pf_filters(get_params) -> dict:
     return filters
 
 
-def _chart_flight_keys(chart_id, updated_ts, pf_hash, embed_suffix, sync_version):
+def _normalize_grade_token(val):
+    s = str(val or '').strip()
+    if not s:
+        return s
+    upper = s.upper()
+    if upper in ('K', 'KG'):
+        return 'KN'
+    if upper in ('TK', 'KN'):
+        return upper
+    if s.isdigit():
+        return s.zfill(2)
+    return s
+
+
+def _apply_sql_dataset_row_filters(rows, filters):
+    """Apply page/chart filters to SQL dataset rows (same rules as drill-through)."""
+    if not rows or not filters:
+        return rows
+    filters = dict(filters)
+    # Page grade filter may use raw ``grade`` while SQL datasets expose ``grade_label``.
+    if 'grade' in filters and 'grade_label' not in filters:
+        filters['grade_label'] = filters.pop('grade')
+    if 'grade_label' in filters:
+        from dataviz.utils.drill_through import _apply_drill_row_filters
+
+        raw = filters.pop('grade_label')
+        allowed = raw if isinstance(raw, list) else [raw]
+        norm_allowed = {_normalize_grade_token(v) for v in allowed}
+        str_allowed = {str(v).strip() for v in allowed}
+        rows = [
+            r for r in rows
+            if _normalize_grade_token(r.get('grade_label') or r.get('grade')) in norm_allowed
+            or str(r.get('grade_label') or '').strip() in str_allowed
+            or str(r.get('grade') or '').strip() in str_allowed
+        ]
+        if not filters:
+            return rows
+        return _apply_drill_row_filters(rows, filters)
+    from dataviz.utils.drill_through import _apply_drill_row_filters
+    return _apply_drill_row_filters(rows, filters)
+
+
+def _merge_page_filters(chart_filters, pf_filters, chart_cfg):
+    """Merge page filters into chart filters, honoring ``skip_page_filters`` in config."""
+    merged = dict(chart_filters or {})
+    skip = set(chart_cfg.get('skip_page_filters') or [])
+    for key, val in (pf_filters or {}).items():
+        if key in skip:
+            continue
+        merged[key] = val
+    return merged
+
+
+def _dedupe_chart_rows(rows, cfg, *, used_aggregate=False):
+    """Optional one-row-per-student dedupe before chart aggregation."""
+    if used_aggregate or not rows or not cfg:
+        return rows
+    from dataviz.utils.compiler import dedupe_rows_by_ssid, dedupe_rows_by_stu_annual_key
+    if cfg.get('one_row_per_stu_annual_key'):
+        rows = dedupe_rows_by_stu_annual_key(rows)
+    skip_pf = set(cfg.get('skip_page_filters') or [])
+    multi_year_trend = bool(cfg.get('multi_year_trend')) or 'test_year' in skip_pf
+    if cfg.get('one_row_per_ssid') or (
+        cfg.get('student_share_percent') and not multi_year_trend
+    ):
+        rows = dedupe_rows_by_ssid(rows)
+    return rows
+
+
+def _chart_flight_keys(chart_id, updated_ts, pf_hash, embed_suffix, sync_version, scope_suffix=''):
     lock_key = (
         f'chart_flight:{_CHART_PIPELINE_VERSION}:{chart_id}:'
-        f'{updated_ts}:{pf_hash}:{embed_suffix}:{sync_version}'
+        f'{updated_ts}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
     )
     return lock_key, f'{lock_key}:done'
 
@@ -1682,6 +1758,79 @@ def warm_published_page_charts(limit=200, warm_schools=True):
     return warmed
 
 
+def _chart_data_scope(request):
+    """Return (user, cache-suffix) when charts must be limited to a caseload."""
+    user = getattr(request, 'user', None) if request is not None else None
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None, ''
+    if not getattr(user, 'active_caseload', False):
+        return None, ''
+    if hasattr(user, 'has_counselor_caseload') and not user.has_counselor_caseload():
+        return None, ''
+
+    keys = user.get_accessible_student_keys()
+    if keys is None:
+        return None, ''
+
+    key_hash = hashlib.md5(
+        json.dumps(list(keys), sort_keys=True).encode()
+    ).hexdigest()[:12]
+    role_name = getattr(getattr(user, 'active_role', None), 'name', '') or ''
+    school_id = getattr(getattr(user, 'active_school', None), 'state_id', '') or ''
+    suffix = f':caseload:{user.pk}:r{role_name}:s{school_id}:k{key_hash}'
+    return user, suffix
+
+
+def _filter_chart_rows_for_caseload(result, user):
+    """Post-filter raw chart rows for SQL sources that bypass the query compiler."""
+    if not user or not result or result.get('error'):
+        return result
+    rows = result.get('rows') or []
+    if not rows:
+        return result
+
+    columns = result.get('columns') or list(rows[0].keys())
+    bare_cols = {str(c).split('.')[-1].lower(): c for c in columns}
+    key_cols = [c for bare, c in bare_cols.items() if bare == 'stu_annual_key']
+    ssid_cols = [c for bare, c in bare_cols.items() if bare == 'ssid']
+    student_id_cols = [
+        c for bare, c in bare_cols.items()
+        if bare in ('student_id', 'local_student_id')
+    ]
+    if not (key_cols or ssid_cols or student_id_cols):
+        return result
+
+    keys = set(user.get_accessible_student_keys() or [])
+    ssids, student_ids = user.get_counselor_caseload_identifiers() if hasattr(
+        user, 'get_counselor_caseload_identifiers'
+    ) else ([], [])
+    ssids = set(ssids or [])
+    student_ids = set(student_ids or [])
+
+    def _value(row, col):
+        if col in row:
+            return str(row.get(col) or '').strip()
+        bare = str(col).split('.')[-1]
+        for key, val in row.items():
+            if str(key).split('.')[-1] == bare:
+                return str(val or '').strip()
+        return ''
+
+    filtered = []
+    for row in rows:
+        if any(_value(row, c) in keys for c in key_cols):
+            filtered.append(row)
+        elif any(_value(row, c) in ssids for c in ssid_cols):
+            filtered.append(row)
+        elif any(_value(row, c) in student_ids for c in student_id_cols):
+            filtered.append(row)
+
+    result = dict(result)
+    result['rows'] = filtered
+    result['row_count'] = len(filtered)
+    return result
+
+
 def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
                          drill_source_name='', is_embed=False, request=None, if_none_match=None,
                          school_id=None):
@@ -1711,6 +1860,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # Read once per render so a sync that happens mid-request cannot produce
     # mismatched data/render cache keys.
     sync_version = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    # Counselor caseload users get their own chart/data cache entries so an
+    # unscoped chart can never be served into a caseload-only view.
+    chart_user, scope_suffix = _chart_data_scope(request)
 
     # ── School scope ────────────────────────────────────────────────
     if school_id and school_id not in ('all', 'All', ''):
@@ -1723,10 +1875,21 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # updated_at as an int-second timestamp busts the key on every chart save
     updated_ts = int(chart.updated_at.timestamp())
     config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
+    # Raw rows cached below are already narrowed by chart.source_filters +
+    # page filters (minus config.skip_page_filters) and by
+    # one_row_per_stu_annual_key. Include those in the data-cache key so two
+    # charts that share a dataset but use different filters cannot read each
+    # other's cached rows (e.g. a multi-year trend chart and a single-year
+    # school chart created in the same second).
+    filter_cfg_hash = hashlib.md5(json.dumps({
+        'source_filters': chart.source_filters or {},
+        'skip_page_filters': chart.config.get('skip_page_filters') or [],
+        'one_row_per_stu_annual_key': bool(chart.config.get('one_row_per_stu_annual_key')),
+    }, sort_keys=True, default=str).encode()).hexdigest()[:12]
     embed_suffix = 'e' if is_embed else 's'
     render_cache_key = (
         f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
+        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
     )
     etag = f'W/"{render_cache_key[-16:]}"'
 
@@ -1739,7 +1902,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
 
     lock_key, done_key = _chart_flight_keys(
-        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
+        chart_id, updated_ts, pf_hash, embed_suffix, sync_version, scope_suffix,
     )
     done = cache.get(done_key)
     if done is not None:
@@ -1768,8 +1931,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
 
     source_part = (
         f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
-        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:{pf_hash}:{updated_ts}:'
-        f'{sync_version}'
+        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:'
+        f'{config_hash}:{filter_cfg_hash}:{pf_hash}:{updated_ts}:'
+        f'{sync_version}{scope_suffix}'
     )
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
@@ -1788,14 +1952,20 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             pass
         elif chart.source_type == SavedChart.SOURCE_SQL:
             result = run_raw_sql(chart.source_sql)
+            result = _filter_chart_rows_for_caseload(result, chart_user)
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
             selected_columns = list(chart.config.get('selected_columns', []))
             for c in _chart_extra_query_columns(chart.config):
                 if c not in selected_columns:
                     selected_columns.append(c)
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(pf_filters)
-            result = run_column_query(selected_columns, merged_filters)
+            merged_filters = _merge_page_filters(
+                chart.source_filters, pf_filters, chart_cfg,
+            )
+            result = run_column_query(
+                selected_columns, merged_filters,
+                user=chart_user,
+                apply_user_filters=chart_user is not None,
+            )
             result = _augment_chart_result_rows(
                 chart.chart_type, chart_cfg, {}, result,
             )
@@ -1815,8 +1985,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # Dataset-specific data cache — key includes dataset updated_at
                 # so schema changes automatically bust stale cached rows.
                 col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
-                raw_filters = dict(chart.source_filters or {})
-                raw_filters.update(pf_filters)
+                raw_filters = _merge_page_filters(
+                    chart.source_filters, pf_filters, chart_cfg,
+                )
                 limit_val = _parse_chart_row_limit(chart_cfg)
                 one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
                 ds_updated = int(ds.updated_at.timestamp())
@@ -1825,6 +1996,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     ds_filter_hash = hashlib.md5(json.dumps({
                         '__sql__': True,
                         '__one_per_sak__': one_per_sak,
+                        **raw_filters,
                     }, sort_keys=True, default=str).encode()).hexdigest()[:12]
                 else:
                     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
@@ -1839,7 +2011,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     ).encode()).hexdigest()[:12]
                 ds_cache_key = (
                     f'chart_data:ds:{_CHART_PIPELINE_VERSION}:{chart.source_id}:'
-                    f'{ds_updated}:{limit_val}:{ds_filter_hash}:{sync_version}'
+                    f'{ds_updated}:{limit_val}:{ds_filter_hash}:{sync_version}{scope_suffix}'
                 )
                 ds_cached = cache.get(ds_cache_key)
                 used_aggregate = False
@@ -1848,7 +2020,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
                 else:
                     if is_sql_ds:
-                        res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
+                        res = load_dataset_result(
+                            ds, user=chart_user, limit=limit_val, one_per_sak=one_per_sak,
+                        )
+                        if not res.get('error') and res.get('rows'):
+                            res = dict(res)
+                            res['rows'] = _apply_sql_dataset_row_filters(
+                                res['rows'], raw_filters,
+                            )
+                            res['row_count'] = len(res['rows'])
+                            res = _filter_chart_rows_for_caseload(res, chart_user)
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                         resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
@@ -1856,18 +2037,20 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                             aggregated = _clickhouse_aggregate_table_cells(
                                 ds, chart_cfg, raw_filters, col_mappings,
                                 column_defs=chart.column_defs,
+                                user=chart_user,
                             )
                         else:
                             aggregated = _clickhouse_aggregate_dataset(
                                 ds, chart_cfg, raw_filters, col_mappings,
                                 column_defs=chart.column_defs,
+                                user=chart_user,
                             )
                         if aggregated is not None:
                             res, chart_cfg = aggregated
                             used_aggregate = True
                         else:
                             sql, params = compile_dataset_to_sql(
-                                ds, user=None, interactive_filters=resolved_filters,
+                                ds, user=chart_user, interactive_filters=resolved_filters,
                                 limit=limit_val, status_filter=status_val,
                                 one_row_per_stu_annual_key=one_per_sak,
                             )
@@ -1889,8 +2072,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
-                    if one_per_sak and not used_aggregate:
-                        aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
+                    aliased_rows = _dedupe_chart_rows(
+                        aliased_rows, chart_cfg, used_aggregate=used_aggregate,
+                    )
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
                         aliased_rows = _augment_rows_with_assessment_cols(
@@ -1901,14 +2085,15 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     result['row_count'] = len(aliased_rows)
 
         else:
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(pf_filters)
+            merged_filters = _merge_page_filters(
+                chart.source_filters, pf_filters, chart_cfg,
+            )
             user = getattr(request, 'user', None)
             extra_cols = _chart_extra_query_columns(chart_cfg)
             result = run_saved_query(
                 chart.source_id, merged_filters, user,
                 extra_columns=extra_cols or None,
-                apply_user_filters=False,
+                apply_user_filters=chart_user is not None,
             )
             result = _augment_chart_result_rows(
                 chart.chart_type, chart_cfg, {}, result,

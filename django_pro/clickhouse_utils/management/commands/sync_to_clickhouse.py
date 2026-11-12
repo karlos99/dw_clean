@@ -48,6 +48,7 @@ from clickhouse_utils.schema import (
     CREATE_STUDENT_INCIDENTS,
     PROJECTION_DDL,
     SECONDARY_INDEX_DDL,
+    STUDENT_ATTENDANCE_PG_COLUMNS,
     get_all_ddl,
 )
 from clickhouse_utils.student_incidents_sync import (
@@ -81,6 +82,10 @@ DERIVED_TABLES = [
 
 ALL_TABLES = SOURCE_TABLES + DERIVED_TABLES
 
+SOURCE_TABLE_PG_COLUMNS = {
+    'student_attendance': STUDENT_ATTENDANCE_PG_COLUMNS,
+}
+
 TABLE_PKS = {
     'current_student': 'stu_annual_key',
     'student_enroll': 'stu_enrollment_key',
@@ -93,7 +98,7 @@ TABLE_PKS = {
     'schedule_list': 'schedule_id',
     'relative_year': 'school_year',
     'mathr_recommendation': 'id',
-    'student_attendance': 'stu_annual_key',
+    'student_attendance': 'attendance_row_key',
     'student_incidents': 'stu_annual_key',
 }
 
@@ -138,6 +143,7 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ccgi_college_application': {'current_student'},
     'analytics_ccgi_application_status': {'current_student'},
     'analytics_student_incidents': {'current_student', 'student_incidents'},
+    'analytics_student_attendance_weekly': {'current_student', 'student_attendance'},
 }
 
 
@@ -172,6 +178,18 @@ def _pg_table_fn(pg_host, pg_port, pg_db, pg_user, pg_password, table):
     )
 
 
+def _insert_from_postgres_sql(ch_db, target, table, pg_fn, where_sql: str = '') -> str:
+    """INSERT into ClickHouse from PostgreSQL, with optional explicit column list."""
+    cols = SOURCE_TABLE_PG_COLUMNS.get(table)
+    if cols:
+        col_list = ', '.join(cols)
+        return (
+            f'INSERT INTO {ch_db}.{target} ({col_list}) '
+            f'SELECT {col_list} FROM {pg_fn}{where_sql}'
+        )
+    return f'INSERT INTO {ch_db}.{target} SELECT * FROM {pg_fn}{where_sql}'
+
+
 def _watermark_key(table):
     return f'analytics:ch_watermark:{table}'
 
@@ -187,8 +205,12 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--tables',
-            type=str,
-            help=f'Comma-separated list of tables to sync. Available: {", ".join(ALL_TABLES)}',
+            nargs='+',
+            metavar='TABLE',
+            help=(
+                'One or more tables to sync (comma-separated and/or space-separated). '
+                f'Available: {", ".join(ALL_TABLES)}'
+            ),
         )
         parser.add_argument(
             '--full',
@@ -213,7 +235,9 @@ class Command(BaseCommand):
         force_full = options.get('full', False)
 
         if tables_arg:
-            tables = [t.strip() for t in tables_arg.split(',')]
+            tables = []
+            for part in tables_arg:
+                tables.extend(t.strip() for t in str(part).split(',') if t.strip())
         else:
             tables = list(ALL_TABLES)
 
@@ -320,6 +344,12 @@ class Command(BaseCommand):
                     self._rebuild_analytics_student_incidents(ch, ch_db, atomic=atomic)
                     count = self._ch_count(ch, ch_db, table) or 0
                     self._record_meta(ch, ch_db, table, count, None, 'derived')
+                    self.stdout.write(self.style.SUCCESS(f'  {table} rebuilt ({count} rows).'))
+                    continue
+                if table == 'analytics_student_attendance_weekly':
+                    self._rebuild_analytics_student_attendance_weekly(ch, ch_db, atomic=atomic)
+                    count = self._ch_count(ch, ch_db, table) or 0
+                    self._record_meta(ch, ch_db, table, count, None, 'derived-pg')
                     self.stdout.write(self.style.SUCCESS(f'  {table} rebuilt ({count} rows).'))
                     continue
                 self._rebuild_derived_table(
@@ -641,6 +671,37 @@ class Command(BaseCommand):
             ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
 
+    def _rebuild_analytics_student_attendance_weekly(self, ch, ch_db, atomic):
+        from clickhouse_utils.student_attendance_analytics import (
+            ANALYTICS_STUDENT_ATTENDANCE_WEEKLY_COLUMNS,
+            build_analytics_student_attendance_weekly_rows,
+        )
+
+        table = 'analytics_student_attendance_weekly'
+        staging = f'{table}__sync'
+        target = staging if atomic else table
+        if atomic:
+            ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
+        else:
+            ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
+
+        rows = build_analytics_student_attendance_weekly_rows()
+        insert_table = f'{ch_db}.{target}'
+        batch_size = 5000
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            if batch:
+                ch.insert(
+                    insert_table,
+                    batch,
+                    column_names=ANALYTICS_STUDENT_ATTENDANCE_WEEKLY_COLUMNS,
+                )
+
+        if atomic:
+            ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+
     def _rebuild_derived_table(self, ch, ch_db, table, atomic, pg_fn_kwargs=None):
         staging = f'{table}__sync'
         target = staging if atomic else table
@@ -664,11 +725,12 @@ class Command(BaseCommand):
         staging = f'{table}__sync'
         target = staging if atomic else table
         if atomic:
-            ch.command(f'CREATE TABLE IF NOT EXISTS {ch_db}.{staging} AS {ch_db}.{table}')
+            ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
         else:
             ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
-        ch.command(f'INSERT INTO {ch_db}.{target} SELECT * FROM {pg_fn}')
+        ch.command(_insert_from_postgres_sql(ch_db, target, table, pg_fn))
         if atomic:
             ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
@@ -722,7 +784,8 @@ class Command(BaseCommand):
         staging = f'{table}__sync'
         target = staging if atomic else table
         if atomic:
-            ch.command(f'CREATE TABLE IF NOT EXISTS {ch_db}.{staging} AS {ch_db}.{table}')
+            ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
             ch.command(f"""
                 INSERT INTO {ch_db}.{staging}
@@ -740,11 +803,15 @@ class Command(BaseCommand):
                 )
             """)
             target = table
-        ch.command(f"""
-            INSERT INTO {ch_db}.{target}
-            SELECT * FROM {pg_fn}
-            WHERE {ts_col} > toDateTime64('{watermark}', 6)
-        """)
+        ch.command(_insert_from_postgres_sql(
+            ch_db,
+            target,
+            table,
+            pg_fn,
+            where_sql=(
+                f" WHERE {ts_col} > toDateTime64('{watermark}', 6)"
+            ),
+        ))
         if atomic:
             ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')

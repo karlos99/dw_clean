@@ -1,3 +1,6 @@
+from contextlib import ExitStack
+from unittest.mock import patch
+
 from django.contrib.admin.sites import AdminSite
 from django.test import Client, TestCase
 
@@ -113,6 +116,10 @@ class DistrictRoleVisibilityTests(TestCase):
         teacher = self._user('u_teacher', [self.teacher], schools=['0110791'])
         teacher.active_role = self.teacher
         self.assertFalse(is_unrestricted(teacher))
+
+    def test_user_without_roles_cannot_see_school_students(self):
+        user = self._user('u_no_role', [], schools=['0110791'])
+        self.assertEqual(user.get_accessible_student_keys(), [])
 
     def test_district_view_gets_full_student_access(self):
         view_user = self._user('u_dv', [self.district_view])
@@ -307,6 +314,238 @@ class UserSchoolsAndRoleManagementTests(TestCase):
         self.assertEqual(resp_rem.status_code, 200)
         self.assertTrue(resp_rem.json()['success'])
         self.assertFalse(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
+
+
+class RoleExpirationAndLimitedStudentTests(TestCase):
+    def setUp(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self.now = timezone.now()
+        self.timedelta = timedelta
+        self.teacher, _ = Role.objects.get_or_create(name='Teacher')
+        self.school_view, _ = Role.objects.get_or_create(name='School View')
+        self.limited_role, _ = Role.objects.get_or_create(
+            name='Limited Student Access',
+            defaults={'is_student_limited': True},
+        )
+        self.limited_role.is_student_limited = True
+        self.limited_role.save(update_fields=['is_student_limited'])
+        self.user = User.objects.create_user(
+            username='expiry_user',
+            email='expiry_user@example.com',
+            schools=['SCH_A'],
+        )
+
+    def _active_limited_student(self, ssid, student_id, key):
+        from studata.models import CurrentStudent
+        return CurrentStudent.objects.create(
+            stu_annual_key=key,
+            ssid=ssid,
+            student_id=student_id,
+            student_name=f'Student {key}',
+            school_year='2025-2026',
+        )
+
+    def test_expired_assignment_is_not_effective(self):
+        self.user.role_assignments.create(
+            role=self.teacher,
+            expires_at=self.now - self.timedelta(minutes=5),
+        )
+        self.assertNotIn('Teacher', self.user.role_names())
+        self.assertFalse(self.user.effective_roles().filter(id=self.teacher.id).exists())
+
+    def test_sync_expired_assignment_applies_fallback_role(self):
+        self.user.role_assignments.create(role=self.school_view)
+        self.user.role_assignments.create(
+            role=self.teacher,
+            expires_at=self.now - self.timedelta(minutes=5),
+            fallback_role=self.school_view,
+        )
+
+        changed = self.user.sync_expired_role_assignments()
+
+        self.assertEqual(changed.get(self.teacher.id), self.school_view.id)
+        self.assertFalse(self.user.role_assignments.filter(role=self.teacher).exists())
+        self.assertTrue(self.user.effective_roles().filter(id=self.school_view.id).exists())
+
+    def test_limited_role_restricts_to_listed_ssid_and_student_id(self):
+        first = self._active_limited_student('SSID-1', 'LOCAL-1', 'key-1')
+        second = self._active_limited_student('SSID-2', 'LOCAL-2', 'key-2')
+        self._active_limited_student('SSID-3', 'LOCAL-3', 'key-3')
+
+        self.user.role_assignments.create(
+            role=self.limited_role,
+            limited_ssids=['SSID-1'],
+            limited_student_ids=['LOCAL-2'],
+        )
+        self.user.active_role = self.limited_role
+
+        keys = self.user.get_accessible_student_keys()
+        self.assertEqual(set(keys), {first.stu_annual_key, second.stu_annual_key})
+
+    def test_limited_role_without_students_grants_none(self):
+        self.user.role_assignments.create(role=self.limited_role)
+        self.user.active_role = self.limited_role
+
+        self.assertEqual(self.user.get_accessible_student_keys(), [])
+
+    def test_user_detail_saves_expiration_fallback_and_limited_students(self):
+        from datetime import timedelta
+
+        admin_role, _ = Role.objects.get_or_create(name='Project Admin')
+        admin = User.objects.create_superuser(
+            username='role_admin',
+            email='role_admin@example.com',
+            password='pass',
+        )
+        admin.roles.add(admin_role)
+        self.user.roles.add(self.school_view)
+
+        client = Client()
+        client.force_login(admin)
+        expires_at = (self.now + timedelta(days=7)).strftime('%Y-%m-%dT%H:%M')
+
+        response = client.post(
+            f'/users/manage/{self.user.id}/',
+            data={
+                'name': self.user.name,
+                'job_title': self.user.job_title,
+                'staff_id': self.user.staff_id or '',
+                'is_active': 'on',
+                'roles': [self.limited_role.id, self.school_view.id],
+                f'role_expires_{self.limited_role.id}': expires_at,
+                f'role_fallback_{self.limited_role.id}': self.school_view.id,
+                f'role_ssids_{self.limited_role.id}': 'SSID-1, SSID-2',
+                f'role_student_ids_{self.limited_role.id}': 'LOCAL-1\nLOCAL-2',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        assignment = self.user.role_assignments.get(role=self.limited_role)
+        self.assertIsNotNone(assignment.expires_at)
+        self.assertEqual(assignment.fallback_role_id, self.school_view.id)
+        self.assertEqual(assignment.limited_ssids, ['SSID-1', 'SSID-2'])
+        self.assertEqual(assignment.limited_student_ids, ['LOCAL-1', 'LOCAL-2'])
+
+        school_view_assignment = self.user.role_assignments.get(role=self.school_view)
+        self.assertIsNone(school_view_assignment.expires_at)
+
+
+class CounselorCaseloadTests(TestCase):
+    def setUp(self):
+        from unittest.mock import MagicMock
+
+        self.MagicMock = MagicMock
+        self.school_view, _ = Role.objects.get_or_create(name='School View')
+        self.user = User.objects.create_user(
+            username='counselor',
+            email='Counselor@Example.com',
+            schools=['SCH_A'],
+        )
+        self.user.role_assignments.create(role=self.school_view)
+
+        from studata.models import CurrentStudent
+
+        self.caseload_student = CurrentStudent.objects.create(
+            stu_annual_key='key-in-caseload',
+            ssid='SSID-1',
+            student_id='LOCAL-1',
+            student_name='Caseload Student',
+            school_year='2026-2027',
+        )
+        self.other_student = CurrentStudent.objects.create(
+            stu_annual_key='key-not-in-caseload',
+            ssid='SSID-2',
+            student_id='LOCAL-2',
+            student_name='Other Student',
+            school_year='2026-2027',
+        )
+
+    def _caseload_patch(self, rows):
+        queryset = self.MagicMock()
+        queryset.exists.return_value = bool(rows)
+        queryset.values_list.return_value = rows
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                'studata.models.CounselorAssignment.objects.filter',
+                return_value=queryset,
+            )
+        )
+        stack.enter_context(
+            patch(
+                'users.models.counselor_assignment_table_exists',
+                return_value=True,
+            )
+        )
+        return stack
+
+    def test_user_in_caseload_table_has_caseload_available(self):
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            self.assertTrue(self.user.has_counselor_caseload())
+            self.assertTrue(self.user.counselor_caseload_available)
+
+    def test_caseload_context_restricts_to_table_students(self):
+        # School View normally grants school-wide student access.
+        self.assertIsNone(self.user.get_accessible_student_keys())
+
+        self.user.active_caseload = True
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            keys = self.user.get_accessible_student_keys()
+
+        self.assertEqual(keys, [self.caseload_student.stu_annual_key])
+        self.assertNotIn(self.other_student.stu_annual_key, keys)
+
+    def test_caseload_ignores_prior_year_assignments(self):
+        self.user.active_caseload = True
+        with self._caseload_patch([
+            ('2026', 'SSID-1', 'LOCAL-1'),
+            ('2024', 'SSID-2', 'LOCAL-2'),
+        ]):
+            keys = self.user.get_accessible_student_keys()
+
+        self.assertEqual(keys, [self.caseload_student.stu_annual_key])
+
+    def test_switch_role_to_caseload_sets_session_flag(self):
+        client = Client()
+        client.force_login(self.user)
+
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            response = client.post('/users/switch-role/', {'role_id': 'caseload'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(client.session.get('active_caseload'))
+
+    def test_switching_back_to_a_role_clears_caseload(self):
+        client = Client()
+        client.force_login(self.user)
+        session = client.session
+        session['active_caseload'] = True
+        session.save()
+
+        with self._caseload_patch([('2026', 'SSID-1', 'LOCAL-1')]):
+            response = client.post(
+                '/users/switch-role/',
+                {'role_id': self.school_view.id},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(client.session.get('active_caseload'))
+        self.assertEqual(
+            client.session.get('active_role_id'),
+            str(self.school_view.id),
+        )
+
+    def test_caseload_option_rejected_without_table_rows(self):
+        client = Client()
+        client.force_login(self.user)
+
+        with self._caseload_patch([]):
+            response = client.post('/users/switch-role/', {'role_id': 'caseload'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(client.session.get('active_caseload'))
 
 
 class NavbarConfigSplitPanelTests(TestCase):

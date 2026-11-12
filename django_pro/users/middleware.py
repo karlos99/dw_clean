@@ -22,6 +22,14 @@ class ActiveRoleMiddleware:
             else:
                 request.user.is_impersonated = False
 
+            # --- Expire time-boxed role assignments before resolving access ---
+            expired_fallbacks = {}
+            try:
+                expired_fallbacks = request.user.sync_expired_role_assignments()
+            except Exception:
+                # Never break a request because of role housekeeping.
+                expired_fallbacks = {}
+
             # --- Role Context ---
             active_role_id = request.session.get('active_role_id')
             
@@ -31,14 +39,37 @@ class ActiveRoleMiddleware:
                 else:
                     try:
                         # Verify the user actually possesses this role
-                        role = request.user.roles.get(id=active_role_id)
+                        role = request.user.effective_roles().get(id=active_role_id)
                         request.user.active_role = role
-                    except Role.DoesNotExist:
-                        # Invalid role for this user, clear session
-                        request.session.pop('active_role_id', None)
-                        self._set_default_role(request)
+                    except (Role.DoesNotExist, ValueError, TypeError):
+                        # The selected role expired or is no longer assigned.
+                        fallback_role_id = None
+                        try:
+                            fallback_role_id = expired_fallbacks.get(int(active_role_id))
+                        except (TypeError, ValueError):
+                            pass
+                        if fallback_role_id:
+                            request.session['active_role_id'] = str(fallback_role_id)
+                            request.user.active_role = Role.objects.filter(
+                                id=fallback_role_id
+                            ).first()
+                        else:
+                            request.session.pop('active_role_id', None)
+                            self._set_default_role(request)
             else:
                 self._set_default_role(request)
+
+            # --- Counselor Caseload Context ---
+            # Layered on top of the active role: page permissions still come
+            # from the user's roles, while student data is limited to the
+            # counselor's caseload from the ETL table.
+            request.user.active_caseload = False
+            if request.session.get('active_caseload'):
+                if request.user.has_counselor_caseload():
+                    request.user.active_caseload = True
+                else:
+                    # The user was removed from the caseload table.
+                    request.session.pop('active_caseload', None)
 
             # --- School Context ---
             StudataSchool = apps.get_model('studata', 'School')
@@ -94,14 +125,25 @@ class ActiveRoleMiddleware:
 
     def _set_default_role(self, request):
         """Set the highest priority role as default active role."""
-        roles = list(request.user.roles.all())
+        roles = list(request.user.effective_roles())
         if not roles:
             request.user.active_role = None
             return
 
         # Define priority (index 0 is highest)
         # Assuming typical hierarchy. Adjust as needed.
-        PRIORITY = ['Project Admin', 'District Admin', 'District View', 'School Admin', 'Teacher']
+        PRIORITY = [
+            'Project Admin',
+            'District Admin',
+            'District View',
+            'School Admin',
+            'Limited Student Access',
+            'Testing Coordinator',
+            '504_Admin',
+            'School Gr View',
+            'School View',
+            'Teacher',
+        ]
         
         best_role = None
         best_idx = 999
@@ -128,9 +170,10 @@ class ActiveRoleMiddleware:
         """Superusers and District/Project-level roles can act across all schools."""
         if user.is_superuser:
             return True
-        return user.roles.filter(
+        effective_roles = user.effective_roles()
+        return effective_roles.filter(
             name__in=['Project Admin', 'District Admin', 'District View']
-        ).exists() or user.roles.filter(name__icontains='District').exists()
+        ).exists() or effective_roles.filter(name__icontains='District').exists()
 
 
 class UsageTrackingMiddleware:

@@ -59,6 +59,10 @@
         silent: true,
         z: 100,
         rotation: rot ? (-rot * Math.PI / 180) : 0,
+        // Rotate around this label's own anchor, not the chart origin. Without
+        // an explicit origin every group label revolves around (0, 0), so the
+        // whole label row appears to rotate as one block.
+        origin: [x, y],
         style: {
           text: String(b.label),
           x: x,

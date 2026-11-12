@@ -7,7 +7,8 @@ per designated support (by its upload column letter); a student's cell contains
 the option's reporting code.
 
 Sources merged per student:
-* DESI-entered options (``StudentAccommodation``) for every support tagged
+* DESI-entered options (``StudentAccommodation``) plus default-assignment rules
+  (same effective supports as the student workspace) for every support tagged
   CAASPP/ELPAC, regardless of whether the assessment is active.
 * SEIS settings (``desi_seis``) for the matching program, matched by option code
   (SEIS wins when both provide a code for the same support).
@@ -23,6 +24,7 @@ from django.db import transaction
 from openpyxl import load_workbook
 
 from .models import Accommodation, AccommodationOption, DesiSeis, StudentAccommodation
+from .views import active_default_rules_by_support, batch_default_support_locks
 from .state_upload_templates import (
     CAASPP_SHEET_NAME,
     ELPAC_SHEET_NAME,
@@ -158,9 +160,29 @@ def _student_codes_for_tag(tag, students):
         ):
             option_by_code.setdefault(option.code, option)
 
+    default_rules_by_support = active_default_rules_by_support()
+    default_option_ids = set()
+    for support_rules in default_rules_by_support.values():
+        for rule in support_rules:
+            default_option_ids.update(opt.id for opt in rule.options.all())
+    default_options_by_id = {
+        opt.id: opt
+        for opt in AccommodationOption.objects.filter(
+            id__in=default_option_ids,
+            accommodation__tag=tag,
+        ).select_related('accommodation')
+    }
+
+    default_locks_by_key = batch_default_support_locks(students, default_rules_by_support)
+
     results = []
     for student in students:
         codes = dict(desi_by_key.get(student.stu_annual_key, {}))
+        default_locks = default_locks_by_key.get(student.stu_annual_key, {})
+        for opt_id in default_locks['option_ids']:
+            option = default_options_by_id.get(opt_id)
+            if option and option.code and option.accommodation_id:
+                codes.setdefault(option.accommodation_id, option.code)
         if student.ssid and seis_codes_by_ssid.get(student.ssid):
             for code in seis_codes_by_ssid[student.ssid]:
                 option = option_by_code.get(code)

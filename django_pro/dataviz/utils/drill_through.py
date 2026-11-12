@@ -26,7 +26,14 @@ def _drill_user_part(user) -> str:
         # Test doubles and lightweight service callers may not expose a
         # database identity; keep their cache entries isolated by instance.
         user_id = f'obj{id(user)}'
-    return f":u{user_id}:r{role_name}:s{school_id}"
+    caseload_part = ''
+    if getattr(user, 'active_caseload', False) and hasattr(user, 'get_accessible_student_keys'):
+        keys = user.get_accessible_student_keys() or []
+        key_hash = hashlib.md5(
+            json.dumps(list(keys), sort_keys=True).encode()
+        ).hexdigest()[:12]
+        caseload_part = f":c{key_hash}"
+    return f":u{user_id}:r{role_name}:s{school_id}{caseload_part}"
 
 
 def _drill_fetch_hash(chart, drill_filters: dict, extra_columns: list | None) -> str:
@@ -102,7 +109,7 @@ def split_composite_value(val: str, expected_len: int) -> list:
     normalized = val.replace('\xa0', ' ').replace('\u200b', '').strip()
     
     # Try different separators in order of preference.
-    separators = [' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
+    separators = ['\n', ' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
     for sep in separators:
         if sep in normalized:
             parts = [p.strip() for p in normalized.split(sep)]
@@ -147,7 +154,9 @@ def _deduplicate_count_drill_rows(rows, chart):
 
     if chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
         return rows
-    if (chart.config or {}).get('agg', 'count') != 'count':
+    # count_unique counts one point per distinct student; make the drill show
+    # one row per student too (count charts already dedupe joined rows).
+    if (chart.config or {}).get('agg', 'count') not in ('count', 'count_unique'):
         return rows
 
     id_col = _find_id_col(rows[0])
@@ -393,6 +402,37 @@ def _apply_drill_row_filters(rows, drill_filters):
             else:
                 rows = [r for r in rows if str(r.get(col) or '').strip() == target]
     return rows
+
+
+def extract_page_filters(chart, params) -> dict:
+    """Collect ``pf_*`` drill params, honoring the chart's skip_page_filters.
+
+    Trend charts deliberately ignore page-level year filters when rendering
+    (``config.skip_page_filters``). The drill must ignore the same filters,
+    otherwise clicking a 2023-24 bar while the page defaults to 2025-26 drills
+    into a contradictory (often empty) row set.
+    """
+    if not params:
+        return {}
+    skip = {
+        str(k) for k in ((chart.config or {}).get('skip_page_filters') or [])
+    }
+    filters = {}
+    for key in params:
+        if not isinstance(key, str) or not key.startswith('pf_'):
+            continue
+        col = key[3:]
+        if not col or col in skip:
+            continue
+        if hasattr(params, 'getlist'):
+            vals = [v for v in params.getlist(key) if v]
+        else:
+            raw = params.get(key)
+            vals = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+            vals = [v for v in vals if v]
+        if vals:
+            filters[col] = vals if len(vals) > 1 else vals[0]
+    return filters
 
 
 def build_drill_filter(chart, params: dict) -> dict:
@@ -728,10 +768,13 @@ def _apply_user_access_filter(rows, cols, user):
         return rows, cols
 
     # Try to match student identifiers in the columns
-    student_id_cols = [c for c in cols if c in ('ssid', 'student_id', 'stu_annual_key', 'local_student_id')
-                       or c.endswith('.ssid') or c.endswith('.student_id')
-                       or c.endswith('.stu_annual_key') or c.endswith('.local_student_id')]
-    if not student_id_cols:
+    def _bare(col):
+        return str(col).split('.')[-1]
+
+    key_cols = [c for c in cols if _bare(c) == 'stu_annual_key']
+    ssid_cols = [c for c in cols if _bare(c) == 'ssid']
+    local_id_cols = [c for c in cols if _bare(c) in ('student_id', 'local_student_id')]
+    if not (key_cols or ssid_cols or local_id_cols):
         return rows, cols  # No student columns found — can't filter
 
     # Get accessible student keys
@@ -741,6 +784,15 @@ def _apply_user_access_filter(rows, cols, user):
         keys = user.get_accessible_student_keys()
         if keys is not None:
             accessible_keys = set(keys)
+
+    caseload_ssids = set()
+    caseload_student_ids = set()
+    if getattr(user, 'active_caseload', False) and hasattr(
+        user, 'get_counselor_caseload_identifiers'
+    ):
+        caseload_ssids, caseload_student_ids = user.get_counselor_caseload_identifiers()
+        caseload_ssids = set(caseload_ssids or [])
+        caseload_student_ids = set(caseload_student_ids or [])
 
     # Get permitted school IDs for school-level filtering
     permitted_schools = None
@@ -760,16 +812,28 @@ def _apply_user_access_filter(rows, cols, user):
 
     filtered = []
     for row in rows:
-        # Check student key access (teacher-level)
+        # Check student key access (teacher-level / counselor caseload)
         if accessible_keys is not None:
             matched = False
-            for col in student_id_cols:
+            for col in key_cols:
                 val = str(row.get(col, '')).strip()
                 if val and val in accessible_keys:
                     matched = True
                     break
+            if not matched and getattr(user, 'active_caseload', False):
+                for col in ssid_cols:
+                    val = str(row.get(col, '')).strip()
+                    if val and val in caseload_ssids:
+                        matched = True
+                        break
+                if not matched:
+                    for col in local_id_cols:
+                        val = str(row.get(col, '')).strip()
+                        if val and val in caseload_student_ids:
+                            matched = True
+                            break
             if not matched:
-                continue  # Skip — student not in teacher's roster
+                continue  # Skip — student not in the user's allowed roster
 
         # Check school access (school-level).  If permitted_schools is
         # None the user is truly unrestricted (already returned above).
@@ -807,6 +871,7 @@ def execute_drill_query(
     column_filters: dict | None = None,
     extra_columns: list | None = None,
     cursor: str | None = None,
+    export_all: bool = False,
 ) -> dict:
     """
     Run the chart's underlying query with drill_filters merged in.
@@ -906,7 +971,7 @@ def execute_drill_query(
             pk=chart.source_id,
         ).values_list('source_type', flat=True).first() == _Dataset.SOURCE_SQL
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
-    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
+    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by) and not export_all
     if sql_paginate:
         _fetch_hash = f"{_fetch_hash}:p{page}:c{cursor or ''}:n{per_page}:s{sort_by}:{sort_dir}"
     updated_ts = int(chart.updated_at.timestamp())
@@ -1507,7 +1572,10 @@ def execute_drill_query(
     all_columns = [c for c in all_columns if c.split('.')[-1] != 'stu_annual_key']
 
     total = sql_total_rows if sql_total_rows is not None else len(rows)
-    if sql_total_rows is not None:
+    if export_all:
+        paged = rows
+        total = len(rows)
+    elif sql_total_rows is not None:
         paged = rows
     else:
         start = (page - 1) * per_page

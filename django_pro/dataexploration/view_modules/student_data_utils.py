@@ -66,6 +66,7 @@ def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False)
         'student_cte_details': f"dataexp:student_summary:{v}:{user_part}student_cte_details:{ssid}",
         'student_details': f"dataexp:student_summary:{v}:{user_part}student_details:{ssid}",
         'student_incidents': f"dataexp:student_summary:{v}:{user_part}student_incidents:{ssid}",
+        'student_attendance': f"dataexp:student_summary:{v}:{user_part}student_attendance:{ssid}",
         'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{'embedded' if embedded else 'full'}:{ssid}",
     }
 
@@ -2189,6 +2190,20 @@ def get_student_incidents_cached(ssid: str, timeout: int = 300, user_id=None):
     return details
 
 
+def get_student_attendance_cached(ssid: str, timeout: int = 300, user_id=None):
+    """Get multi-year attendance (absences + tardies) for the student summary Attendance tab."""
+    from ..attendance_columns import build_student_attendance_summary
+
+    ssid = _resolve_ssid(ssid)
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['student_attendance'])
+    if cached is not None:
+        return cached
+    details = build_student_attendance_summary(ssid)
+    cache.set(keys['student_attendance'], details, timeout=timeout)
+    return details
+
+
 def get_student_details_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get the student's record/transcript details with caching."""
     ssid = _resolve_ssid(ssid)
@@ -2218,7 +2233,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
     except Exception:
         summary_sections = {
             'tests': True, 'grades': True, 'diploma': True, 'ag': True,
-            'on_track': True, 'cte': True, 'behavior': True,
+            'on_track': True, 'cte': True, 'behavior': True, 'attendance': True,
             'recognition': True, 'flags': True,
         }
     context = {
@@ -2234,6 +2249,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
         ),
         'student_details': get_student_details_cached(ssid, timeout=timeout, user_id=user_id),
         'student_incidents': get_student_incidents_cached(ssid, timeout=timeout, user_id=user_id),
+        'student_attendance': get_student_attendance_cached(ssid, timeout=timeout, user_id=user_id),
         'embedded': embedded,
         'summary_sections': summary_sections,
     }

@@ -342,7 +342,8 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     Also includes completion names and last update metadata. Optionally scoped
     to a teacher's roster.
     """
-    from desi.models import StudentAccommodation, StudentAssessmentCompletion
+    from desi.models import Accommodation, AccommodationOption, StudentAccommodation, StudentAssessmentCompletion
+    from desi.views import active_default_rules_by_support, batch_default_support_locks
     from studata.models import CurrentStudent
 
     filter_kind, filter_id = parse_support_filter_value(support_filter)
@@ -414,6 +415,29 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
             subjects |= _option_subjects(option)
         return subjects
 
+    default_rules_by_support = active_default_rules_by_support()
+    default_locks_by_key = batch_default_support_locks(students, default_rules_by_support)
+    default_option_ids = set()
+    for support_rules in default_rules_by_support.values():
+        for rule in support_rules:
+            default_option_ids.update(opt.id for opt in rule.options.all())
+    default_options_by_id = {
+        opt.id: opt
+        for opt in AccommodationOption.objects.filter(id__in=default_option_ids)
+        .select_related('accommodation')
+        .prefetch_related('assessments')
+    }
+    direct_default_support_ids = set()
+    for support_rules in default_rules_by_support.values():
+        for rule in support_rules:
+            if not list(rule.options.all()):
+                direct_default_support_ids.add(rule.support_id)
+    direct_default_accs = {
+        acc.id: acc
+        for acc in Accommodation.objects.filter(id__in=direct_default_support_ids)
+        .prefetch_related('options__assessments')
+    }
+
     rows = []
     for student in students:
         record = records.get(student.stu_annual_key)
@@ -444,6 +468,22 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
                     f"{prefix}{option.name}",
                 )
             for acc in record.selected_accommodations.all():
+                _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
+
+        default_locks = default_locks_by_key.get(student.stu_annual_key, {})
+        for opt_id in default_locks.get('option_ids') or ():
+            option = default_options_by_id.get(opt_id)
+            if not option:
+                continue
+            prefix = f"{option.accommodation.name}: " if option.accommodation else ''
+            _add_support(
+                getattr(option.accommodation, 'tag', '') if option.accommodation else '',
+                _option_subjects(option),
+                f"{prefix}{option.name}",
+            )
+        for acc_id in default_locks.get('direct_support_ids') or ():
+            acc = direct_default_accs.get(acc_id)
+            if acc:
                 _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
 
         seis_detail = seis_support_detail_for_student(student)

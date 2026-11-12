@@ -296,6 +296,41 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
 
     row_vals = _order_row_vals(_auto_detect_pl_scale(work[row_col].unique().to_list()), cfg)
     col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
+    # Optional explicit column order (e.g. score bands that sort alphabetically
+    # but should read low-to-high). Values not listed keep their detection order.
+    _col_order = [str(v) for v in (cfg.get('st_col_order') or [])]
+    if _col_order:
+        _seen = set(map(str, col_vals))
+        col_vals = (
+            [v for v in _col_order if v in _seen]
+            + [v for v in col_vals if str(v) not in _col_order]
+        )
+
+    # Optional grouped headers: split each column value into a parent group
+    # (e.g. year) and a leaf label (e.g. score), so the renderer can draw a
+    # two-row header with the parent spanning its leaves.
+    group_sep = str(cfg.get('st_col_group_sep') or '')
+    col_header_groups = []
+    display_col_headers = list(col_vals)
+    col_header_raw = None
+    if group_sep and col_vals and all(group_sep in str(v) for v in col_vals):
+        groups = []
+        leaves = []
+        for raw_val in col_vals:
+            label, leaf = str(raw_val).split(group_sep, 1)
+            leaf = leaf.strip()
+            leaves.append(leaf)
+            if not groups or groups[-1]['label'] != label:
+                groups.append({
+                    'label': label,
+                    'col': col_col,
+                    'headers': [],
+                })
+            groups[-1]['headers'].append(leaf)
+        if len(groups) > 1:
+            col_header_groups = groups
+            display_col_headers = leaves
+            col_header_raw = list(col_vals)
 
     ct_alt_lookup = None
     if show_tooltips:
@@ -364,7 +399,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         'col_col':     col_col,
         'row_label':   row_label,
         'col_label':   col_label,
-        'col_headers': col_vals,
+        'col_headers': display_col_headers,
         'rows':        rows_data,
         'total_row':   total_row,
         'st_show_row_totals': st_show_row_totals,
@@ -377,6 +412,9 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
             'colHeaders':  col_vals,
         },
     }
+    if col_header_groups:
+        result['col_header_groups'] = col_header_groups
+        result['col_header_raw'] = col_header_raw
     return result
 
 

@@ -67,6 +67,7 @@ class ProjectConfigAdmin(admin.ModelAdmin):
                 'summary_show_tests', 'summary_show_grades',
                 'summary_show_diploma', 'summary_show_ag',
                 'summary_show_on_track', 'summary_show_cte', 'summary_show_behavior',
+                'summary_show_attendance',
             ),
         }),
         ('Student Summary — Header indicators', {

@@ -1,0 +1,98 @@
+{% if student_attendance.years %}
+<div class="flex flex-col">
+    {% for year in student_attendance.years %}
+    <div class="border-b border-slate-200 last:border-b-0"
+        x-data="{ yearOpen: {% if forloop.first %}true{% else %}false{% endif %}, showTardies: true }">
+        <button type="button"
+            class="w-full bg-slate-50 px-6 py-3 border-y border-slate-100 flex flex-wrap justify-between items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors text-left"
+            @click="yearOpen = !yearOpen"
+            :aria-expanded="yearOpen">
+            <div class="flex items-center gap-2 min-w-0">
+                <svg class="w-4 h-4 text-slate-500 transition-transform duration-200 flex-shrink-0" :class="{ 'rotate-180': yearOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+                <h4 class="font-bold text-slate-800">{{ year.school_year|default:"School year" }}</h4>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 flex-shrink-0 text-xs">
+                {% if year.attendance_percent %}
+                <span class="font-medium rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-200">{{ year.attendance_percent }}% attendance</span>
+                {% endif %}
+                {% if year.days_enrolled %}
+                <span class="font-medium rounded-full px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200">{{ year.days_enrolled }} days enrolled</span>
+                {% endif %}
+                {% if year.absence_count %}
+                <span class="font-medium rounded-full px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-200">{{ year.absence_count }} absence{{ year.absence_count|pluralize }}</span>
+                {% endif %}
+                {% if year.tardy_event_count %}
+                <span class="font-medium rounded-full px-2 py-0.5 bg-sky-100 text-sky-900 border border-sky-200">{{ year.tardy_event_count }} tard{{ year.tardy_event_count|pluralize:"y,ies" }}</span>
+                {% endif %}
+            </div>
+        </button>
+
+        <div x-show="yearOpen" x-collapse x-cloak class="bg-slate-50/50 px-4 py-4 sm:px-6 space-y-6">
+            {% if year.absence_groups %}
+            <section>
+                <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Absences by type</h5>
+                <div class="space-y-3">
+                    {% for group in year.absence_groups %}
+                    <div class="rounded-lg border border-slate-200 bg-white overflow-hidden" x-data="{ open: false }">
+                        <button type="button"
+                            class="w-full px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-slate-50 transition-colors"
+                            @click="open = !open"
+                            :aria-expanded="open">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <svg class="w-4 h-4 text-slate-400 transition-transform flex-shrink-0" :class="{ 'rotate-90': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                                <span class="font-semibold text-slate-800">{{ group.label }}</span>
+                                {% if group.code %}
+                                <span class="text-[10px] font-mono text-slate-500">({{ group.code }})</span>
+                                {% endif %}
+                            </div>
+                            <span class="text-xs font-semibold rounded-full px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200">{{ group.count }}</span>
+                        </button>
+                        <ul x-show="open" x-collapse x-cloak class="border-t border-slate-100 divide-y divide-slate-100">
+                            {% for ev in group.events %}
+                            <li class="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-sm">
+                                <span class="text-slate-800">{{ ev.date_display|default:ev.date|default:"—" }}</span>
+                                <span class="text-slate-500 text-xs">{{ ev.code_meaning|default:group.label }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% else %}
+            <p class="text-sm text-slate-500">No absence dates recorded for this year.</p>
+            {% endif %}
+
+            {% if year.tardy_events %}
+            <section>
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Tardies</h5>
+                    <button type="button"
+                        @click="showTardies = !showTardies"
+                        class="text-xs font-semibold rounded-full px-3 py-1 border transition-colors"
+                        :class="showTardies ? 'bg-sky-100 text-sky-900 border-sky-300' : 'bg-white text-slate-500 border-slate-200 line-through opacity-70'">
+                        Show tardies ({{ year.tardy_event_count }})
+                    </button>
+                </div>
+                <ul x-show="showTardies" x-collapse class="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
+                    {% for ev in year.tardy_events %}
+                    <li class="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <span class="text-slate-800">{{ ev.date_display|default:ev.date|default:"—" }}</span>
+                        <span class="text-slate-500 text-xs">
+                            {{ ev.code_meaning|default:"Tardy" }}
+                            {% if ev.period %} · Period {{ ev.period }}{% endif %}
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </section>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="px-6 py-8 text-sm text-slate-500 text-center">No attendance records found for this student.</p>
+{% endif %}
