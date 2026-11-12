@@ -1214,14 +1214,23 @@ def _enrich_rows_test_mark(
             from clickhouse_utils.thread_pool import get_io_pool
 
             if need_test and need_mark:
+                from clickhouse_utils.thread_pool import close_thread_db_connection
+
                 def _fetch_tests():
-                    _fetch_test_data(
-                        QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
-                        tested_school_codes=tested_school_filter,
-                    )
+                    try:
+                        _fetch_test_data(
+                            QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
+                            tested_school_codes=tested_school_filter,
+                        )
+                    finally:
+                        close_thread_db_connection()
 
                 def _fetch_marks():
-                    _fetch_mark_data(QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
+                    try:
+                        _fetch_mark_data(
+                            QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
+                    finally:
+                        close_thread_db_connection()
 
                 pool = get_io_pool()
                 for f in [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]:

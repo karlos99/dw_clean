@@ -23,3 +23,18 @@ _POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix='ch-io')
 
 def get_io_pool() -> ThreadPoolExecutor:
     return _POOL
+
+
+def close_thread_db_connection():
+    """Drop this thread's Django PostgreSQL connection after I/O pool work.
+
+    Pool worker threads are reused across HTTP requests. With CONN_MAX_AGE > 0,
+    each thread otherwise keeps a backend open until max age expires, which can
+    exhaust Postgres max_connections under parallel chart/home renders.
+    """
+    try:
+        from django.db import connections
+
+        connections['default'].close()
+    except Exception:
+        pass

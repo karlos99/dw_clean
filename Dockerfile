@@ -58,5 +58,5 @@ RUN python manage.py collectstatic --noinput --clear || true
 
 EXPOSE 8000
 
-# Run gunicorn
+# Run gunicorn (docker-compose overrides workers/threads via GUNICORN_WORKERS/GUNICORN_THREADS)
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "8", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "config.wsgi:application"]

@@ -179,10 +179,8 @@ def _run_option_query(sql, params, use_pg=False):
         cur.execute(sql, params)
         return list(cur.fetchall())
     finally:
-        try:
-            connections['default'].close()
-        except Exception:
-            pass
+        from clickhouse_utils.thread_pool import close_thread_db_connection
+        close_thread_db_connection()
 
 
 def _option_values(rows):

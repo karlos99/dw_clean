@@ -109,7 +109,7 @@ services:
         python manage.py migrate &&
         python manage.py collectstatic --noinput &&
         python create_superuser.py &&
-        gunicorn --bind 0.0.0.0:8000 --workers 8 --threads 4 --timeout 120 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile - --log-level info config.wsgi:application
+        gunicorn --bind 0.0.0.0:8000 --workers $${GUNICORN_WORKERS:-8} --threads $${GUNICORN_THREADS:-4} --timeout 120 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile - --log-level info config.wsgi:application
       "
 
   # Nginx Reverse Proxy with SSL

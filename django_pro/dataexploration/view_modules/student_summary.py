@@ -103,8 +103,7 @@ def warm_student_test_summary_cache(request):
     # a sequential loop held the request (and its DB connections) open for
     # seconds on every page load. Worker threads must close their thread-local
     # PostgreSQL connection when done so pooled threads don't leak connections.
-    from clickhouse_utils.thread_pool import get_io_pool
-    from django.db import connections
+    from clickhouse_utils.thread_pool import get_io_pool, close_thread_db_connection
 
     def _warm_one(ssid):
         try:
@@ -113,10 +112,7 @@ def warm_student_test_summary_cache(request):
         except Exception:
             return False
         finally:
-            try:
-                connections['default'].close()
-            except Exception:
-                pass
+            close_thread_db_connection()
 
     pool = get_io_pool()
     warmed = sum(1 for ok in pool.map(_warm_one, ssids) if ok)

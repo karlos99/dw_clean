@@ -69,6 +69,13 @@ Example Redis URL:
 redis://redis:6379/0
 ```
 
+### PostgreSQL connection limits
+
+If users see `too many clients already`, see [scripts/postgres_connections_runbook.txt](scripts/postgres_connections_runbook.txt).
+
+* `CONN_MAX_AGE`, `GUNICORN_WORKERS`, and `GUNICORN_THREADS` — see [.env.example](.env.example).
+* Diagnostics: `python manage.py postgres_connections` (optional `--by-client`, `--warn-pct 80`, `--terminate-idle MINUTES`).
+
 ---
 
 ## 3. Caching Strategy (Required)

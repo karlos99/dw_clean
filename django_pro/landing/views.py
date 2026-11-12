@@ -41,7 +41,7 @@ def index(request):
             # Pre-render each chart via the shared (cached) pipeline so the home
             # page renders charts exactly like the dataviz pages do. Parallelized across
             # worker threads so homepage latency is max(single_chart) rather than sum.
-            from clickhouse_utils.thread_pool import get_io_pool
+            from clickhouse_utils.thread_pool import get_io_pool, close_thread_db_connection
             from dataviz.views.api.chart_api import _render_saved_chart
 
             for slot in slots:
@@ -79,6 +79,8 @@ def index(request):
                     s.render_error = res.get('error')
                 except Exception as exc:
                     s.render_error = str(exc)
+                finally:
+                    close_thread_db_connection()
 
             render_targets = [s for s in slots if s.element_type == 'chart' and s.chart_id]
             if len(render_targets) > 1:
