@@ -991,6 +991,75 @@ def parse_ib_column_key(col_key: str):
     return None
 
 
+def ib_exam_results_json_sql(alias='r'):
+    """Safe PostgreSQL expression for an IB row's exam_results array (jsonb)."""
+    return f"""(
+        CASE
+            WHEN {alias}.exam_results IS NOT NULL
+                 AND jsonb_typeof({alias}.exam_results::jsonb) = 'array'
+                 AND jsonb_array_length({alias}.exam_results::jsonb) > 0
+                THEN {alias}.exam_results::jsonb
+            WHEN NULLIF(TRIM({alias}.subject), '') IS NOT NULL
+                THEN jsonb_build_array(jsonb_build_object('subject', {alias}.subject))
+            ELSE '[]'::jsonb
+        END
+    )"""
+
+
+def _ib_subject_slug_sql(field_expr):
+    return f"REGEXP_REPLACE(COALESCE({field_expr}, ''), '[^A-Za-z0-9_]+', '_', 'g')"
+
+
+def ib_subject_row_match_sql(alias='r', slug_placeholder='%s'):
+    """True when the IB row has an exam matching the subject slug parameter."""
+    ej = ib_exam_results_json_sql(alias)
+    pri = _ib_subject_slug_sql(f"{alias}.subject")
+    ex_subj = _ib_subject_slug_sql("elem->>'subject'")
+    return f"""(
+        EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements({ej}) AS elem
+            WHERE {ex_subj} ILIKE {slug_placeholder}
+        )
+        OR (
+            jsonb_array_length({ej}) = 0
+            AND {pri} ILIKE {slug_placeholder}
+        )
+    )"""
+
+
+def ib_row_value_sql(kind, alias='r', slug_placeholder='%s', level=None):
+    """SQL expression for the IB PL/LVL/CAT value used in filters (scalar subquery)."""
+    if kind == 'CAT':
+        return f"NULLIF(TRIM({alias}.category), '')", []
+
+    ej = ib_exam_results_json_sql(alias)
+    ex_subj = _ib_subject_slug_sql("elem->>'subject'")
+    pri = _ib_subject_slug_sql(f"{alias}.subject")
+    field = 'grade' if kind == 'PL' else 'level'
+    level_sql = ''
+    extra_params = []
+    if level:
+        level_sql = " AND UPPER(NULLIF(TRIM(elem->>'level'), '')) = UPPER(%s)"
+        extra_params.append(level)
+
+    return f"""COALESCE(
+        (
+            SELECT NULLIF(TRIM(elem->>'{field}'), '')
+            FROM jsonb_array_elements({ej}) AS elem
+            WHERE {ex_subj} ILIKE {slug_placeholder}
+            {level_sql}
+            ORDER BY elem->>'subject'
+            LIMIT 1
+        ),
+        CASE
+            WHEN jsonb_array_length({ej}) = 0 AND {pri} ILIKE {slug_placeholder}
+                THEN NULLIF(TRIM({alias}.{field}), '')
+            ELSE NULL
+        END
+    )""", extra_params
+
+
 def get_ib_columns(column_filters=None):
     """Get dynamic IB exam columns organized by year.
 
@@ -1022,26 +1091,28 @@ def get_ib_columns(column_filters=None):
     columns = {}
 
     try:
+        ej = ib_exam_results_json_sql('r')
         with connections['default'].cursor() as cursor:
             cursor.execute(
-                """
-                SELECT DISTINCT r.school_year, r.subject, r.level, r.exam_results
+                f"""
+                SELECT DISTINCT
+                    NULLIF(TRIM(r.school_year), '') AS school_year,
+                    NULLIF(TRIM(elem->>'subject'), '') AS subject
                 FROM "dataLoader_ibexamresult" r
-                JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
-                WHERE il.is_published = true AND r.ssid <> ''
-                ORDER BY r.school_year DESC
+                INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id
+                CROSS JOIN LATERAL jsonb_array_elements({ej}) AS elem
+                WHERE il.is_published = true
+                  AND elem->>'subject' IS NOT NULL
+                  AND TRIM(elem->>'subject') <> ''
+                ORDER BY school_year DESC, subject
                 """
             )
             raw_subjects = set()
-            for year, subject, level, exam_results in cursor.fetchall():
+            for year, subject in cursor.fetchall():
                 year_val = (year or '').strip() or 'Unknown'
-                if exam_results and isinstance(exam_results, list):
-                    for ex in exam_results:
-                        s_val = (ex.get('subject') or subject or '').strip()
-                        if s_val:
-                            raw_subjects.add((year_val, s_val))
-                elif subject:
-                    raw_subjects.add((year_val, subject.strip()))
+                subject_val = (subject or '').strip()
+                if subject_val:
+                    raw_subjects.add((year_val, subject_val))
 
             for year_val, subject_val in sorted(raw_subjects, key=lambda t: (t[0], t[1]), reverse=True):
                 pl_key = ib_column_key(year_val, subject_val, kind='PL')
