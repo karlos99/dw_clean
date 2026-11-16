@@ -811,6 +811,31 @@
 
     // Body rows
     html += '<tbody>';
+    // Merge repeated parent row labels (Industry, Pathway, ...) vertically.
+    var labelRowspans = [];
+    if (numRowLbls > 1) {
+      for (var rl = 0; rl < numRowLbls; rl++) {
+        labelRowspans[rl] = new Array(rows.length).fill(0);
+        var rr = 0;
+        while (rr < rows.length) {
+          var span = 1;
+          while (rr + span < rows.length) {
+            var sameGroup = true;
+            for (var p = 0; p <= rl; p++) {
+              if (String(rows[rr][p] || '') !== String(rows[rr + span][p] || '')) {
+                sameGroup = false;
+                break;
+              }
+            }
+            if (!sameGroup) break;
+            span++;
+          }
+          labelRowspans[rl][rr] = span;
+          for (var k = 1; k < span; k++) labelRowspans[rl][rr + k] = 0;
+          rr += span;
+        }
+      }
+    }
     for (var r = 0; r < rows.length; r++) {
       var row    = rows[r];
       var rowVals = row.slice(0, numRowLbls);
@@ -818,9 +843,12 @@
       var rTotal = showRowTotals ? row[row.length - 1] : null;
       html += '<tr class="hover:bg-sky-50 transition">';
       for (var rl = 0; rl < numRowLbls; rl++) {
+        if (labelRowspans[rl] && labelRowspans[rl][r] === 0) continue;
+        var span = (labelRowspans[rl] && labelRowspans[rl][r]) || 1;
         var rv = String(rowVals[rl] || '');
         html += '<td class="sticky left-0 bg-white border border-slate-200 px-2 py-1 font-medium text-slate-700 whitespace-nowrap"'
-             + (rl > 0 ? ' style="left:' + (rl * 120) + 'px;"' : '') + '>'
+             + (rl > 0 ? ' style="left:' + (rl * 120) + 'px;"' : '')
+             + (span > 1 ? ' rowspan="' + span + '"' : '') + '>'
              + (rv || '<span class="text-slate-300">\u2014</span>') + '</td>';
       }
       for (var c = 0; c < cells.length; c++) {

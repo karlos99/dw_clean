@@ -15,7 +15,7 @@ import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value, parse_sat_column_key, sat_column_db_field, parse_psat_column_key, psat_column_db_field, parse_apall_sort_key
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from ..survey_utils import get_survey_columns
@@ -401,6 +401,21 @@ def get_column_statistics(request):
                     'field': _parsed.get('field'),
                     'region': _parsed.get('region'),
                     'metric': _parsed.get('metric'),
+                })
+
+        selected_psat_cols = list(set(
+            [c for c in filter_keys if isinstance(c, str) and c.startswith('psat_')] +
+            [c for c in target_columns if isinstance(c, str) and c.startswith('psat_')]
+        ))
+        psat_infos = []
+        for _col in selected_psat_cols:
+            _parsed = parse_psat_column_key(_col)
+            if _parsed:
+                psat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'psat_type': _parsed['psat_type'],
+                    'field': _parsed['field'],
                 })
 
         incident_sql_backend = incident_sql_backend_for_request(
@@ -802,6 +817,31 @@ def get_column_statistics(request):
                     ORDER BY val
                 """
                 q_params = params + [sat_info['year']]
+
+            # --- PSAT 8/9 & PSAT/NMSQT Score Columns ---
+            elif col.startswith('psat_'):
+                psat_info = next((i for i in psat_infos if i['col_name'] == col), None)
+                if not psat_info:
+                    continue
+                psat_db_field = psat_column_db_field(col)
+                if not psat_db_field:
+                    continue
+                is_string_stats_column = True
+                query = f"""
+                    SELECT r.{psat_db_field}::text as val, COUNT(*) as cnt
+                    FROM "dataLoader_psatresult" r
+                    INNER JOIN "dataLoader_psatimportlog" il ON r.import_log_id = il.id
+                    WHERE r.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                    )
+                    AND r.school_year = %s
+                    AND r.psat_type = %s
+                    AND il.is_published = true
+                    AND r.{psat_db_field} IS NOT NULL
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = params + [psat_info['year'], psat_info['psat_type']]
 
             # --- MTSS Columns ---
             elif is_mtss_column(col):

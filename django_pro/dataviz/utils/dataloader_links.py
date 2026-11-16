@@ -16,12 +16,14 @@ from dataexploration.survey_utils import get_survey_columns
 LINK_TYPE_AP_RESULTS = 'ap_results'
 LINK_TYPE_AP_AWARDS = 'ap_awards'
 LINK_TYPE_SAT_RESULTS = 'sat_results'
+LINK_TYPE_PSAT_RESULTS = 'psat_results'
 LINK_TYPE_SURVEY = 'survey'
 
 ANALYTICS_TABLE_BY_LINK = {
     LINK_TYPE_AP_RESULTS: 'analytics_ap_results',
     LINK_TYPE_AP_AWARDS: 'analytics_ap_awards',
     LINK_TYPE_SAT_RESULTS: 'analytics_sat_results',
+    LINK_TYPE_PSAT_RESULTS: 'analytics_psat_results',
 }
 
 AP_RESULTS_COLUMNS = frozenset({'ssid', 'admin_year', 'exam_name', 'exam_grade', 'exam_id'})
@@ -33,6 +35,10 @@ SAT_RESULTS_COLUMNS = frozenset({
     'percentile_country_total', 'percentile_country_rw', 'percentile_country_math',
     'percentile_natrep_total', 'percentile_natrep_rw', 'percentile_natrep_math',
     'percentile_natuser_total', 'percentile_natuser_rw', 'percentile_natuser_math',
+})
+PSAT_RESULTS_COLUMNS = frozenset({
+    'ssid', 'school_year', 'psat_type', 'test_date', 'school_name',
+    'test_grade', 'total_score', 'ebrw_score', 'math_score',
 })
 
 _SURVEY_LINK_SEP = '|'
@@ -60,6 +66,8 @@ def _analytics_year_column_expr(link_type: str, target: str) -> str | None:
     if link_type == LINK_TYPE_AP_AWARDS:
         return f'"{target}".award_year'
     if link_type == LINK_TYPE_SAT_RESULTS:
+        return f'"{target}".school_year'
+    if link_type == LINK_TYPE_PSAT_RESULTS:
         return f'"{target}".school_year'
     return None
 
@@ -147,6 +155,8 @@ def columns_for_link_type(link_type: str) -> frozenset[str]:
         return AP_AWARDS_COLUMNS
     if link_type == LINK_TYPE_SAT_RESULTS:
         return SAT_RESULTS_COLUMNS
+    if link_type == LINK_TYPE_PSAT_RESULTS:
+        return PSAT_RESULTS_COLUMNS
     return frozenset()
 
 
@@ -424,6 +434,16 @@ def build_sat_catalog() -> dict:
     }
 
 
+def build_psat_catalog() -> dict:
+    return {
+        'link_type': LINK_TYPE_PSAT_RESULTS,
+        'label': 'PSAT Results',
+        'table': 'analytics_psat_results',
+        'columns': sorted(PSAT_RESULTS_COLUMNS),
+        'join_keys': ['ssid', 'school_year'],
+    }
+
+
 def _collect_school_years(surveys: list[dict]) -> list[str]:
     years = {s.get('school_year') for s in surveys if s.get('school_year')}
     return sorted(years, reverse=True)
@@ -502,9 +522,10 @@ def build_survey_toolbox_groups(surveys: list[dict]) -> list[dict]:
 
 
 def build_fixed_loader_toolbox_items(catalog_data: dict) -> list[dict]:
-    """Non-survey Data Loader sources (AP, SAT)."""
+    """Non-survey Data Loader sources (AP, SAT, PSAT)."""
     ap = catalog_data.get('ap_results') or {}
     sat = catalog_data.get('sat_results') or {}
+    psat = catalog_data.get('psat_results') or {}
     return [
         {
             'drag_id': 'ap_results',
@@ -524,11 +545,20 @@ def build_fixed_loader_toolbox_items(catalog_data: dict) -> list[dict]:
             'columns': sat.get('columns') or sorted(SAT_RESULTS_COLUMNS),
             'default_school_year': '',
         },
+        {
+            'drag_id': 'psat_results',
+            'link_type': LINK_TYPE_PSAT_RESULTS,
+            'label': psat.get('label') or 'PSAT Results',
+            'display_name': psat.get('label') or 'PSAT Results',
+            'table': psat.get('table') or 'analytics_psat_results',
+            'columns': psat.get('columns') or sorted(PSAT_RESULTS_COLUMNS),
+            'default_school_year': '',
+        },
     ]
 
 
 def build_drag_toolbox_items(catalog_data: dict | None = None) -> list[dict]:
-    """Flat draggable list (surveys + AP + SAT) for backwards compatibility."""
+    """Flat draggable list (surveys + AP + SAT + PSAT) for backwards compatibility."""
     data = catalog_data or catalog()
     items: list[dict] = []
     for group in build_survey_toolbox_groups(data.get('surveys') or []):
@@ -544,6 +574,7 @@ def catalog() -> dict:
         'ap_results': build_ap_catalog(),
         'ap_awards': build_ap_awards_catalog(),
         'sat_results': build_sat_catalog(),
+        'psat_results': build_psat_catalog(),
         'school_years': _collect_school_years(surveys),
     }
 

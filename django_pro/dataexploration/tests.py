@@ -182,6 +182,7 @@ class TemplateCompilationTests(SimpleTestCase):
 				"survey_structure": {},
 				"ap_structure": {},
 				"sat_structure": {},
+				"psat_structure": {},
 				"column_definitions": {},
 				"year_labels": {"2024": "2024"},
 				"year_to_alias": {},
@@ -871,6 +872,29 @@ class SATColumnKeyTests(SimpleTestCase):
 		self.assertIsNone(parse_sat_column_key('ap_2025_2026_Math_PL'))
 		self.assertIsNone(parse_sat_column_key('sat_bogus'))
 		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
+
+	def test_psat_column_key_round_trip(self):
+		from dataexploration.column_utils import (
+			psat_column_key, parse_psat_column_key, psat_column_db_field,
+		)
+		total_key = psat_column_key('2026-2027', 'PSAT89', field='TOTAL')
+		self.assertEqual(total_key, 'psat_2026_2027_PSAT89_TOTAL')
+		self.assertEqual(
+			parse_psat_column_key(total_key),
+			{'year': '2026-2027', 'psat_type': 'PSAT89', 'field': 'TOTAL'},
+		)
+		self.assertEqual(psat_column_db_field(total_key), 'total_score')
+
+		math_key = psat_column_key('2026-2027', 'PSATNM', field='MATH')
+		self.assertEqual(math_key, 'psat_2026_2027_PSATNM_MATH')
+		self.assertEqual(psat_column_db_field(math_key), 'math_score')
+
+	def test_parse_psat_column_key_rejects_other_keys(self):
+		from dataexploration.column_utils import parse_psat_column_key
+		self.assertIsNone(parse_psat_column_key('sat_2025_2026_TOTAL'))
+		self.assertIsNone(parse_psat_column_key('psat_bogus'))
+		self.assertIsNone(parse_psat_column_key('psat_2025_2026_BOGUS_TOTAL'))
+		self.assertIsNone(parse_psat_column_key('psat_2025_2026_PSAT89_BOGUS'))
 
 
 class IBColumnKeyTests(SimpleTestCase):
@@ -2186,7 +2210,7 @@ class ExportColumnCoverageTests(SimpleTestCase):
 
 	DYNAMIC_PREFIXES = (
 		'test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_',
-		'apawards_all_', 'apall_', 'sat_', 'course_prog_',
+		'apawards_all_', 'apall_', 'sat_', 'psat_', 'course_prog_',
 	)
 	ENROLL_FALLBACK = {
 		'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant',

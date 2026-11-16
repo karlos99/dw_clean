@@ -33,13 +33,46 @@ GRADE_ORDER = [
     'Kindergarten', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
     '8th', '9th', '10th', '11th', '12th', 'Other/Ungraded',
 ]
+# Smarter Balanced / CAST grade-by-year charts (Table B); excludes All Grades (13).
+CAASPP_GRADE_ORDER = ['3rd', '4th', '5th', '6th', '7th', '8th', '11th']
+CAST_GRADE_ORDER = ['5th', '8th', '11th', '12th']
+ELPAC_GRADE_ORDER = [
+    'Kindergarten', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
+    '8th', '9th', '10th', '11th', '12th',
+]
+DISTRICT_TOTAL_GRADE = 'All Grades'
+DISTRICT_TOTAL_SCHOOL = 'District Total'
+YEAR_PL_SEP = ' · '
+# Mutually exclusive row sets so district grade 13 is never stacked with grades 3–11.
+ROW_DISTRICT_ALL_GRADES = 'district_all_grades'
+ROW_DISTRICT_BY_GRADE = 'district_by_grade'
+ROW_SCHOOL_ALL_GRADES = 'school_all_grades'
+ROW_SCHOOL_BY_GRADE = 'school_by_grade'
 GROUP_ORDER = [
-    'All Students', 'English Learners', 'Fluent English Proficient',
+    'All Students', 'English Learners',
     'Students with Disabilities', 'Socioeconomically Disadvantaged',
     'Foster Youth', 'Migrant Education', 'Homeless',
-    'Hispanic/Latino', 'White', 'Asian', 'Black/African American',
-    'Filipino', 'American Indian/Alaska Native',
-    'Native Hawaiian/Pacific Islander', 'Two or More Races',
+    'Hispanic or Latino', 'White', 'Asian', 'Black or African American',
+    'Filipino', 'American Indian or Alaska Native',
+    'Native Hawaiian or Pacific Islander', 'Two or More Races',
+]
+PROGRAM_GROUP_ORDER = [
+    'English Learners',
+    'Students with Disabilities',
+    'Socioeconomically Disadvantaged',
+    'Foster Youth',
+    'Migrant Education',
+    'Homeless',
+]
+RACE_GROUP_ORDER = [
+    'Hispanic or Latino',
+    'White',
+    'Asian',
+    'Black or African American',
+    'Filipino',
+    'American Indian or Alaska Native',
+    'Native Hawaiian or Pacific Islander',
+    'Two or More Races',
 ]
 STATUS_ORDER = ['Met Standard', 'Not Met Standard']
 STATUS_COLORS = {'Met Standard': '#59a14f', 'Not Met Standard': '#e15759'}
@@ -52,13 +85,135 @@ LEVEL_COLORS = {
     'Level 4': '#4e79a7',
 }
 
-_GROUP_IDS = (
-    '1', '001', '3', '003', '4', '004', '6', '006', '7', '007',
-    '8', '008', '28', '028', '29', '029', '31', '031', '50', '050',
-    '51', '051', '52', '052', '53', '053', '74', '074', '75', '075',
+# CAASPP Table A reporting groups (https://caaspp-elpac.ets.org/caaspp/) used on the
+# public site for district summaries. Legacy mislabeled IDs (e.g. 28≠Hispanic) are excluded.
+_CAASPP_REPORT_GROUP_IDS = (
+    '1', '001',
+    '128',
+    '31', '031',
+    '160',
+    '240',
+    '52', '052',
+    '28', '028',
+    '75', '075',
     '76', '076',
+    '74', '074',
+    '77', '077',
+    '78', '078',
+    '79', '079',
+    '80', '080',
+    '144',
 )
-_GROUP_ID_SQL = ', '.join(f"'{g}'" for g in _GROUP_IDS)
+_RACE_GROUP_IDS = (
+    '75', '075', '76', '076', '74', '074', '77', '077',
+    '78', '078', '79', '079', '80', '080', '144',
+)
+_GROUP_LABELS = {
+    '1': 'All Students', '001': 'All Students',
+    '128': 'Students with Disabilities',
+    '31': 'Socioeconomically Disadvantaged', '031': 'Socioeconomically Disadvantaged',
+    '160': 'English Learners',
+    '240': 'Foster Youth',
+    '52': 'Homeless', '052': 'Homeless',
+    '28': 'Migrant Education', '028': 'Migrant Education',
+    '75': 'American Indian or Alaska Native', '075': 'American Indian or Alaska Native',
+    '76': 'Asian', '076': 'Asian',
+    '74': 'Black or African American', '074': 'Black or African American',
+    '77': 'Filipino', '077': 'Filipino',
+    '78': 'Hispanic or Latino', '078': 'Hispanic or Latino',
+    '79': 'Native Hawaiian or Pacific Islander', '079': 'Native Hawaiian or Pacific Islander',
+    '80': 'White', '080': 'White',
+    '144': 'Two or More Races',
+}
+_GROUP_ID_SQL = ', '.join(f"'{g}'" for g in _CAASPP_REPORT_GROUP_IDS)
+_RACE_GROUP_ID_SQL = ', '.join(f"'{g}'" for g in _RACE_GROUP_IDS)
+
+# ``official_data_db.student_group_name`` (CDE / build lookup) → CAASPP Table A labels.
+_CDE_GROUP_NAME_TO_CANONICAL: dict[str, str] = {
+    'migrant education': 'Migrant Education',
+    'socioeconomically disadvantaged': 'Socioeconomically Disadvantaged',
+    'homeless': 'Homeless',
+    'foster youth': 'Foster Youth',
+    'english learner excluding rfep': 'English Learners',
+    'reported disabilities': 'Students with Disabilities',
+    'american indian or alaska native': 'American Indian or Alaska Native',
+    'asian': 'Asian',
+    'black or african american': 'Black or African American',
+    'filipino': 'Filipino',
+    'hispanic or latino': 'Hispanic or Latino',
+    'native hawaiian or pacific islander': 'Native Hawaiian or Pacific Islander',
+    'white': 'White',
+    'two or more races': 'Two or More Races',
+    'all students': 'All Students',
+}
+_CDE_GROUP_NAME_SQL = ', '.join(
+    f"'{name.replace(chr(39), chr(39) * 2)}'" for name in _CDE_GROUP_NAME_TO_CANONICAL
+)
+_REPORT_GROUP_NAME_SQL = ', '.join(
+    f"'{label.replace(chr(39), chr(39) * 2)}'"
+    for label in dict.fromkeys(_GROUP_LABELS.values())
+)
+_RACE_GROUP_NAME_SQL = ', '.join(
+    f"'{label.replace(chr(39), chr(39) * 2)}'" for label in RACE_GROUP_ORDER
+)
+_PROGRAM_GROUP_NAME_SQL = ', '.join(
+    f"'{label.replace(chr(39), chr(39) * 2)}'" for label in PROGRAM_GROUP_ORDER
+)
+
+
+def _sql_case_trim_id(mapping: dict[str, str], *, default_expr: str) -> str:
+    lines = ['CASE TRIM(student_group_id)']
+    for gid, label in mapping.items():
+        safe_label = label.replace("'", "''")
+        lines.append(f"    WHEN '{gid}' THEN '{safe_label}'")
+    lines.append(f'    ELSE {default_expr}')
+    lines.append('END')
+    return '\n'.join(lines)
+
+
+def _sql_case_lower_name(mapping: dict[str, str], column: str = 'student_group_name') -> str:
+    lines = [f'CASE LOWER(BTRIM({column}))']
+    for raw_name, label in mapping.items():
+        safe_label = label.replace("'", "''")
+        lines.append(f"    WHEN '{raw_name.replace(chr(39), chr(39) * 2)}' THEN '{safe_label}'")
+    lines.append("    ELSE ''")
+    lines.append('END')
+    return '\n'.join(lines)
+
+
+GROUP_CASE = _sql_case_trim_id(_GROUP_LABELS, default_expr="'Group ' || TRIM(student_group_id)")
+_GROUP_NAME_CANONICAL = _sql_case_lower_name(_CDE_GROUP_NAME_TO_CANONICAL)
+
+# Prefer Table A ids, then CDE ``student_group_name``, then raw name (prior-year files).
+STUDENT_GROUP_SQL = f"""
+COALESCE(
+    NULLIF(({GROUP_CASE}), 'Group ' || TRIM(student_group_id)),
+    NULLIF(({_GROUP_NAME_CANONICAL}), ''),
+    NULLIF(BTRIM(student_group_name), ''),
+    'Group ' || TRIM(student_group_id)
+)
+"""
+
+GROUP_KNOWN_CASE = f"""
+CASE WHEN ({STUDENT_GROUP_SQL}) IN ({_REPORT_GROUP_NAME_SQL}) THEN 1 ELSE 0 END
+"""
+
+OFFICIAL_GROUP_ROW_PREDICATE = f"""
+(
+    TRIM(student_group_id) IN ({_GROUP_ID_SQL})
+    OR LOWER(BTRIM(student_group_name)) IN ({_CDE_GROUP_NAME_SQL})
+    OR BTRIM(student_group_name) IN ({_REPORT_GROUP_NAME_SQL})
+)
+"""
+
+GROUP_TYPE_CASE = f"""
+CASE
+    WHEN ({STUDENT_GROUP_SQL}) = 'All Students' THEN 'All Students'
+    WHEN ({STUDENT_GROUP_SQL}) IN ({_RACE_GROUP_NAME_SQL}) THEN 'Race/Ethnicity'
+    WHEN ({STUDENT_GROUP_SQL}) IN ({_PROGRAM_GROUP_NAME_SQL}) THEN 'Program'
+    ELSE 'Other'
+END
+"""
 
 
 def _num(col: str) -> str:
@@ -68,6 +223,28 @@ def _num(col: str) -> str:
         f"THEN BTRIM({col})::numeric ELSE 0 END"
     )
 
+
+def _students_with_scores_sql(prefix: str = '') -> str:
+    p = f'{prefix}.' if prefix else ''
+    return f"""CASE WHEN {_num(f'{p}total_students_tested_with_scores')} > 0
+     THEN {_num(f'{p}total_students_tested_with_scores')}
+     ELSE {_num(f'{p}total_students_tested')}
+END"""
+
+
+STUDENTS_WITH_SCORES_SQL = _students_with_scores_sql()
+RAW_STUDENTS_WITH_SCORES_SQL = _students_with_scores_sql('raw0')
+
+REPORT_ROW_TYPE_SQL = """
+CASE
+    WHEN COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
+         AND LTRIM(BTRIM(grade), '0') = '13' THEN 'district_all_grades'
+    WHEN COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
+         THEN 'district_by_grade'
+    WHEN LTRIM(BTRIM(grade), '0') = '13' THEN 'school_all_grades'
+    ELSE 'school_by_grade'
+END
+"""
 
 ASSESSMENT_CASE = """
 CASE data_source
@@ -114,55 +291,13 @@ CASE
             WHEN '10' THEN '10th'
             WHEN '11' THEN '11th'
             WHEN '12' THEN '12th'
-            WHEN '13' THEN 'Other/Ungraded'
+            WHEN '13' THEN 'All Grades'
             WHEN '14' THEN 'Other/Ungraded'
             WHEN '99' THEN 'Other/Ungraded'
             ELSE 'Other/Ungraded'
         END
     ELSE COALESCE(NULLIF(BTRIM(grade), ''), 'Unknown')
 END
-"""
-
-GROUP_CASE = """
-CASE TRIM(student_group_id)
-    WHEN '1' THEN 'All Students'
-    WHEN '001' THEN 'All Students'
-    WHEN '3' THEN 'English Learners'
-    WHEN '003' THEN 'English Learners'
-    WHEN '4' THEN 'Fluent English Proficient'
-    WHEN '004' THEN 'Fluent English Proficient'
-    WHEN '6' THEN 'Students with Disabilities'
-    WHEN '006' THEN 'Students with Disabilities'
-    WHEN '7' THEN 'Socioeconomically Disadvantaged'
-    WHEN '007' THEN 'Socioeconomically Disadvantaged'
-    WHEN '8' THEN 'Foster Youth'
-    WHEN '008' THEN 'Foster Youth'
-    WHEN '28' THEN 'Hispanic/Latino'
-    WHEN '028' THEN 'Hispanic/Latino'
-    WHEN '29' THEN 'White'
-    WHEN '029' THEN 'White'
-    WHEN '31' THEN 'Asian'
-    WHEN '031' THEN 'Asian'
-    WHEN '50' THEN 'Black/African American'
-    WHEN '050' THEN 'Black/African American'
-    WHEN '51' THEN 'Filipino'
-    WHEN '051' THEN 'Filipino'
-    WHEN '52' THEN 'American Indian/Alaska Native'
-    WHEN '052' THEN 'American Indian/Alaska Native'
-    WHEN '53' THEN 'Native Hawaiian/Pacific Islander'
-    WHEN '053' THEN 'Native Hawaiian/Pacific Islander'
-    WHEN '74' THEN 'Migrant Education'
-    WHEN '074' THEN 'Migrant Education'
-    WHEN '75' THEN 'Homeless'
-    WHEN '075' THEN 'Homeless'
-    WHEN '76' THEN 'Two or More Races'
-    WHEN '076' THEN 'Two or More Races'
-    ELSE 'Group ' || TRIM(student_group_id)
-END
-"""
-
-GROUP_KNOWN_CASE = f"""
-CASE WHEN TRIM(student_group_id) IN ({_GROUP_ID_SQL}) THEN 1 ELSE 0 END
 """
 
 MET_COUNT_SQL = f"""
@@ -189,6 +324,7 @@ WITH raw AS (
         COALESCE(NULLIF(BTRIM(school_name), ''), 'District Total') AS school_name,
         grade,
         TRIM(student_group_id) AS student_group_id,
+        BTRIM(student_group_name) AS student_group_name,
         {_num('total_students_enrolled')} AS enrolled_count,
         {_num('total_students_tested_with_scores')} AS tested_with_scores,
         {_num('total_students_tested')} AS tested_any,
@@ -196,13 +332,7 @@ WITH raw AS (
         {MET_COUNT_SQL} AS met_count
     FROM official_data_db
     WHERE data_source IN ('sb', 'caa', 'cast', 'caas', 'sa', 'ia', 'altsa', 'altia')
-      AND (
-        (COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
-         AND TRIM(student_group_id) IN ({_GROUP_ID_SQL}))
-        OR
-        (COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') <> '0000000'
-         AND TRIM(student_group_id) IN ('1', '001'))
-      )
+      AND {OFFICIAL_GROUP_ROW_PREDICATE}
 ),
 base AS (
     SELECT
@@ -211,9 +341,10 @@ base AS (
         {SUBJECT_CASE} AS subject,
         {TEST_YEAR_LABEL} AS test_year_label,
         {GRADE_LABEL_CASE} AS grade_label,
-        {GROUP_CASE} AS student_group,
+        {STUDENT_GROUP_SQL} AS student_group,
         {GROUP_KNOWN_CASE} AS group_known,
         CASE WHEN tested_with_scores > 0 THEN tested_with_scores ELSE tested_any END AS tested_count
+        -- tested_count = official "students with scores" (CAASPP ViewReportSB)
     FROM raw
 )
 SELECT
@@ -228,7 +359,7 @@ SELECT
     student_group_id,
     student_group,
     group_known,
-    CASE WHEN group_known = 1 AND student_group_id NOT IN ('1', '001') THEN 1 ELSE 0 END AS is_subgroup,
+    CASE WHEN group_known = 1 AND student_group <> 'All Students' THEN 1 ELSE 0 END AS is_subgroup,
     tested_count,
     enrolled_count,
     met_count,
@@ -265,13 +396,7 @@ WITH raw0 AS (
     SELECT *
     FROM official_data_db
     WHERE data_source IN ('sb', 'caa', 'cast', 'caas', 'sa', 'ia', 'altsa', 'altia')
-      AND (
-        (COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
-         AND TRIM(student_group_id) IN ({_GROUP_ID_SQL}))
-        OR
-        (COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') <> '0000000'
-         AND TRIM(student_group_id) IN ('1', '001'))
-      )
+      AND {OFFICIAL_GROUP_ROW_PREDICATE}
 ),
 raw AS (
     SELECT
@@ -283,21 +408,18 @@ raw AS (
         CASE WHEN COALESCE(NULLIF(BTRIM(raw0.school_code), ''), '0000000') = '0000000'
              THEN 'District' ELSE 'School' END AS school_scope,
         COALESCE(NULLIF(BTRIM(raw0.school_name), ''), 'District Total') AS school_label,
-        {GROUP_CASE} AS student_group,
+        {STUDENT_GROUP_SQL} AS student_group,
         {GROUP_KNOWN_CASE} AS group_known,
-        CASE
-            WHEN TRIM(raw0.student_group_id) NOT IN ({_GROUP_ID_SQL}) THEN 'Other'
-            WHEN TRIM(raw0.student_group_id) IN ('1', '001') THEN 'All Students'
-            WHEN TRIM(raw0.student_group_id) IN ('28','028','29','029','31','031','50','050','51','051','52','052','53','053','76','076') THEN 'Race/Ethnicity'
-            ELSE 'Program'
-        END AS group_type
+        {GROUP_TYPE_CASE} AS group_type,
+        {REPORT_ROW_TYPE_SQL} AS report_row_type,
+        {RAW_STUDENTS_WITH_SCORES_SQL} AS students_with_scores
     FROM raw0
 ),
 long_levels AS (
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
            r.school_scope, r.school_label AS school_name, r.student_group,
-           r.group_known, r.group_type,
-           CASE WHEN r.group_known = 1 AND TRIM(r.student_group_id) NOT IN ('1', '001')
+           r.group_known, r.group_type, r.report_row_type, r.students_with_scores,
+           CASE WHEN r.group_known = 1 AND r.student_group <> 'All Students'
                 THEN 1 ELSE 0 END AS is_subgroup,
            lvl.performance_level, lvl.level_rank, lvl.student_count, lvl.percent
     FROM raw r
@@ -311,8 +433,8 @@ long_levels AS (
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
            r.school_scope, r.school_label AS school_name, r.student_group,
-           r.group_known, r.group_type,
-           CASE WHEN r.group_known = 1 AND TRIM(r.student_group_id) NOT IN ('1', '001')
+           r.group_known, r.group_type, r.report_row_type, r.students_with_scores,
+           CASE WHEN r.group_known = 1 AND r.student_group <> 'All Students'
                 THEN 1 ELSE 0 END AS is_subgroup,
            lvl.performance_level, lvl.level_rank, lvl.student_count, lvl.percent
     FROM raw r
@@ -325,8 +447,8 @@ long_levels AS (
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
            r.school_scope, r.school_label AS school_name, r.student_group,
-           r.group_known, r.group_type,
-           CASE WHEN r.group_known = 1 AND TRIM(r.student_group_id) NOT IN ('1', '001')
+           r.group_known, r.group_type, r.report_row_type, r.students_with_scores,
+           CASE WHEN r.group_known = 1 AND r.student_group <> 'All Students'
                 THEN 1 ELSE 0 END AS is_subgroup,
            lvl.performance_level, lvl.level_rank, lvl.student_count, lvl.percent
     FROM raw r
@@ -340,8 +462,8 @@ long_levels AS (
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
            r.school_scope, r.school_label AS school_name, r.student_group,
-           r.group_known, r.group_type,
-           CASE WHEN r.group_known = 1 AND TRIM(r.student_group_id) NOT IN ('1', '001')
+           r.group_known, r.group_type, r.report_row_type, r.students_with_scores,
+           CASE WHEN r.group_known = 1 AND r.student_group <> 'All Students'
                 THEN 1 ELSE 0 END AS is_subgroup,
            lvl.performance_level, lvl.level_rank, lvl.student_count, lvl.percent
     FROM raw r
@@ -354,8 +476,8 @@ long_levels AS (
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
            r.school_scope, r.school_label AS school_name, r.student_group,
-           r.group_known, r.group_type,
-           CASE WHEN r.group_known = 1 AND TRIM(r.student_group_id) NOT IN ('1', '001')
+           r.group_known, r.group_type, r.report_row_type, r.students_with_scores,
+           CASE WHEN r.group_known = 1 AND r.student_group <> 'All Students'
                 THEN 1 ELSE 0 END AS is_subgroup,
            lvl.performance_level, lvl.level_rank, lvl.student_count, lvl.percent
     FROM raw r
@@ -372,7 +494,10 @@ SELECT
     school_scope, school_name,
     school_name || ' · ' || test_year_label AS school_year,
     subject || ' · ' || school_name AS school_subject,
+    subject || ' · ' || school_name || ' · ' || test_year_label AS school_subject_year,
+    test_year_label || '{YEAR_PL_SEP}' || performance_level AS year_pl,
     grade_label, student_group, group_known, group_type,
+    report_row_type, students_with_scores,
     is_subgroup, performance_level, level_rank, student_count, percent
 FROM long_levels
 """
@@ -384,14 +509,18 @@ WITH raw AS (
         {ASSESSMENT_CASE} AS assessment,
         {SUBJECT_CASE} AS subject,
         {TEST_YEAR_LABEL} AS test_year_label,
-        {GRADE_LABEL_CASE} AS grade_label
+        {GRADE_LABEL_CASE} AS grade_label,
+        CASE WHEN COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
+             THEN 'District' ELSE 'School' END AS school_scope,
+        COALESCE(NULLIF(BTRIM(school_name), ''), '{DISTRICT_TOTAL_SCHOOL}') AS school_label
     FROM official_data_db
     WHERE data_source IN ('cast', 'sa', 'ia')
-      AND COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') = '0000000'
       AND TRIM(student_group_id) IN ('1', '001')
+      AND LTRIM(BTRIM(grade), '0') = '13'
 ),
 domains AS (
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
+           r.school_scope, r.school_label AS school_name,
            'Science' AS domain_group, d.domain, d.performance_level,
            d.level_rank, d.student_count, d.percent
     FROM raw r
@@ -409,6 +538,7 @@ domains AS (
     WHERE r.data_source = 'cast'
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
+           r.school_scope, r.school_label AS school_name,
            'ELPAC', d.domain, d.performance_level, d.level_rank, d.student_count, d.percent
     FROM raw r
     CROSS JOIN LATERAL (VALUES
@@ -428,6 +558,7 @@ domains AS (
     WHERE r.data_source = 'sa'
     UNION ALL
     SELECT r.assessment, r.subject, r.test_year, r.test_year_label, r.grade_label,
+           r.school_scope, r.school_label AS school_name,
            'ELPAC', d.domain, d.performance_level, d.level_rank, d.student_count, d.percent
     FROM raw r
     CROSS JOIN LATERAL (VALUES
@@ -457,12 +588,16 @@ STATUS_COLS = [
 ]
 LEVELS_COLS = [
     'assessment', 'subject', 'test_year', 'test_year_label', 'assessment_year',
-    'school_scope', 'school_name', 'school_year', 'school_subject', 'grade_label',
-    'student_group', 'group_known', 'group_type', 'is_subgroup',
+    'school_scope', 'school_name', 'school_year', 'school_subject', 'school_subject_year',
+    'year_pl',
+    'grade_label',
+    'student_group', 'group_known', 'group_type', 'report_row_type',
+    'students_with_scores', 'is_subgroup',
     'performance_level', 'level_rank', 'student_count', 'percent',
 ]
 DOMAINS_COLS = [
     'assessment', 'subject', 'test_year', 'test_year_label', 'grade_label',
+    'school_scope', 'school_name',
     'domain_group', 'domain', 'performance_level', 'level_rank',
     'student_count', 'percent',
 ]
@@ -481,8 +616,8 @@ DATASET_SPECS = [
     {
         'name': 'Official • Domains',
         'description': (
-            'District-level official domain performance levels for CAST science '
-            'and ELPAC domains.'
+            'Official domain performance levels for CAST science and ELPAC domains '
+            '(district or school All Grades rollups).'
         ),
         'columns': DOMAINS_COLS,
         'sql': DOMAINS_SQL,
@@ -536,26 +671,71 @@ def _stacked_cfg(title, **overrides):
     return cfg
 
 
+def _composite_year_category_order(outer_values: list[str], year_order: list[str]) -> list[str]:
+    """Categories like chart #475: ``Grade · Year`` for a two-level x-axis."""
+    return [f'{outer} · {year}' for outer in outer_values for year in year_order]
+
+
+# Saved chart #475 layout: composite x-axis, centered outer labels, stacked % bars.
+_MULTI_YEAR_COMPARE_STYLE = {
+    'chart_type': 'bar',
+    'bar_layout': 'stacked',
+    'compare_gap': 30,
+    'bar_category_gap': '20',
+    'center_group_labels': True,
+    'compare_cat_font_size': 12,
+    'compare_cat_rotation': 0,
+    'x_label_rotation': 0,
+    'x_label_font_size': 11,
+    'force_show_all_labels': False,
+    'show_axis_labels': True,
+    'show_axis_titles': True,
+    'show_toolbox': True,
+    'tooltip_show_count': True,
+    'tooltip_show_pct': True,
+    'group_col': '',
+}
+
+
 def _chart_specs(year_order):
     levels = 'Official • Performance Levels'
     domains = 'Official • Domains'
+    filter_rollup_all_grades = {
+        'report_row_type': [ROW_DISTRICT_ALL_GRADES, ROW_SCHOOL_ALL_GRADES],
+    }
+    filter_by_grade = {
+        'report_row_type': [ROW_DISTRICT_BY_GRADE, ROW_SCHOOL_BY_GRADE],
+    }
+    filter_school_rollup = {'report_row_type': [ROW_SCHOOL_ALL_GRADES]}
+    _MULTI_YEAR_SKIP = ['test_year', 'grade']
 
     def level_chart(name, title, x_col, source_filters, dataset=None, **cfg):
         stack_order = cfg.pop('stack_order', LEVEL_ORDER)
+        saved_chart_type = cfg.pop('saved_chart_type', None)
+        if saved_chart_type is None:
+            saved_chart_type = cfg.get('chart_type', 'stacked_bar')
+        x_label = cfg.pop('x_label', None)
+        col_defs = {
+            'test_year_label': 'Year',
+            'student_group': 'Student Group',
+            'performance_level': 'Performance Level',
+            'student_count': 'Students',
+            'students_with_scores': 'Students With Scores',
+            'grade_label': 'Grade',
+            'subject': 'Subject',
+            'assessment': 'Assessment',
+            'domain': 'Domain',
+        }
+        if x_label and ',' not in x_col:
+            col_defs[x_col] = x_label
         return {
             'name': name,
-            'chart_type': 'stacked_bar',
+            'chart_type': saved_chart_type,
             'dataset': dataset or levels,
             'source_filters': source_filters,
             'drill_columns': [],
             'drill_through_filter_map': {},
-            'column_defs': {
-                x_col: cfg.pop('x_label', x_col.replace('_', ' ').title()),
-                'test_year_label': 'Year',
-                'student_group': 'Student Group',
-                'performance_level': 'Performance Level',
-                'student_count': 'Students',
-            },
+            'column_defs': col_defs,
             'config': _stacked_cfg(
                 title,
                 x_col=x_col, y_col='student_count',
@@ -564,100 +744,143 @@ def _chart_specs(year_order):
             ),
         }
 
+    def _merge_filters(*parts):
+        out = {}
+        for part in parts:
+            out.update(part)
+        return out
+
     def year_chart(name, title, assessment, subject=None):
-        filters = {
-            'assessment': [assessment],
-            'school_scope': ['District'],
-            'student_group': ['All Students'],
-        }
+        filters = _merge_filters(
+            filter_rollup_all_grades,
+            {
+                'assessment': [assessment],
+                'student_group': ['All Students'],
+            },
+        )
         if subject:
             filters['subject'] = [subject]
         return level_chart(
             name, title, 'test_year_label', filters,
             x_label='Test Year',
             sort_col='test_year_label', sort_dir='asc',
-            skip_page_filters=['test_year', 'school_name'],
+            skip_page_filters=_MULTI_YEAR_SKIP,
+            multi_year_trend=True,
         )
 
     def year_group_chart(name, title, assessment, group_field='subject', group_order=None):
         assessments = assessment if isinstance(assessment, list) else [assessment]
-        filters = {
-            'assessment': assessments,
-            'school_scope': ['District'],
-            'student_group': ['All Students'],
-        }
+        filters = _merge_filters(
+            filter_rollup_all_grades,
+            {
+                'assessment': assessments,
+                'student_group': ['All Students'],
+            },
+        )
+        if group_order:
+            outer_order = list(dict.fromkeys(
+                p.split(' · ', 1)[0] for p in group_order
+            ))
+        elif group_field == 'subject':
+            outer_order = ['ELA', 'Math']
+        elif group_field == 'assessment':
+            outer_order = [
+                'ELPAC Summative', 'ELPAC Interim',
+                'Alternate ELPAC Summative', 'Alternate ELPAC Interim',
+            ]
+        category_order = group_order or _composite_year_category_order(outer_order, year_order)
         x_col = f'{group_field},test_year_label'
         chart = level_chart(
             name, title, x_col, filters,
-            x_label='',
-            sort_col='__manual__', category_order=group_order or [],
-            skip_page_filters=['test_year', 'school_name'],
-            center_group_labels=True,
-            show_axis_labels=False,
-            show_axis_titles=False,
-            force_show_all_labels=True,
-            x_label_font_size=12,
+            sort_col='__manual__',
+            category_order=category_order,
+            group_order=year_order,
+            skip_page_filters=_MULTI_YEAR_SKIP,
+            multi_year_trend=True,
+            **_MULTI_YEAR_COMPARE_STYLE,
         )
-        chart['column_defs'].update({
-            'subject': 'Subject',
-            'assessment': 'Assessment',
-            'test_year_label': 'Year',
-        })
         return chart
 
     def group_chart(name, title, assessment, group_type, subject=None):
-        filters = {
-            'assessment': [assessment],
-            'school_scope': ['District'],
-            'group_type': ['All Students', group_type],
-        }
+        filters = _merge_filters(
+            filter_rollup_all_grades,
+            {
+                'assessment': [assessment],
+                'group_type': ['All Students', group_type],
+            },
+        )
         if subject:
             filters['subject'] = [subject]
+        if group_type == 'Race/Ethnicity':
+            outer_groups = ['All Students', *RACE_GROUP_ORDER]
+        else:
+            outer_groups = ['All Students', *PROGRAM_GROUP_ORDER]
         return level_chart(
-            name, title, 'student_group', filters,
-            x_label='Student Group',
-            sort_col='__manual__', category_order=GROUP_ORDER,
-            skip_page_filters=['school_name'],
-            x_label_rotation=35,
+            name, title, 'student_group,test_year_label', filters,
+            sort_col='__manual__',
+            category_order=_composite_year_category_order(outer_groups, year_order),
+            group_order=year_order,
+            skip_page_filters=_MULTI_YEAR_SKIP,
+            multi_year_trend=True,
+            **_MULTI_YEAR_COMPARE_STYLE,
         )
 
-    def grade_year_chart(name, title, assessment, subject=None):
-        filters = {
-            'assessment': [assessment],
-            'school_scope': ['District'],
-            'student_group': ['All Students'],
-        }
+    def grade_year_chart(name, title, assessment, subject=None, grade_order=None):
+        grade_order = grade_order or CAASPP_GRADE_ORDER
+        filters = _merge_filters(
+            filter_by_grade,
+            {
+                'assessment': [assessment],
+                'student_group': ['All Students'],
+                'grade_label': grade_order,
+            },
+        )
         if subject:
             filters['subject'] = [subject]
         return level_chart(
-            name, title, 'grade_label', filters,
-            x_label='Grade',
-            group_col='test_year_label', group_order=year_order,
-            sort_col='__manual__', category_order=GRADE_ORDER,
-            skip_page_filters=['test_year', 'school_name'],
-            x_label_rotation=25,
+            name, title, 'grade_label,test_year_label', filters,
+            sort_col='__manual__',
+            category_order=_composite_year_category_order(grade_order, year_order),
+            group_order=year_order,
+            skip_page_filters=_MULTI_YEAR_SKIP,
+            multi_year_trend=True,
+            **_MULTI_YEAR_COMPARE_STYLE,
         )
 
     def domain_year_chart(name, title, assessment, domain_order):
         return level_chart(
-            name, title, 'domain', {'assessment': [assessment]},
+            name, title, 'domain,test_year_label',
+            _merge_filters(
+                {'grade_label': [DISTRICT_TOTAL_GRADE]},
+                {'assessment': [assessment]},
+            ),
             dataset=domains,
-            x_label='Domain',
-            group_col='test_year_label', group_order=year_order,
-            sort_col='__manual__', category_order=domain_order,
+            sort_col='__manual__',
+            category_order=_composite_year_category_order(domain_order, year_order),
+            group_order=year_order,
             stack_order=DOMAIN_LEVEL_ORDER,
-            skip_page_filters=['test_year', 'school_name'],
-            x_label_rotation=25,
+            skip_page_filters=_MULTI_YEAR_SKIP,
+            multi_year_trend=True,
+            **_MULTI_YEAR_COMPARE_STYLE,
         )
 
     def school_table(name, title, assessment, row_col='school_name', subject=None):
-        filters = {
-            'assessment': [assessment],
-            'school_scope': ['School'],
-            'student_group': ['All Students'],
-        }
+        filters = _merge_filters(
+            filter_school_rollup,
+            {
+                'assessment': [assessment],
+                'school_scope': ['School'],
+                'student_group': ['All Students'],
+            },
+        )
         if subject:
             filters['subject'] = [subject]
+        row_label = 'Subject · School' if row_col == 'school_subject' else 'School'
+        year_pl_order = [
+            f'{yr}{YEAR_PL_SEP}{pl}'
+            for yr in year_order
+            for pl in LEVEL_ORDER
+        ]
         return {
             'name': name,
             'chart_type': 'summary_table',
@@ -666,17 +889,29 @@ def _chart_specs(year_order):
             'drill_columns': [],
             'drill_through_filter_map': {},
             'column_defs': {
-                row_col: 'School / Subject',
+                row_col: row_label,
+                'year_pl': 'Year / Performance Level',
                 'performance_level': 'Performance Level',
+                'test_year_label': 'Year',
                 'student_count': 'Students',
+                'school_name': 'School',
             },
             'config': {
                 'chart_type': 'summary_table',
                 'chart_title': title,
-                'st_row_col': row_col, 'st_col_col': 'performance_level',
-                'st_col_mode': 'values', 'st_agg_func': 'sum',
+                'st_row_col': row_col,
+                'st_col_col': 'year_pl',
+                'st_col_group_sep': YEAR_PL_SEP,
+                'st_col_mode': 'values',
+                'st_agg_func': 'sum',
                 'st_value_col': 'student_count',
+                'st_col_order': year_pl_order,
+                'sort_col': '__alpha__',
                 'disable_drill': True,
+                'multi_year_trend': True,
+                'district_total_school': DISTRICT_TOTAL_SCHOOL,
+                'ignore_school_filter_at_district': True,
+                'skip_page_filters': ['test_year', 'grade'],
             },
         }
 
@@ -722,7 +957,8 @@ def _chart_specs(year_order):
         school_table(
             'Official • Smarter Balanced School Results Table',
             'Smarter Balanced: ELA and Math Results by School',
-            'Smarter Balanced', row_col='school_subject',
+            'Smarter Balanced',
+            row_col='school_subject',
         ),
     ])
 
@@ -738,7 +974,12 @@ def _chart_specs(year_order):
         group_chart('Official • CAA Math PL by Program', 'CAA Math: PL by Program', 'CAA', 'Program', 'Math'),
         grade_year_chart('Official • CAA ELA PL by Grade and Year', 'CAA ELA: PL by Grade and Year', 'CAA', 'ELA'),
         grade_year_chart('Official • CAA Math PL by Grade and Year', 'CAA Math: PL by Grade and Year', 'CAA', 'Math'),
-        school_table('Official • CAA School Results Table', 'CAA: ELA and Math Results by School', 'CAA', row_col='school_subject'),
+        school_table(
+            'Official • CAA School Results Table',
+            'CAA: ELA and Math Results by School',
+            'CAA',
+            row_col='school_subject',
+        ),
     ])
 
     # ── CAST ───────────────────────────────────────────────────────────────
@@ -746,13 +987,20 @@ def _chart_specs(year_order):
         year_chart('Official • CAST PL by Year', 'CAST: PL by Year', 'CAST'),
         group_chart('Official • CAST PL by Race', 'CAST: PL by Race', 'CAST', 'Race/Ethnicity'),
         group_chart('Official • CAST PL by Program', 'CAST: PL by Program', 'CAST', 'Program'),
-        grade_year_chart('Official • CAST PL by Grade and Year', 'CAST: PL by Grade and Year', 'CAST'),
+        grade_year_chart(
+            'Official • CAST PL by Grade and Year', 'CAST: PL by Grade and Year',
+            'CAST', grade_order=CAST_GRADE_ORDER,
+        ),
         domain_year_chart(
             'Official • CAST Science Domain PL by Year',
             'CAST: Science Domain PL by Year', 'CAST',
             ['Life Sciences', 'Physical Sciences', 'Earth & Space Sciences'],
         ),
-        school_table('Official • CAST School Results Table', 'CAST: Results by School', 'CAST'),
+        school_table(
+            'Official • CAST School Results Table',
+            'CAST: School Results by Year',
+            'CAST',
+        ),
     ])
 
     # ── CAA Science ────────────────────────────────────────────────────────
@@ -761,7 +1009,11 @@ def _chart_specs(year_order):
         group_chart('Official • CAA Science PL by Race', 'CAA Science: PL by Race', 'CAA Science', 'Race/Ethnicity'),
         group_chart('Official • CAA Science PL by Program', 'CAA Science: PL by Program', 'CAA Science', 'Program'),
         grade_year_chart('Official • CAA Science PL by Grade and Year', 'CAA Science: PL by Grade and Year', 'CAA Science'),
-        school_table('Official • CAA Science School Results Table', 'CAA Science: Results by School', 'CAA Science'),
+        school_table(
+            'Official • CAA Science School Results Table',
+            'CAA Science: School Results by Year',
+            'CAA Science',
+        ),
     ])
 
     # ── ELPAC ──────────────────────────────────────────────────────────────
@@ -774,13 +1026,21 @@ def _chart_specs(year_order):
         ),
         group_chart('Official • ELPAC Summative PL by Race', 'ELPAC Summative: PL by Race', 'ELPAC Summative', 'Race/Ethnicity'),
         group_chart('Official • ELPAC Summative PL by Program', 'ELPAC Summative: PL by Program', 'ELPAC Summative', 'Program'),
-        grade_year_chart('Official • ELPAC Summative PL by Grade and Year', 'ELPAC Summative: PL by Grade and Year', 'ELPAC Summative'),
+        grade_year_chart(
+            'Official • ELPAC Summative PL by Grade and Year',
+            'ELPAC Summative: PL by Grade and Year', 'ELPAC Summative',
+            grade_order=ELPAC_GRADE_ORDER,
+        ),
         domain_year_chart(
             'Official • ELPAC Summative Domain PL by Year',
             'ELPAC Summative: Domain PL by Year', 'ELPAC Summative',
             ['Listening', 'Speaking', 'Reading', 'Writing'],
         ),
-        school_table('Official • ELPAC Summative School Results Table', 'ELPAC Summative: Results by School', 'ELPAC Summative'),
+        school_table(
+            'Official • ELPAC Summative School Results Table',
+            'ELPAC Summative: School Results by Year',
+            'ELPAC Summative',
+        ),
     ])
 
     return charts
@@ -810,56 +1070,34 @@ def _year_order() -> list[str]:
     return [str(r['test_year_label']) for r in (res.get('rows') or [])]
 
 
-def _page_filters(latest_year: str) -> list[dict]:
-    levels_sub = f"({LEVELS_SQL}) s"
-
-    def distinct(expr: str, where: str = '') -> str:
-        cond = f" WHERE {where}" if where else ''
-        return f"""
-SELECT DISTINCT v
-FROM (
-    SELECT {expr} AS v
-    FROM {levels_sub}{cond}
+def _page_filter_school_sql() -> str:
+    """Fast school list from official_data_db (avoid LEVELS_SQL on every dropdown)."""
+    safe_district = DISTRICT_TOTAL_SCHOOL.replace("'", "''")
+    return f"""
+SELECT v FROM (
+    SELECT DISTINCT '{safe_district}' AS v, 0 AS sort_key
+    UNION ALL
+    SELECT DISTINCT COALESCE(NULLIF(BTRIM(school_name), ''), 'Unknown') AS v, 1 AS sort_key
+    FROM {SOURCE_TABLE}
+    WHERE COALESCE(NULLIF(BTRIM(school_code), ''), '0000000') <> '0000000'
+      AND BTRIM(COALESCE(school_name, '')) <> ''
 ) q
 WHERE v IS NOT NULL AND BTRIM(v::text) <> ''
-ORDER BY v
+ORDER BY sort_key, v
 """
 
+
+def _page_filters(_latest_year: str) -> list[dict]:
     return [
         {
-            'id': 'test_year', 'label': 'Test Year', 'source_col': 'test_year',
+            'id': 'school',
+            'label': 'School',
+            'source_col': 'school_name',
             'source_table': SOURCE_TABLE,
-            'source_distinct_sql': """
-SELECT DISTINCT test_year AS v
-FROM official_data_db
-WHERE test_year IS NOT NULL AND BTRIM(test_year) <> ''
-ORDER BY v
-""",
-            'widget': 'select', 'default_val': latest_year, 'hidden': False,
-        },
-        {
-            'id': 'assessment', 'label': 'Assessment', 'source_col': 'assessment',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': distinct('assessment'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'school', 'label': 'School', 'source_col': 'school_name',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': distinct('school_name', "school_scope = 'School'"),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'grade', 'label': 'Grade', 'source_col': 'grade_label',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': distinct('grade_label'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'student_group', 'label': 'Student Group', 'source_col': 'student_group',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': distinct('student_group', 'group_known = 1'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
+            'source_distinct_sql': _page_filter_school_sql(),
+            'widget': 'select',
+            'default_val': DISTRICT_TOTAL_SCHOOL,
+            'hidden': False,
         },
     ]
 
@@ -872,10 +1110,16 @@ def _page_spec(latest_year: str) -> dict:
         'menu_order': 10,
         'description': (
             'Official CAASPP, CAST, CAA, and ELPAC results from official_data_db, '
-            'organized by assessment. Charts compare multiple years and separate '
-            'race/ethnicity from program groups for readability. Each assessment '
-            'section also includes a school results table. Charts are intentionally '
-            'not drillable because the official table contains aggregate results only.'
+            'using CAASPP Table A student groups and grade 13 (All Grades) rollup rows '
+            'so totals match caaspp-elpac.ets.org. Charts compare multiple test years '
+            '(no test-year page filter). Use the School control for district totals '
+            f'(default {DISTRICT_TOTAL_SCHOOL}) or a single school; school results tables '
+            'list every school with test years across the column headers (year over '
+            'performance level). Race/program charts '
+            'need full “all student groups” research files for earlier years; 2024–2025 '
+            'SB files in the current load only include All Students at the district level. '
+            'Each assessment section includes a school results table (all schools at '
+            'district view). Charts are not drillable (aggregate data only).'
         ),
         'page_filters': _page_filters(latest_year),
         'tabs': ['Smarter Balanced', 'CAA', 'CAST', 'CAA Science', 'ELPAC'],
@@ -884,13 +1128,17 @@ def _page_spec(latest_year: str) -> dict:
             {'tab': 'Smarter Balanced', 'label': 'ELA and Math by year', 'sections': [
                 {'chart': 'Official • Smarter Balanced ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
-            {'tab': 'Smarter Balanced', 'label': 'ELA student groups', 'sections': [
-                {'chart': 'Official • Smarter Balanced ELA PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • Smarter Balanced ELA PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'Smarter Balanced', 'label': 'ELA by race and year', 'sections': [
+                {'chart': 'Official • Smarter Balanced ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
-            {'tab': 'Smarter Balanced', 'label': 'Math student groups', 'sections': [
-                {'chart': 'Official • Smarter Balanced Math PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • Smarter Balanced Math PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'Smarter Balanced', 'label': 'ELA by program and year', 'sections': [
+                {'chart': 'Official • Smarter Balanced ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'Smarter Balanced', 'label': 'Math by race and year', 'sections': [
+                {'chart': 'Official • Smarter Balanced Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'Smarter Balanced', 'label': 'Math by program and year', 'sections': [
+                {'chart': 'Official • Smarter Balanced Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
             {'tab': 'Smarter Balanced', 'label': 'ELA by grade and year', 'sections': [
                 {'chart': 'Official • Smarter Balanced ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
@@ -905,13 +1153,17 @@ def _page_spec(latest_year: str) -> dict:
             {'tab': 'CAA', 'label': 'ELA and Math by year', 'sections': [
                 {'chart': 'Official • CAA ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
-            {'tab': 'CAA', 'label': 'ELA student groups', 'sections': [
-                {'chart': 'Official • CAA ELA PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • CAA ELA PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'CAA', 'label': 'ELA by race and year', 'sections': [
+                {'chart': 'Official • CAA ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
-            {'tab': 'CAA', 'label': 'Math student groups', 'sections': [
-                {'chart': 'Official • CAA Math PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • CAA Math PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'CAA', 'label': 'ELA by program and year', 'sections': [
+                {'chart': 'Official • CAA ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'CAA', 'label': 'Math by race and year', 'sections': [
+                {'chart': 'Official • CAA Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'CAA', 'label': 'Math by program and year', 'sections': [
+                {'chart': 'Official • CAA Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
             {'tab': 'CAA', 'label': 'ELA by grade and year', 'sections': [
                 {'chart': 'Official • CAA ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
@@ -926,9 +1178,11 @@ def _page_spec(latest_year: str) -> dict:
             {'tab': 'CAST', 'label': 'Multi-year performance levels', 'sections': [
                 {'chart': 'Official • CAST PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
-            {'tab': 'CAST', 'label': 'Student groups', 'sections': [
-                {'chart': 'Official • CAST PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • CAST PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'CAST', 'label': 'By race and year', 'sections': [
+                {'chart': 'Official • CAST PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'CAST', 'label': 'By program and year', 'sections': [
+                {'chart': 'Official • CAST PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
             {'tab': 'CAST', 'label': 'Grade and year', 'sections': [
                 {'chart': 'Official • CAST PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
@@ -943,9 +1197,11 @@ def _page_spec(latest_year: str) -> dict:
             {'tab': 'CAA Science', 'label': 'Multi-year performance levels', 'sections': [
                 {'chart': 'Official • CAA Science PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
-            {'tab': 'CAA Science', 'label': 'Student groups', 'sections': [
-                {'chart': 'Official • CAA Science PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • CAA Science PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'CAA Science', 'label': 'By race and year', 'sections': [
+                {'chart': 'Official • CAA Science PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'CAA Science', 'label': 'By program and year', 'sections': [
+                {'chart': 'Official • CAA Science PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
             {'tab': 'CAA Science', 'label': 'Grade and year', 'sections': [
                 {'chart': 'Official • CAA Science PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
@@ -957,9 +1213,11 @@ def _page_spec(latest_year: str) -> dict:
             {'tab': 'ELPAC', 'label': 'Assessment and year comparison', 'sections': [
                 {'chart': 'Official • ELPAC PL by Assessment and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
-            {'tab': 'ELPAC', 'label': 'Summative: student groups', 'sections': [
-                {'chart': 'Official • ELPAC Summative PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 10},
-                {'chart': 'Official • ELPAC Summative PL by Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 10},
+            {'tab': 'ELPAC', 'label': 'Summative: by race and year', 'sections': [
+                {'chart': 'Official • ELPAC Summative PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+            ]},
+            {'tab': 'ELPAC', 'label': 'Summative: by program and year', 'sections': [
+                {'chart': 'Official • ELPAC Summative PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
             {'tab': 'ELPAC', 'label': 'Summative: grade and year', 'sections': [
                 {'chart': 'Official • ELPAC Summative PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
@@ -1192,15 +1450,115 @@ def qa_dataviz() -> int:
             failures.append(f"{spec['name']}: missing columns {sorted(missing)}")
             print(f"  FAIL {spec['name']}: missing columns {sorted(missing)}")
 
+    print('=== QA: CAASPP district rollups (students with scores) ===')
+    expect_with_scores = {
+        ('2026', 'All Students'): 12952.0,
+    }
+    res = run_raw_sql(f"""
+        SELECT test_year,
+               student_group,
+               MAX(students_with_scores) AS with_scores,
+               SUM(student_count) AS level_total,
+               SUM(CASE WHEN performance_level IN ('Level 3', 'Level 4')
+                        THEN student_count ELSE 0 END) AS met_or_above
+        FROM ({LEVELS_SQL}) s
+        WHERE assessment = 'Smarter Balanced'
+          AND subject = 'ELA'
+          AND report_row_type = '{ROW_DISTRICT_ALL_GRADES}'
+          AND student_group IN ('All Students', 'Hispanic or Latino', 'English Learners')
+        GROUP BY test_year, student_group
+        ORDER BY test_year, student_group
+    """)
+    if res.get('error'):
+        failures.append(f'CAASPP alignment query: {res["error"]}')
+        print(f"  FAIL CAASPP alignment: {res['error']}")
+    else:
+        for row in res.get('rows') or []:
+            ty = str(row.get('test_year') or '')
+            grp = row.get('student_group')
+            with_scores = float(row.get('with_scores') or 0)
+            level_total = float(row.get('level_total') or 0)
+            met = float(row.get('met_or_above') or 0)
+            if abs(with_scores - level_total) > 0.5:
+                failures.append(
+                    f'{ty} {grp}: level counts sum to {level_total}, '
+                    f'but students_with_scores is {with_scores}'
+                )
+                print(f"  FAIL {ty} {grp}: totals {level_total} vs with_scores {with_scores}")
+            else:
+                pct = round(met / with_scores * 100, 2) if with_scores else 0
+                print(f"  ok  {ty} {grp}: {with_scores:.0f} with scores ({pct}% L3+L4)")
+            exp = expect_with_scores.get((ty, grp))
+            if exp is not None and abs(with_scores - exp) > 0.5:
+                failures.append(
+                    f'{ty} {grp}: expected {exp:.0f} with scores, got {with_scores}'
+                )
+                print(f"  FAIL {ty} {grp}: expected {exp:.0f}, got {with_scores}")
+
+    print('=== QA: district subgroup years (data load) ===')
+    res = run_raw_sql(f"""
+        SELECT student_group, COUNT(DISTINCT test_year) AS years
+        FROM ({LEVELS_SQL}) s
+        WHERE assessment = 'Smarter Balanced'
+          AND subject = 'ELA'
+          AND report_row_type = '{ROW_DISTRICT_ALL_GRADES}'
+          AND is_subgroup = 1
+        GROUP BY student_group
+        HAVING COUNT(DISTINCT test_year) < 2
+        ORDER BY student_group
+        LIMIT 15
+    """)
+    sparse = res.get('rows') or []
+    if sparse:
+        print(
+            f"  WARN {len(sparse)} district subgroup(s) have <2 years in "
+            f'{SOURCE_TABLE} (charts show only years present in the table)'
+        )
+        for row in sparse[:8]:
+            print(f"       {row.get('student_group')}: {row.get('years')} year(s)")
+
+    print('=== QA: multi-year subgroups (Smarter Balanced ELA, district rollups) ===')
+    res = run_raw_sql(f"""
+        SELECT student_group,
+               array_agg(DISTINCT test_year ORDER BY test_year) AS years
+        FROM ({LEVELS_SQL}) s
+        WHERE assessment = 'Smarter Balanced'
+          AND subject = 'ELA'
+          AND report_row_type = '{ROW_DISTRICT_ALL_GRADES}'
+          AND school_name = '{DISTRICT_TOTAL_SCHOOL}'
+          AND is_subgroup = 1
+        GROUP BY student_group
+    """)
+    subgroup_years = {}
+    for r in res.get('rows') or []:
+        raw = r.get('years')
+        if isinstance(raw, str):
+            yrs = [y.strip() for y in raw.strip('{}').split(',') if y.strip()]
+        else:
+            yrs = [str(y) for y in (raw or [])]
+        subgroup_years[str(r['student_group'])] = yrs
+    anchor_years = list(order)
+    for probe in ('Hispanic or Latino', 'English Learners'):
+        got = subgroup_years.get(probe, [])
+        missing = [y for y in anchor_years if y not in got]
+        if missing:
+            failures.append(
+                f'{probe}: missing years {missing} at district '
+                f'(have {got or "none"}; All Students has {anchor_years})'
+            )
+            print(f"  FAIL {probe}: years {got or 'none'} (missing {missing})")
+        else:
+            print(f"  ok  {probe}: years {got}")
+
     print('=== QA: page filters ===')
-    for f in _page_filters(latest):
-        res = run_raw_sql(f['source_distinct_sql'])
+    for filt in _page_filters(latest):
+        res = run_raw_sql(filt['source_distinct_sql'])
         n = len(res.get('rows') or [])
         if res.get('error') or n == 0:
-            failures.append(f"filter {f['id']}: {res.get('error') or 'no values'}")
-            print(f"  FAIL filter {f['id']}: {res.get('error') or 'no values'}")
+            failures.append(f"filter {filt['id']}: {res.get('error') or 'no values'}")
+            print(f"  FAIL filter {filt['id']}: {res.get('error') or 'no values'}")
         else:
-            print(f"  ok  filter {f['id']}: {n} values")
+            print(f"  ok  filter {filt['id']}: {n} values")
 
     if failures:
         print(f'\nQA FAILED ({len(failures)} issue(s)).')

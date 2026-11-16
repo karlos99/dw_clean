@@ -114,7 +114,6 @@ FROM (
     ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
 ) AS d
 ARRAY JOIN arrayConcat(
-    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
     if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
     if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
     if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
@@ -130,7 +129,8 @@ _STUDENT_COLS = [
     'gate', 'foster', 'status', 'district_school',
 ]
 
-PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+PROGRAM_ORDER = ['GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+ELL_ORDER = ['EL', 'IFEP', 'RFEP', 'EO', 'TBD', 'ADEL']
 RACE_ORDER = [
     'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
     'Multiple', 'American Indian or Alaska Native',
@@ -149,6 +149,16 @@ BAND_COLORS = {
 }
 PL_COLORS = {'1': '#e15759', '2': '#edc948', '3': '#59a14f'}
 PL_STACK_ORDER = ['3', '2', '1']
+IB_GRADE_STACK_ORDER = ['7', '6', '5', '4', '3', '2', '1']
+IB_GRADE_COLORS = {
+    '1': '#e15759',
+    '2': '#f28e2b',
+    '3': '#edc948',
+    '4': '#76b7b2',
+    '5': '#59a14f',
+    '6': '#4e79a7',
+    '7': '#b07aa1',
+}
 INTERIM_TESTS = ['Interim Math', 'Interim ELA', 'Interim ELPAC']
 INTERIM_TEST_LABELS = {
     'Interim Math': 'Math',
@@ -328,6 +338,7 @@ SELECT
     r.level AS level,
     concat(r.subject, ' — ', r.level) AS subject_level,
     concat(r.category, ' — ', r.level) AS category_level,
+    concat(r.school_year, ' · ', r.grade) AS year_grade,
     r.grade AS final_grade,
     r.predicted_grade AS predicted_grade,
     if(match(trim(ifNull(r.grade, '')), '^[1-7]$'), toInt32OrZero(r.grade), NULL) AS grade_num,
@@ -341,7 +352,7 @@ WHERE {IB_WHERE}
 """
 IB_DRILL = _STUDENT_COLS + [
     'test_year', 'session_year', 'category', 'subject', 'level', 'subject_level',
-    'category_level', 'final_grade', 'predicted_grade', 'grade_num', 'predicted_num',
+    'category_level', 'year_grade', 'final_grade', 'predicted_grade', 'grade_num', 'predicted_num',
     'grade_valid', 'pass_pct', 'exam_count',
 ]
 IB_PROGRAM_DRILL = IB_DRILL + ['migrant', 'program']
@@ -443,11 +454,26 @@ def _chart_specs_sat() -> list[dict]:
             'dataset': ds,
             'drill_columns': SAT_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
-            'column_defs': {'race': 'Race', 'total_score': 'Average Total Score'},
+            'column_defs': {'race': 'Race', 'test_year': 'Test Year', 'total_score': 'Average Total Score'},
             'config': _base_cfg(
-                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Race',
-                x_col='race', y_col='total_score', agg='avg', agg_decimals=0,
-                y_axis_min=0, sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Race and Year',
+                x_col='test_year,race', y_col='total_score', agg='avg',
+                agg_decimals=0, y_axis_min=0, sort_col='test_year', sort_dir='asc',
+                x_label_rotation=35,
+            ),
+        },
+        {
+            'name': 'SAT • Average Total Score by ELL Status',
+            'chart_type': 'bar',
+            'dataset': ds,
+            'drill_columns': SAT_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': ''},
+            'column_defs': {'ell': 'ELL Status', 'test_year': 'Test Year', 'total_score': 'Average Total Score'},
+            'config': _base_cfg(
+                f'SAT {SAT_YEAR_LABEL}: Average Total Score by ELL Status and Year',
+                x_col='test_year,ell', y_col='total_score', agg='avg',
+                agg_decimals=0, y_axis_min=0, sort_col='test_year', sort_dir='asc',
+                x_label_rotation=35,
             ),
         },
         {
@@ -456,11 +482,12 @@ def _chart_specs_sat() -> list[dict]:
             'dataset': 'SAT • Student Program Results',
             'drill_columns': SAT_PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
-            'column_defs': {'program': 'Student Program', 'total_score': 'Average Total Score'},
+            'column_defs': {'program': 'Student Program', 'test_year': 'Test Year', 'total_score': 'Average Total Score'},
             'config': _base_cfg(
-                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Student Program',
-                x_col='program', y_col='total_score', agg='avg', agg_decimals=0,
-                y_axis_min=0, sort_col='__manual__', category_order=PROGRAM_ORDER,
+                f'SAT {SAT_YEAR_LABEL}: Average Total Score by Student Program and Year',
+                x_col='test_year,program', y_col='total_score', agg='avg',
+                agg_decimals=0, y_axis_min=0, sort_col='test_year', sort_dir='asc',
+                x_label_rotation=35,
             ),
         },
     ]
@@ -509,6 +536,26 @@ def _chart_specs_ib() -> list[dict]:
             ),
         },
         {
+            'name': 'IB • Final Grade Mix by Year',
+            'chart_type': 'stacked_bar',
+            'dataset': ds,
+            'source_filters': {'grade_valid': [1]},
+            'drill_columns': IB_DRILL,
+            'drill_through_filter_map': {'x_col': 'test_year', 'series_col': 'final_grade'},
+            'column_defs': {
+                'test_year': 'School Year',
+                'final_grade': 'Final Grade',
+                'exam_count': 'Exams',
+            },
+            'config': _stacked_cfg(
+                f'IB {IB_YEAR_LABEL}: Final Grade Mix by Year',
+                x_col='test_year', y_col='exam_count', agg='sum',
+                stack_col='final_grade', series_col='final_grade',
+                stack_order=IB_GRADE_STACK_ORDER, color_map=IB_GRADE_COLORS,
+                sort_col='test_year', sort_dir='asc',
+            ),
+        },
+        {
             'name': 'IB • Average Final Grade by Subject',
             'chart_type': 'bar',
             'dataset': ds,
@@ -520,7 +567,9 @@ def _chart_specs_ib() -> list[dict]:
                 f'IB {IB_YEAR_LABEL}: Average Final Grade by Subject',
                 x_col='subject_level', y_col='grade_num', agg='avg',
                 agg_decimals=2, y_axis_max=7, y_axis_min=0,
-                sort_col='_value', sort_dir='desc', x_label_rotation=35,
+                sort_col='_value', sort_dir='desc',
+                bar_orientation='horizontal', x_label_rotation=0,
+                x_label_max_length=45,
             ),
         },
         {
@@ -535,21 +584,34 @@ def _chart_specs_ib() -> list[dict]:
                 f'IB {IB_YEAR_LABEL}: Percent Scoring 4+ by Subject',
                 x_col='subject_level', y_col='pass_pct', agg='avg',
                 agg_decimals=1, y_axis_max=100, y_axis_min=0,
-                sort_col='_value', sort_dir='desc', x_label_rotation=35,
+                sort_col='_value', sort_dir='desc',
+                bar_orientation='horizontal', x_label_rotation=0,
+                x_label_max_length=45,
             ),
         },
         {
             'name': 'IB • Performance by Subject Table',
-            'chart_type': 'summary_table',
+            'chart_type': 'dynamic_summary_table',
             'dataset': ds,
             'source_filters': {'grade_valid': [1]},
             'drill_columns': IB_DRILL,
-            'column_defs': {'subject_level': 'Subject / Level', 'final_grade': 'Grade', 'ssid': 'Students'},
+            'column_defs': {
+                'category': 'Category',
+                'subject_level': 'Subject / Level',
+                'year_grade': 'Year · Grade',
+                'ssid': 'Students',
+            },
             'config': {
-                'chart_type': 'summary_table',
+                'chart_type': 'dynamic_summary_table',
                 'chart_title': f'IB {IB_YEAR_LABEL}: Performance by Subject',
-                'st_row_col': 'subject_level', 'st_col_col': 'final_grade',
-                'st_col_mode': 'values', 'st_agg_func': 'count', 'st_value_col': '',
+                'st_row_cols': ['category', 'subject_level'],
+                'st_col_cols': ['year_grade'],
+                'st_col_group_sep': ' · ',
+                'st_agg_func': 'count',
+                'st_value_col': '',
+                'st_show_col_totals': True,
+                'st_show_row_totals': True,
+                'sort_col': '__alpha__',
             },
         },
         {
@@ -559,12 +621,27 @@ def _chart_specs_ib() -> list[dict]:
             'source_filters': {'grade_valid': [1]},
             'drill_columns': IB_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
-            'column_defs': {'race': 'Race', 'grade_num': 'Average Final Grade'},
+            'column_defs': {'race': 'Race', 'test_year': 'Test Year', 'grade_num': 'Average Final Grade'},
             'config': _base_cfg(
-                f'IB {IB_YEAR_LABEL}: Average Final Grade by Race',
-                x_col='race', y_col='grade_num', agg='avg', agg_decimals=2,
-                y_axis_max=7, y_axis_min=0, sort_col='__manual__',
-                category_order=RACE_ORDER, x_label_rotation=25,
+                f'IB {IB_YEAR_LABEL}: Average Final Grade by Race and Year',
+                x_col='test_year,race', y_col='grade_num', agg='avg',
+                agg_decimals=2, y_axis_max=7, y_axis_min=0,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
+            ),
+        },
+        {
+            'name': 'IB • Average Final Grade by ELL Status',
+            'chart_type': 'bar',
+            'dataset': ds,
+            'source_filters': {'grade_valid': [1]},
+            'drill_columns': IB_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': ''},
+            'column_defs': {'ell': 'ELL Status', 'test_year': 'Test Year', 'grade_num': 'Average Final Grade'},
+            'config': _base_cfg(
+                f'IB {IB_YEAR_LABEL}: Average Final Grade by ELL Status and Year',
+                x_col='test_year,ell', y_col='grade_num', agg='avg',
+                agg_decimals=2, y_axis_max=7, y_axis_min=0,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
             ),
         },
         {
@@ -574,12 +651,12 @@ def _chart_specs_ib() -> list[dict]:
             'source_filters': {'grade_valid': [1]},
             'drill_columns': IB_PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
-            'column_defs': {'program': 'Student Program', 'grade_num': 'Average Final Grade'},
+            'column_defs': {'program': 'Student Program', 'test_year': 'Test Year', 'grade_num': 'Average Final Grade'},
             'config': _base_cfg(
-                f'IB {IB_YEAR_LABEL}: Average Final Grade by Student Program',
-                x_col='program', y_col='grade_num', agg='avg', agg_decimals=2,
-                y_axis_max=7, y_axis_min=0, sort_col='__manual__',
-                category_order=PROGRAM_ORDER,
+                f'IB {IB_YEAR_LABEL}: Average Final Grade by Student Program and Year',
+                x_col='test_year,program', y_col='grade_num', agg='avg',
+                agg_decimals=2, y_axis_max=7, y_axis_min=0,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
             ),
         },
     ]
@@ -656,12 +733,31 @@ def _chart_specs_interim() -> list[dict]:
             'source_filters': {'test_name': [test_name]},
             'drill_columns': INTERIM_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
-            'column_defs': {'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students'},
+            'column_defs': {'race': 'Race', 'test_year': 'Test Year', 'pl': 'Performance Level', 'ssid': 'Students'},
             'config': _stacked_cfg(
-                f'Interim {label}: PL by Race',
+                f'Interim {label}: PL by Race and Year',
                 x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
-                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
-                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=35,
+            ),
+        })
+        charts.append({
+            'name': f'Interim • {label} PL by ELL Status',
+            'chart_type': 'stacked_bar',
+            'dataset': ds,
+            'source_filters': {'test_name': [test_name]},
+            'drill_columns': INTERIM_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': 'pl'},
+            'column_defs': {
+                'ell': 'ELL Status', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
+            },
+            'config': _stacked_cfg(
+                f'Interim {label}: PL by ELL Status and Year',
+                x_col='ell', y_col='ssid', stack_col='pl', series_col='pl',
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=ELL_ORDER, x_label_rotation=25,
+                skip_page_filters=['test_year'],
             ),
         })
         charts.append({
@@ -672,13 +768,13 @@ def _chart_specs_interim() -> list[dict]:
             'drill_columns': INTERIM_PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
             'column_defs': {
-                'program': 'Student Program', 'pl': 'Performance Level',
-                'ssid': 'Students',
+                'program': 'Student Program', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
             },
             'config': _stacked_cfg(
-                f'Interim {label}: PL by Student Program',
+                f'Interim {label}: PL by Student Program and Year',
                 x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
-                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
                 sort_col='__manual__', category_order=PROGRAM_ORDER,
             ),
         })
@@ -733,9 +829,10 @@ def _page_sat() -> dict:
             {'tab': 'Score Bands', 'label': 'Total score distribution', 'sections': [
                 {'chart': 'SAT • Total Score Bands', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
             ]},
-            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
-                {'chart': 'SAT • Average Total Score by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-                {'chart': 'SAT • Average Total Score by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            {'tab': 'Demographics', 'label': 'Race, ELL, and student programs', 'sections': [
+                {'chart': 'SAT • Average Total Score by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'SAT • Average Total Score by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'SAT • Average Total Score by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
             ]},
             {'tab': 'Detail Tables', 'label': 'Score bands by school', 'sections': [
                 {'chart': 'SAT • Score Bands by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -763,14 +860,22 @@ def _page_ib() -> dict:
             {'tab': 'Participation', 'label': 'Categories and years', 'sections': [
                 {'chart': 'IB • Students by Category', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
             ]},
-            {'tab': 'Performance', 'label': 'Grades by subject', 'sections': [
-                {'chart': 'IB • Average Final Grade by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-                {'chart': 'IB • Percent Scoring 4+ by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-                {'chart': 'IB • Performance by Subject Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+            {'tab': 'Performance', 'label': 'Performance by year', 'sections': [
+                {'chart': 'IB • Final Grade Mix by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
-            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
-                {'chart': 'IB • Average Final Grade by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-                {'chart': 'IB • Average Final Grade by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            {'tab': 'Performance', 'label': 'Average final grade by subject', 'sections': [
+                {'chart': 'IB • Average Final Grade by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 18},
+            ]},
+            {'tab': 'Performance', 'label': 'Percent scoring 4+ by subject', 'sections': [
+                {'chart': 'IB • Percent Scoring 4+ by Subject', 'gs_x': 0, 'gs_w': 12, 'gs_h': 18},
+            ]},
+            {'tab': 'Performance', 'label': 'Subject performance table', 'sections': [
+                {'chart': 'IB • Performance by Subject Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 16},
+            ]},
+            {'tab': 'Demographics', 'label': 'Race, ELL, and student programs', 'sections': [
+                {'chart': 'IB • Average Final Grade by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'IB • Average Final Grade by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'IB • Average Final Grade by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
             ]},
         ],
     }
@@ -793,9 +898,10 @@ def _page_interim() -> dict:
         ]})
     for test_name in INTERIM_TESTS:
         label = INTERIM_TEST_LABELS[test_name]
-        rows.append({'tab': 'Demographics', 'label': f'{label}: race and student programs', 'sections': [
-            {'chart': f'Interim • {label} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-            {'chart': f'Interim • {label} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+        rows.append({'tab': 'Demographics', 'label': f'{label}: race, ELL, and student programs', 'sections': [
+            {'chart': f'Interim • {label} PL by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'Interim • {label} PL by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'Interim • {label} PL by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
         ]})
     rows.extend([
         {'tab': 'Detail Tables', 'label': 'PL by test and subject', 'sections': [

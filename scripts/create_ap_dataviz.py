@@ -126,7 +126,8 @@ SELECT
     if(toInt32OrZero(r.exam_grade) >= 3, 100, 0) AS pass_pct,
     r.exam_id AS exam_id,
     1 AS exam_count,
-{_STUDENT_SELECT}
+{_STUDENT_SELECT},
+    if(r.admin_year IN (SELECT admin_year FROM recent_years), 1, 0) AS recent3
 """
 
 _AWARD_SELECT = f"""
@@ -154,7 +155,7 @@ _STUDENT_SELECT_COLS = [
     'gate', 'foster', 'status', 'district_school',
 ]
 
-_EXAM_DRILL = _STUDENT_SELECT_COLS + ['test_year', 'exam_name', 'exam_group', 'subject_exam', 'exam_grade', 'year_score', 'school_year_label', 'score_num', 'score_valid', 'passed', 'pass_pct', 'exam_id', 'exam_count']
+_EXAM_DRILL = _STUDENT_SELECT_COLS + ['test_year', 'exam_name', 'exam_group', 'subject_exam', 'exam_grade', 'year_score', 'school_year_label', 'score_num', 'score_valid', 'passed', 'pass_pct', 'exam_id', 'exam_count', 'recent3']
 _EXAM_PROGRAM_DRILL = _EXAM_DRILL + ['migrant', 'program']
 _STUDENT_DRILL = _STUDENT_SELECT_COLS + [
     'test_year', 'exam_count', 'best_score', 'scored_3_plus', 'scored_3_plus_pct',
@@ -186,7 +187,8 @@ GRADE_ORDER = [
     '9th', '10th', '11th', '12th', 'Kindergarten', '1st', '2nd', '3rd',
     '4th', '5th', '6th', '7th', '8th',
 ]
-PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+PROGRAM_ORDER = ['GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+ELL_ORDER = ['EL', 'IFEP', 'RFEP', 'EO', 'TBD', 'ADEL']
 RACE_ORDER = [
     'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
     'Multiple', 'American Indian or Alaska Native',
@@ -200,7 +202,16 @@ def _year_alias(year: str) -> str:
 
 
 def _exam_results_sql() -> str:
-    return f"""{_EXAM_SELECT}{_AP_JOINS}WHERE {_AP_WHERE}"""
+    return f"""
+WITH recent_years AS (
+    SELECT DISTINCT admin_year
+    FROM analytics_ap_results
+    WHERE admin_year IS NOT NULL AND trim(admin_year) != ''
+    ORDER BY admin_year DESC
+    LIMIT 3
+)
+{_EXAM_SELECT}{_AP_JOINS}WHERE {_AP_WHERE}
+"""
 
 
 def _program_results_sql(base_sql: str) -> str:
@@ -220,7 +231,6 @@ FROM (
     ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
 ) AS d
 ARRAY JOIN arrayConcat(
-    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
     if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
     if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
     if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
@@ -507,30 +517,48 @@ def _chart_specs() -> list[dict]:
             'name': f'{AP_PREFIX} Pass Rate by Race',
             'chart_type': 'bar',
             'dataset': exam_ds,
-            'source_filters': {'score_valid': [1]},
+            'source_filters': {'score_valid': [1], 'recent3': [1]},
             'drill_columns': _EXAM_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
-            'column_defs': {'race': 'Race', 'pass_pct': 'Pass Rate %'},
+            'column_defs': {'race': 'Race', 'test_year': 'Test Year', 'pass_pct': 'Pass Rate %'},
             'config': _base_cfg(
-                'AP: Pass Rate by Race (assessments scoring 3+)',
-                x_col='race', y_col='pass_pct', agg='avg',
+                'AP: Pass Rate by Race and Recent Year (assessments scoring 3+)',
+                x_col='test_year,race', y_col='pass_pct', agg='avg',
                 agg_decimals=1, y_axis_max=100, y_axis_min=0,
-                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
+                skip_page_filters=['test_year'],
+            ),
+        },
+        {
+            'name': f'{AP_PREFIX} Pass Rate by ELL Status',
+            'chart_type': 'bar',
+            'dataset': exam_ds,
+            'source_filters': {'score_valid': [1], 'recent3': [1]},
+            'drill_columns': _EXAM_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': ''},
+            'column_defs': {'ell': 'ELL Status', 'test_year': 'Test Year', 'pass_pct': 'Pass Rate %'},
+            'config': _base_cfg(
+                'AP: Pass Rate by ELL Status and Recent Year (assessments scoring 3+)',
+                x_col='test_year,ell', y_col='pass_pct', agg='avg',
+                agg_decimals=1, y_axis_max=100, y_axis_min=0,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
+                skip_page_filters=['test_year'],
             ),
         },
         {
             'name': f'{AP_PREFIX} Pass Rate by Student Program',
             'chart_type': 'bar',
             'dataset': program_ds,
-            'source_filters': {'score_valid': [1]},
+            'source_filters': {'score_valid': [1], 'recent3': [1]},
             'drill_columns': _EXAM_PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
-            'column_defs': {'program': 'Student Program', 'pass_pct': 'Pass Rate %'},
+            'column_defs': {'program': 'Student Program', 'test_year': 'Test Year', 'pass_pct': 'Pass Rate %'},
             'config': _base_cfg(
-                'AP: Pass Rate by Student Program (assessments scoring 3+)',
-                x_col='program', y_col='pass_pct', agg='avg',
+                'AP: Pass Rate by Student Program and Recent Year (assessments scoring 3+)',
+                x_col='test_year,program', y_col='pass_pct', agg='avg',
                 agg_decimals=1, y_axis_max=100, y_axis_min=0,
-                sort_col='__manual__', category_order=PROGRAM_ORDER,
+                sort_col='test_year', sort_dir='asc', x_label_rotation=35,
+                skip_page_filters=['test_year'],
             ),
         },
         {
@@ -698,9 +726,10 @@ ORDER BY v
         {'tab': 'AP Scholar', 'label': 'AP Scholar awards', 'sections': [
             {'chart': f'{AP_PREFIX} AP Scholar Trends', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
         ]},
-        {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
-            {'chart': f'{AP_PREFIX} Pass Rate by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-            {'chart': f'{AP_PREFIX} Pass Rate by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+        {'tab': 'Demographics', 'label': 'Race, ELL, and student programs', 'sections': [
+            {'chart': f'{AP_PREFIX} Pass Rate by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'{AP_PREFIX} Pass Rate by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'{AP_PREFIX} Pass Rate by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
         ]},
         {'tab': 'Detail Tables', 'label': 'AP scores by school', 'sections': [
             {'chart': f'{AP_PREFIX} Scores by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},

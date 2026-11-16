@@ -64,4 +64,13 @@ urlpatterns = [
     path('ib/import/<int:pk>/delete/', views.ib_delete_import, name='ib_delete_import'),
     path('ib/import/<int:pk>/publish/', views.ib_toggle_publish, name='ib_toggle_publish'),
     path('ib/import/<int:pk>/save-overrides/', views.ib_save_manual_overrides, name='ib_save_manual_overrides'),
+
+    path('psat/upload/', views.PSATUploadView.as_view(), name='psat_upload'),
+    path('psat/preview/', views.PSATPreviewView.as_view(), name='psat_preview'),
+    path('psat/search-student/', views.psat_student_search, name='psat_student_search'),
+    path('psat/import/<int:pk>/', views.PSATImportDetailView.as_view(), name='psat_import_detail'),
+    path('psat/import/<int:pk>/status/', views.psat_import_status, name='psat_import_status'),
+    path('psat/import/<int:pk>/progress/', views.PSATImportProgressView.as_view(), name='psat_import_progress'),
+    path('psat/import/<int:pk>/delete/', views.psat_delete_import, name='psat_delete_import'),
+    path('psat/import/<int:pk>/publish/', views.psat_toggle_publish, name='psat_toggle_publish'),
 ]

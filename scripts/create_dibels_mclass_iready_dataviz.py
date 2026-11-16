@@ -127,10 +127,11 @@ _STUDENT_DRILL = [
     'ssid', 'student_name', 'grade', 'grade_label', 'grade_display', 'level_band',
     'school', 'school_window', 'enrolled_school', 'school_year', 'test_year', 'test_window',
     'test_name', 'subject', 'pl', 'ss', 'gender', 'race', 'ell', 'sed', 'sped',
-    'gate', 'foster',
+    'gate', 'foster', 'recent3',
 ]
 _PROGRAM_DRILL = _STUDENT_DRILL + ['migrant', 'program']
-PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+PROGRAM_ORDER = ['GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+ELL_ORDER = ['EL', 'IFEP', 'RFEP', 'EO', 'TBD', 'ADEL']
 RACE_ORDER = [
     'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
     'Multiple', 'American Indian or Alaska Native',
@@ -324,10 +325,22 @@ def _page_where(cfg, subject_match=None) -> str:
 
 
 def _student_results_sql(cfg, subject_match=None) -> str:
+    subject_clause = f" AND {subject_match}" if subject_match else ''
     return f"""
+WITH recent_years AS (
+    SELECT DISTINCT r.school_year
+    FROM results_with_tests r
+    WHERE {cfg['test_match']}
+      {subject_clause}
+      AND {_HAS_PL}
+      AND r.school_year IS NOT NULL AND trim(r.school_year) != ''
+    ORDER BY r.school_year DESC
+    LIMIT 3
+)
 SELECT DISTINCT
     r.test_id AS test_id,
-{_STUDENT_SELECT}
+{_STUDENT_SELECT},
+    if(r.school_year IN (SELECT school_year FROM recent_years), 1, 0) AS recent3
 {_RESULTS_JOINS}
 WHERE {_page_where(cfg, subject_match)}
 """
@@ -350,7 +363,6 @@ FROM (
     ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
 ) AS d
 ARRAY JOIN arrayConcat(
-    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
     if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
     if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
     if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
@@ -590,31 +602,56 @@ def _series_charts(cfg, suffix, subject_match, dataset) -> list[dict]:
             'name': f'{prefix} PL by Race',
             'chart_type': 'stacked_bar',
             'dataset': base_dataset,
+            'source_filters': {'recent3': [1]},
             'drill_columns': _STUDENT_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
             'column_defs': {
-                'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students',
+                'race': 'Race', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
             },
             'config': _base_cfg(
-                cfg, f'{_series_name(cfg, suffix)}: PL by Race',
+                cfg, f'{_series_name(cfg, suffix)}: PL by Race and Recent Year',
                 x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
-                sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+                group_col='test_year', sort_col='__manual__',
+                category_order=RACE_ORDER, x_label_rotation=25,
+                skip_page_filters=['test_year'],
+            ),
+        },
+        {
+            'name': f'{prefix} PL by ELL Status',
+            'chart_type': 'stacked_bar',
+            'dataset': base_dataset,
+            'source_filters': {'recent3': [1]},
+            'drill_columns': _STUDENT_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': 'pl'},
+            'column_defs': {
+                'ell': 'ELL Status', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
+            },
+            'config': _base_cfg(
+                cfg, f'{_series_name(cfg, suffix)}: PL by ELL Status and Recent Year',
+                x_col='ell', y_col='ssid', stack_col='pl', series_col='pl',
+                group_col='test_year', sort_col='__manual__',
+                category_order=ELL_ORDER, x_label_rotation=25,
+                skip_page_filters=['test_year'],
             ),
         },
         {
             'name': f'{prefix} PL by Student Program',
             'chart_type': 'stacked_bar',
             'dataset': _program_dataset_name(cfg, suffix),
+            'source_filters': {'recent3': [1]},
             'drill_columns': _PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
             'column_defs': {
-                'program': 'Student Program', 'pl': 'Performance Level',
-                'ssid': 'Students',
+                'program': 'Student Program', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
             },
             'config': _base_cfg(
-                cfg, f'{_series_name(cfg, suffix)}: PL by Student Program',
+                cfg, f'{_series_name(cfg, suffix)}: PL by Student Program and Recent Year',
                 x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
-                sort_col='__manual__', category_order=PROGRAM_ORDER,
+                group_col='test_year', sort_col='__manual__',
+                category_order=PROGRAM_ORDER, skip_page_filters=['test_year'],
             ),
         },
     ])
@@ -648,13 +685,15 @@ def _page_spec(cfg) -> dict:
             {'tab': 'Math', 'label': 'By school', 'sections': [
                 {'chart': 'iReady Math • PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
-            {'tab': 'Demographics', 'label': 'ELA: race and student programs', 'sections': [
-                {'chart': 'iReady ELA • PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-                {'chart': 'iReady ELA • PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            {'tab': 'Demographics', 'label': 'ELA: race, ELL, and student programs', 'sections': [
+                {'chart': 'iReady ELA • PL by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'iReady ELA • PL by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'iReady ELA • PL by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
             ]},
-            {'tab': 'Demographics', 'label': 'Math: race and student programs', 'sections': [
-                {'chart': 'iReady Math • PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-                {'chart': 'iReady Math • PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            {'tab': 'Demographics', 'label': 'Math: race, ELL, and student programs', 'sections': [
+                {'chart': 'iReady Math • PL by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'iReady Math • PL by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+                {'chart': 'iReady Math • PL by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
             ]},
             {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
                 {'chart': 'iReady ELA • PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
@@ -674,9 +713,10 @@ def _page_spec(cfg) -> dict:
             {'tab': 'By School', 'label': 'School breakdown', 'sections': [
                 {'chart': f'{prefix} PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
             ]},
-            {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
-                {'chart': f'{prefix} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-                {'chart': f'{prefix} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+            {'tab': 'Demographics', 'label': 'Race, ELL, and student programs', 'sections': [
+                {'chart': f'{prefix} PL by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+                {'chart': f'{prefix} PL by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+                {'chart': f'{prefix} PL by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
             ]},
             {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
                 {'chart': f'{prefix} PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
