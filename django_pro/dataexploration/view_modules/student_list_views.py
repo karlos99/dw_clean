@@ -21,7 +21,7 @@ from clickhouse_utils.timing import current_request_id, timed, timed_fn
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import (
-    get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, _get_display_name,
+    get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, get_psat_columns, _get_display_name,
     RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     enrich_students_tests_marks,
     _fetch_marks_live_from_alt,
@@ -31,6 +31,7 @@ from ..column_utils import (
     order_student_courses_for_markall,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
     parse_sat_column_key, sat_column_db_field,
+    parse_psat_column_key, psat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..catalog_columns import (
@@ -304,6 +305,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         survey_structure = {}
         ap_structure = {}
         sat_structure = {}
+        psat_structure = {}
 
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
@@ -387,6 +389,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['survey_structure'] = survey_structure.get('structure', {})
         context['ap_structure'] = ap_structure
         context['sat_structure'] = sat_structure
+        context['psat_structure'] = psat_structure
         enabled_defs, enabled_cats = get_enabled_columns()
         context['column_categories'] = enabled_cats
         context['column_definitions'] = enabled_defs
@@ -1243,6 +1246,10 @@ def _load_students(request):
             [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
         ))
+        selected_psat_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('psat_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('psat_')]
+        ))
         sat_infos = []
         for _col in selected_sat_cols:
             _parsed = parse_sat_column_key(_col)
@@ -1255,10 +1262,27 @@ def _load_students(request):
                     'region': _parsed.get('region'),
                     'metric': _parsed.get('metric'),
                 })
+        psat_infos = []
+        for _col in selected_psat_cols:
+            _parsed = parse_psat_column_key(_col)
+            if _parsed:
+                psat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'psat_type': _parsed['psat_type'],
+                    'field': _parsed['field'],
+                })
+        if psat_infos:
+            # Ensure display labels exist even when this worker has not served
+            # the column-structures endpoint yet.
+            try:
+                get_psat_columns()
+            except Exception:
+                pass
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'psat_', 'ib_', 'course_prog_')))
             and not is_mtss_column(c)
             and not is_incident_column(c)
             and c in COLUMN_DEFINITIONS
@@ -1793,6 +1817,20 @@ def _load_students(request):
                         )
                         order_by_expr = "_sort._v"
                         params.append(sat_info['year'])
+            elif sort_by.startswith('psat_'):
+                psat_info = next((i for i in psat_infos if i['col_name'] == sort_by), None)
+                if psat_info:
+                    psat_db_field = psat_column_db_field(sort_by)
+                    if psat_db_field:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT ssid AS _k, {psat_db_field} AS _v"
+                            " FROM analytics_psat_results"
+                            " WHERE school_year = %s AND psat_type = %s"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                        order_by_expr = "_sort._v"
+                        params.extend([psat_info['year'], psat_info['psat_type']])
             elif sort_by.startswith('ib_'):
                 from dataexploration.column_utils import (
                     parse_ib_column_key,
@@ -1887,7 +1925,7 @@ def _load_students(request):
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
-            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_'))
+            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'psat_', 'ib_'))
             or course_prog_sort
             or mtss_sort
             or incident_sort
@@ -2133,6 +2171,14 @@ def _load_students(request):
             try:
                 from dataviz.utils.data_loader import _fetch_sat_data
                 _fetch_sat_data(students, sat_infos)
+            except Exception:
+                pass
+
+        # Fetch PSAT (College Board) score data in bulk
+        if psat_infos and students:
+            try:
+                from dataviz.utils.data_loader import _fetch_psat_data
+                _fetch_psat_data(students, psat_infos)
             except Exception:
                 pass
 

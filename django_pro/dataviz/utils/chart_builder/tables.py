@@ -510,6 +510,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
 
     dyn_col_mode = cfg.get('dyn_col_mode', 'pivot')
+    col_group_sep = str(cfg.get('st_col_group_sep') or '')
     st_show_row_totals = cfg.get('dyn_show_row_totals')
     if st_show_row_totals is None:
         st_show_row_totals = cfg.get('st_show_row_totals', True)
@@ -607,7 +608,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
         if valid_row:
             row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
-        row_combos = [()] if totals_only else _build_row_combos(row_val_lists, valid_row)
+        row_combos = [()] if totals_only else _existing_row_combos(work, valid_row, row_val_lists)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
         base_ids = [c['id'] for c in parsed_calcs if c['calc_type'] == 'base']
@@ -935,7 +936,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
         row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
-        row_combos = _build_row_combos(row_val_lists, valid_row)
+        row_combos = _existing_row_combos(work, valid_row, row_val_lists)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
 
@@ -1103,11 +1104,16 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
     row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
 
-    row_combos = _build_row_combos(row_val_lists, valid_row)
+    row_combos = _existing_row_combos(work, valid_row, row_val_lists)
 
     group_cols = valid_row + [col_col]
     _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
     col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
+    if col_group_sep and col_vals and all(col_group_sep in str(v) for v in col_vals):
+        col_vals = sorted(
+            col_vals,
+            key=lambda v: [part.strip() for part in str(v).split(col_group_sep)],
+        )
 
     ct_alt_lookup = None
     if show_tooltips:
@@ -1208,6 +1214,21 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         },
     }
 
+    if col_group_sep and col_vals and all(col_group_sep in str(v) for v in col_vals):
+        groups = []
+        leaves = []
+        for raw_val in col_vals:
+            label, leaf = str(raw_val).split(col_group_sep, 1)
+            leaf = leaf.strip()
+            leaves.append(leaf)
+            if not groups or groups[-1]['label'] != label:
+                groups.append({'label': label, 'col': col_col, 'headers': []})
+            groups[-1]['headers'].append(leaf)
+        if len(groups) > 1:
+            result['col_headers'] = leaves
+            result['col_header_groups'] = groups
+            result['col_header_raw'] = list(col_vals)
+
     if cfg.get('dyn_display_type', 'table') != 'table':
         return _convert_table_to_echarts(result, cfg, valid_row)
     return result
@@ -1246,6 +1267,39 @@ def _build_row_combos(val_lists, cols):
                 new_result.append(combo + (val,))
         result = new_result
     return result
+
+
+def _existing_row_combos(work, row_cols, val_lists):
+    """Existing row combinations only, ordered hierarchically.
+
+    Building the full Cartesian product of row dimensions produces thousands of
+    empty rows for hierarchical tables (industry -> pathway -> course). Use the
+    combinations actually present in *work* instead, and order each child
+    dimension alphabetically inside its parent.
+    """
+    if not row_cols:
+        return [()]
+    ordered_lists = {}
+    for idx, col in enumerate(row_cols):
+        vals = list(val_lists.get(col, []))
+        if idx > 0:
+            vals = sorted(vals, key=lambda v: str(v).lower())
+        ordered_lists[col] = vals
+    index_maps = {
+        col: {val: i for i, val in enumerate(ordered_lists[col])}
+        for col in row_cols
+    }
+    combos = [
+        tuple(row)
+        for row in work.select(row_cols).unique().iter_rows(named=False)
+    ]
+    combos.sort(
+        key=lambda combo: tuple(
+            index_maps[col].get(val, 10 ** 9)
+            for col, val in zip(row_cols, combo)
+        )
+    )
+    return combos
 
 # Expose private names to sibling ``import *`` (PEP 328).
 __all__ = [n for n in list(globals()) if not n.startswith('__')]

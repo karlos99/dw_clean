@@ -124,6 +124,7 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ap_results': set(),
     'analytics_ap_awards': set(),
     'analytics_sat_results': set(),
+    'analytics_psat_results': set(),
     'analytics_ib_results': set(),
     'analytics_survey_responses': set(),
     'analytics_dbuilder_ap_results': set(),
@@ -1033,6 +1034,39 @@ class Command(BaseCommand):
                         r.percentile_natuser_math AS percentile_natuser_math,
                         row_number() OVER (
                             PARTITION BY r.ssid, r.school_year ORDER BY {order_expr}
+                        ) AS _rn
+                    FROM {r} AS r
+                    INNER JOIN {il} AS il ON r.import_log_id = il.id
+                    WHERE toUInt8(il.is_published) = 1 AND r.ssid != ''
+                ) AS t
+                WHERE t._rn = 1
+            """
+        if table == 'analytics_psat_results':
+            # One row per (student, school year, PSAT type). When a student has
+            # multiple administrations of the same PSAT type in a year, keep the
+            # most recent test date.
+            r = _pg_table_fn(table='dataLoader_psatresult', **pg)
+            il = _pg_table_fn(table='dataLoader_psatimportlog', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    t.ssid, t.school_year, t.psat_type, t.test_date,
+                    t.school_name, t.test_grade,
+                    t.total_score, t.ebrw_score, t.math_score
+                FROM (
+                    SELECT
+                        r.ssid AS ssid,
+                        r.school_year AS school_year,
+                        ifNull(r.psat_type, '') AS psat_type,
+                        ifNull(toString(r.test_date), '') AS test_date,
+                        ifNull(r.school_name, '') AS school_name,
+                        r.test_grade AS test_grade,
+                        r.total_score AS total_score,
+                        r.ebrw_score AS ebrw_score,
+                        r.math_score AS math_score,
+                        row_number() OVER (
+                            PARTITION BY r.ssid, r.school_year, r.psat_type
+                            ORDER BY r.test_date DESC
                         ) AS _rn
                     FROM {r} AS r
                     INNER JOIN {il} AS il ON r.import_log_id = il.id

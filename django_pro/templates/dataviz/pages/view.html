@@ -613,6 +613,27 @@
     return rect.bottom >= -600 && rect.top <= window.innerHeight + 600;
   }
 
+  function _activeTabTargetId() {
+    const nav = document.querySelector('[data-page-tabs]');
+    if (!nav) return null;
+    const activeBtn = [...nav.querySelectorAll('[data-tab-target]')].find(
+      btn => btn.classList.contains('bg-blue-600'),
+    );
+    return activeBtn ? activeBtn.dataset.tabTarget : null;
+  }
+
+  function _pageChartInActiveTab(el) {
+    const tabId = _activeTabTargetId();
+    if (!tabId) return true;
+    const panel = el.closest('[data-tab-content]');
+    return panel && panel.dataset.tabContent === tabId;
+  }
+
+  function _isPageLevelFilterChange(affectedCols) {
+    return Array.isArray(affectedCols)
+      && affectedCols.some(col => _PAGE_FILTER_COLS.includes(col));
+  }
+
   function _pageChartUsesChangedFilter(el, affectedCols) {
     if (!Array.isArray(affectedCols) || !affectedCols.length) return true;
     const declared = String(el.dataset.filterCols || '')
@@ -635,6 +656,7 @@
     const visible = [];
     const slotByChartId = {};
 
+    const pageLevel = _isPageLevelFilterChange(affectedCols);
     slots.forEach(el => {
       const base = el.dataset.chartBaseUrl;
       const url = _pageChartFilteredUrl(base, qs);
@@ -643,7 +665,8 @@
       // filters, even if it was previously loaded from a hidden tab.
       el.setAttribute('hx-trigger', 'reload');
       const match = base.match(/\/charts\/(\d+)\/render\//);
-      if (!match || !_pageChartNearViewport(el) || !_pageChartUsesChangedFilter(el, affectedCols)) return;
+      const inScope = pageLevel ? _pageChartInActiveTab(el) : _pageChartNearViewport(el);
+      if (!match || !inScope || !_pageChartUsesChangedFilter(el, affectedCols)) return;
       const cid = match[1];
       if (!slotByChartId[cid]) visible.push(cid);
       (slotByChartId[cid] ||= []).push(el);
@@ -838,15 +861,16 @@
         const qs = this.buildFilterQS();
         if (!qs) return;
         window._pageFilterQS = qs;
-        _refreshPageChartsBatch(qs);
+        _refreshPageChartsBatch(qs, _PAGE_FILTER_COLS);
       },
 
       refreshCharts(affectedCols) {
         const qs = this.buildFilterQS();
         window._pageFilterQS = qs;
         clearTimeout(_pageChartRefreshTimer);
+        const cols = affectedCols && affectedCols.length ? affectedCols : _PAGE_FILTER_COLS;
         _pageChartRefreshTimer = setTimeout(
-          () => _refreshPageChartsBatch(qs, affectedCols), 120,
+          () => _refreshPageChartsBatch(qs, cols), 50,
         );
       },
     };

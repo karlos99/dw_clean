@@ -22,7 +22,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '21'
+_CHART_PIPELINE_VERSION = '22'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -41,6 +41,11 @@ _CLICKHOUSE_AGGREGATE_CHARTS = frozenset({
 _AGGREGATION_PUSH_DOWN = frozenset({
     'count', 'sum', 'avg', 'min', 'max', 'median',
     'count_unique', 'count_occurrence',
+})
+
+_POSTGRES_AGGREGATION_PUSH_DOWN = frozenset({
+    'count', 'sum', 'avg', 'min', 'max',
+    'count_occurrence', 'count_non_null',
 })
 
 
@@ -315,6 +320,86 @@ def _sql_string_literal(value) -> str:
     return f"'{text}'"
 
 
+def _sql_dataset_use_postgres(ds) -> bool:
+    return _sql_needs_postgres(ds.source_sql or '')
+
+
+def _sql_wrapper_blank_filter(expr, *, postgres: bool) -> str:
+    """Predicate mirroring ``build_option`` blank drops in a dataset wrapper."""
+    from dataviz.utils.compiler import _CHART_BLANK_VALUES, _chart_blank_filter_expr
+
+    if not postgres:
+        return _chart_blank_filter_expr(expr)
+    blanks = ', '.join("'" + b.replace("'", "''") + "'" for b in _CHART_BLANK_VALUES)
+    text = f'lower(trim(both {expr}::text))'
+    return f'({expr} IS NOT NULL AND {text} NOT IN ({blanks}))'
+
+
+def _sql_wrapper_measure_sql(aggregation, y_expr, *, postgres: bool) -> str | None:
+    """Aggregate expression for a wrapped SQL dataset subquery."""
+    aggregation = str(aggregation or 'count').lower()
+    if aggregation in ('count', 'count_occurrence', 'count_non_null') and not y_expr:
+        return 'COUNT(*)'
+    if not y_expr:
+        return None
+    if postgres:
+        cast = f'({y_expr})::numeric'
+        return {
+            'count': f'COUNT({y_expr})',
+            'sum': f'SUM({cast})',
+            'avg': f'AVG({cast})',
+            'min': f'MIN({cast})',
+            'max': f'MAX({cast})',
+            'count_occurrence': f'COUNT({y_expr})',
+            'count_non_null': f'COUNT({y_expr})',
+        }.get(aggregation)
+    from dataviz.utils.compiler import _chart_agg_sql
+
+    agg_func = {
+        'count': 'COUNT', 'sum': 'SUM', 'avg': 'AVG',
+        'min': 'MIN', 'max': 'MAX', 'median': 'median',
+        'count_unique': 'uniqExact', 'count_occurrence': 'COUNT',
+        'count_non_null': 'COUNT',
+    }.get(aggregation)
+    if not agg_func:
+        return None
+    return _chart_agg_sql(agg_func, aggregation, y_expr)
+
+
+def _load_sql_dataset_filtered(ds, filters, column_mappings, *, limit=None, user=None):
+    """Fetch a SQL dataset with page/chart filters pushed into the database."""
+    if user is not None:
+        return None
+    from dataviz.utils.compiler import execute_compiled_query_aliased
+    from dataviz.utils.data_loader import resolve_sql_year_placeholders
+
+    alias_to_src = _sql_dataset_alias_map(ds, column_mappings)
+    where_sql, params = _sql_dataset_filter_where(filters or {}, alias_to_src)
+    if where_sql is None:
+        return None
+    source_sql, placeholder_err = resolve_sql_year_placeholders(ds.source_sql or '')
+    if placeholder_err or not source_sql.strip():
+        return None
+    source_sql = source_sql.strip().rstrip(';')
+    sql = f'SELECT * FROM ({source_sql}) AS __dv_src'
+    if where_sql:
+        sql += f' WHERE {where_sql}'
+    if limit is not None:
+        sql += f' LIMIT {int(limit)}'
+    try:
+        result = execute_compiled_query_aliased(sql, params, column_mappings or {})
+    except Exception:
+        _timing_log.warning(
+            'op=chart_pushdown fallback=filtered_load chart_type=sql_dataset',
+            exc_info=True,
+        )
+        return None
+    if result.get('error'):
+        return None
+    result['row_count'] = len(result.get('rows') or [])
+    return result
+
+
 def _sql_dataset_filter_where(filters, alias_to_src):
     """Translate post-fetch SQL-dataset filters into a wrapper WHERE clause.
 
@@ -401,8 +486,7 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
     if (cfg.get('student_share_percent') or cfg.get('one_row_per_ssid')
             or cfg.get('one_row_per_stu_annual_key')):
         return None
-    if _sql_needs_postgres(ds.source_sql or ''):
-        return None
+    postgres = _sql_dataset_use_postgres(ds)
 
     alias_to_src = _sql_dataset_alias_map(ds, column_mappings)
 
@@ -433,7 +517,10 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
 
     y_col = cfg.get('y_col') or ''
     aggregation = str(cfg.get('agg', 'count') or 'count').lower()
-    if aggregation not in _AGGREGATION_PUSH_DOWN:
+    allowed_agg = (
+        _POSTGRES_AGGREGATION_PUSH_DOWN if postgres else _AGGREGATION_PUSH_DOWN
+    )
+    if aggregation not in allowed_agg:
         return None
     if series_col and y_col and series_col == y_col and aggregation != 'count':
         aggregation = 'count'
@@ -454,7 +541,6 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
 
     # build_option drops blank group/series values; mirror that here so the
     # compact frame has no blank categories.
-    from dataviz.utils.compiler import _chart_blank_filter_expr
     blank_conditions = []
     measure_names = {y_col, series_col, group_col} - {''}
     for col in dim_cols:
@@ -463,7 +549,7 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
         expr = _sql_ident(alias_to_src[col])
         if not expr:
             return None
-        blank_conditions.append(_chart_blank_filter_expr(expr))
+        blank_conditions.append(_sql_wrapper_blank_filter(expr, postgres=postgres))
     where_parts = [p for p in (where_sql, ' AND '.join(blank_conditions)) if p]
     where_sql = ' AND '.join(f'({p})' for p in where_parts)
 
@@ -476,22 +562,10 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
         select_exprs.append(f'{src_expr} AS "{col}"')
         group_exprs.append(src_expr)
 
-    from dataviz.utils.compiler import _chart_agg_sql
-    if aggregation in ('count', 'count_occurrence', 'count_non_null') and not y_col:
-        measure_sql = 'COUNT(*)'
-    else:
-        y_expr = _sql_ident(alias_to_src[y_col])
-        if not y_expr:
-            return None
-        agg_func = {
-            'count': 'COUNT', 'sum': 'SUM', 'avg': 'AVG',
-            'min': 'MIN', 'max': 'MAX', 'median': 'median',
-            'count_unique': 'uniqExact', 'count_occurrence': 'COUNT',
-            'count_non_null': 'COUNT',
-        }.get(aggregation)
-        if not agg_func:
-            return None
-        measure_sql = _chart_agg_sql(agg_func, aggregation, y_expr)
+    y_expr = _sql_ident(alias_to_src[y_col]) if y_col else ''
+    measure_sql = _sql_wrapper_measure_sql(aggregation, y_expr, postgres=postgres)
+    if not measure_sql:
+        return None
     select_exprs.append(f'{measure_sql} AS __dv_value')
 
     result = _sql_dataset_aggregate_query(
@@ -538,10 +612,11 @@ def _clickhouse_aggregate_sql_table(ds, cfg, filters, column_mappings, *,
         return None
     if str(cfg.get('st_col_mode', 'values')) != 'values':
         return None
-    if str(cfg.get('st_agg_func', 'count') or 'count').lower() != 'count':
+    st_agg = str(cfg.get('st_agg_func', 'count') or 'count').lower()
+    st_value_col = cfg.get('st_value_col') or ''
+    if st_agg not in ('count', 'sum'):
         return None
-    if _sql_needs_postgres(ds.source_sql or ''):
-        return None
+    postgres = _sql_dataset_use_postgres(ds)
 
     row_col = cfg.get('st_row_col') or ''
     col_col = cfg.get('st_col_col') or ''
@@ -551,31 +626,47 @@ def _clickhouse_aggregate_sql_table(ds, cfg, filters, column_mappings, *,
     alias_to_src = _sql_dataset_alias_map(ds, column_mappings)
     if row_col not in alias_to_src or col_col not in alias_to_src:
         return None
+    if st_agg == 'sum' and (not st_value_col or st_value_col not in alias_to_src):
+        return None
 
     where_sql, params = _sql_dataset_filter_where(filters or {}, alias_to_src)
     if where_sql is None:
         return None
 
-    from dataviz.utils.compiler import _chart_blank_filter_expr
     blank_conditions = []
     for col in (row_col, col_col):
         expr = _sql_ident(alias_to_src[col])
         if not expr:
             return None
-        blank_conditions.append(_chart_blank_filter_expr(expr))
+        blank_conditions.append(_sql_wrapper_blank_filter(expr, postgres=postgres))
     where_parts = [p for p in (where_sql, ' AND '.join(blank_conditions)) if p]
     where_sql = ' AND '.join(f'({p})' for p in where_parts)
 
-    dedupe_col = next(
-        (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in alias_to_src),
-        '',
-    )
-    if dedupe_col:
-        # The table builder counts each student at most once per (row, column)
-        # cell, so a plain COUNT(test row) would overcount repeat tests.
-        measure_sql = f'uniqExact({_sql_ident(alias_to_src[dedupe_col])})'
+    if st_agg == 'sum':
+        val_expr = _sql_ident(alias_to_src[st_value_col])
+        if not val_expr:
+            return None
+        if postgres:
+            measure_sql = f'SUM(({val_expr})::numeric)'
+        else:
+            measure_sql = (
+                f"SUM(toFloat64OrNull(nullIf(toString({val_expr}), '')))"
+            )
     else:
-        measure_sql = 'COUNT(*)'
+        dedupe_col = next(
+            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in alias_to_src),
+            '',
+        )
+        if dedupe_col:
+            dedupe_expr = _sql_ident(alias_to_src[dedupe_col])
+            if not dedupe_expr:
+                return None
+            if postgres:
+                measure_sql = f'COUNT(DISTINCT {dedupe_expr})'
+            else:
+                measure_sql = f'uniqExact({dedupe_expr})'
+        else:
+            measure_sql = 'COUNT(*)'
 
     row_expr = _sql_ident(alias_to_src[row_col])
     col_expr = _sql_ident(alias_to_src[col_col])
@@ -598,7 +689,7 @@ def _clickhouse_aggregate_sql_table(ds, cfg, filters, column_mappings, *,
     compact_cfg['__compact_cells__'] = True
     compact_cfg['st_row_col'] = row_col
     compact_cfg['st_col_col'] = col_col
-    compact_cfg['st_agg_func'] = 'count'
+    compact_cfg['st_agg_func'] = st_agg
     compact_cfg['st_value_col'] = ''
     return {'rows': compact_rows, 'columns': list(result.get('columns', [])),
             'row_count': len(compact_rows)}, compact_cfg
@@ -1942,11 +2033,26 @@ def _apply_sql_dataset_row_filters(rows, filters):
     return _apply_drill_row_filters(rows, filters)
 
 
+def _district_total_school_selected(val, sentinel: str) -> bool:
+    """True when the page school filter is the district rollup, not a site."""
+    if val is None or val == '':
+        return False
+    if isinstance(val, (list, tuple)):
+        items = [str(v).strip() for v in val if str(v).strip()]
+        return len(items) == 1 and items[0] == sentinel
+    return str(val).strip() == sentinel
+
+
 def _merge_page_filters(chart_filters, pf_filters, chart_cfg):
     """Merge page filters into chart filters, honoring ``skip_page_filters`` in config."""
     merged = dict(chart_filters or {})
     skip = set(chart_cfg.get('skip_page_filters') or [])
-    for key, val in (pf_filters or {}).items():
+    pf = dict(pf_filters or {})
+    if chart_cfg.get('ignore_school_filter_at_district'):
+        sentinel = chart_cfg.get('district_total_school', 'District Total')
+        if _district_total_school_selected(pf.get('school_name'), sentinel):
+            pf.pop('school_name', None)
+    for key, val in pf.items():
         if key in skip:
             continue
         merged[key] = val
@@ -2356,15 +2462,25 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                             res, chart_cfg = aggregated
                             used_aggregate = True
                         else:
-                            res = load_dataset_result(
-                                ds, user=chart_user, limit=limit_val, one_per_sak=one_per_sak,
+                            res = _load_sql_dataset_filtered(
+                                ds, raw_filters, col_mappings,
+                                limit=limit_val, user=chart_user,
                             )
-                            if not res.get('error') and res.get('rows'):
-                                res = dict(res)
-                                res['rows'] = _apply_sql_dataset_row_filters(
-                                    res['rows'], raw_filters,
+                            if res is None:
+                                res = load_dataset_result(
+                                    ds, user=chart_user, limit=limit_val,
+                                    one_per_sak=one_per_sak,
                                 )
-                                res['row_count'] = len(res['rows'])
+                                if not res.get('error') and res.get('rows'):
+                                    res = dict(res)
+                                    res['rows'] = _apply_sql_dataset_row_filters(
+                                        res['rows'], raw_filters,
+                                    )
+                                    res['row_count'] = len(res['rows'])
+                                    res = _filter_chart_rows_for_caseload(
+                                        res, chart_user,
+                                    )
+                            elif chart_user is not None:
                                 res = _filter_chart_rows_for_caseload(res, chart_user)
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}

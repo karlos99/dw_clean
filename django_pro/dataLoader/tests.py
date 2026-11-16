@@ -363,6 +363,198 @@ class SATAnalyzerTests(SimpleTestCase):
         self.assertEqual(key2, 'ELENA|CESAR|2008-02-01|nodate')
 
 
+class PSATAnalyzerTests(SimpleTestCase):
+    """PSAT column analyzer and response payload helpers."""
+
+    SAMPLE_89 = (
+        "AI_CODE,AI_NAME,NAME_LAST,NAME_FIRST,STATE_STUDENT_ID,DISTRICT_STUDENT_ID,"
+        "BIRTH_DATE,CB_ID,LATEST_PSAT_DATE,LATEST_PSAT_GRADE,LATEST_PSAT_TOTAL,"
+        "LATEST_PSAT_EBRW,LATEST_PSAT_MATH_SECTION,PERCENTILE_STATE_TOTAL,EBRW_CCR_BENCHMARK\n"
+        "059822,LA QUINTA MS,ACEVES,SEBASTIAN,7247399725,20178003,2013-08-12,155488813,"
+        "2026-10-13,2,1090,460,630,90,Y\n"
+    )
+
+    SAMPLE_NM = (
+        "AI_CODE,AI_NAME,NAME_LAST,NAME_FIRST,STATE_STUDENT_ID,DISTRICT_STUDENT_ID,"
+        "BIRTH_DATE,CB_ID,NATIONAL_MERIT,SELECTION_INDEX,LATEST_PSAT_DATE,LATEST_PSAT_TOTAL,"
+        "LATEST_PSAT_EBRW,LATEST_PSAT_MATH_SECTION\n"
+        "054345,SHADOW HILLS HS,ABDELNOUR,JAXON,7454078065,20170209,2011-03-01,155407568,"
+        "N,153,2026-10-14,1030,500,530\n"
+    )
+
+    def test_analyze_psat_89(self):
+        from dataLoader.utils.psat_column_analyzer import analyze_psat_csv
+
+        result = analyze_psat_csv(self.SAMPLE_89, '136028_PSAT89.csv')
+        self.assertEqual(result.psat_type, 'PSAT89')
+        self.assertEqual(result.total_students, 1)
+        self.assertEqual(result.total_with_scores, 1)
+        self.assertIn('total_score', result.score_columns)
+
+    def test_analyze_psat_nmsqt(self):
+        from dataLoader.utils.psat_column_analyzer import analyze_psat_csv
+
+        result = analyze_psat_csv(self.SAMPLE_NM, '136028_PSATNM.csv')
+        self.assertEqual(result.psat_type, 'PSATNM')
+        self.assertEqual(result.total_students, 1)
+
+    def test_build_response_data_excludes_demographics(self):
+        from dataLoader.utils.psat_column_analyzer import build_response_data
+
+        row = {
+            'NAME_LAST': 'Test',
+            'STATE_STUDENT_ID': '123',
+            'LATEST_PSAT_TOTAL': '1000',
+            'PERCENTILE_STATE_TOTAL': '90',
+            'EBRW_CCR_BENCHMARK': 'Y',
+        }
+        payload = build_response_data(row)
+        self.assertNotIn('NAME_LAST', payload)
+        self.assertNotIn('STATE_STUDENT_ID', payload)
+        self.assertNotIn('LATEST_PSAT_TOTAL', payload)
+        self.assertEqual(payload['PERCENTILE_STATE_TOTAL'], '90')
+        self.assertEqual(payload['EBRW_CCR_BENCHMARK'], 'Y')
+
+    def test_build_record_key_includes_type(self):
+        from dataLoader.utils.psat_response_loader import build_record_key
+
+        key = build_record_key(
+            'PSAT89', 'cb1', 'ssid1', 'sis1', 'Last', 'First', '2000-01-01', '2026-10-01',
+        )
+        self.assertTrue(key.startswith('PSAT89|'))
+        self.assertTrue(key.startswith('PSAT89|ssid1|'))
+
+    def test_normalize_ssid(self):
+        from dataLoader.utils.psat_student_matcher import _normalize_ssid, _normalize_student_id
+
+        self.assertEqual(_normalize_ssid('7247399725'), '7247399725')
+        self.assertEqual(_normalize_ssid('7247399725.0'), '7247399725')
+        self.assertEqual(_normalize_ssid('  123  '), '123')
+        self.assertEqual(_normalize_ssid("'7247399725"), '7247399725')
+        self.assertEqual(_normalize_ssid('7.247399725E+09'), '7247399725')
+        self.assertEqual(_normalize_student_id('20178003.0'), '20178003')
+
+    def test_school_year_for_date(self):
+        from datetime import date
+        from dataLoader.utils.psat_column_analyzer import school_year_for_date
+
+        self.assertEqual(school_year_for_date(date(2026, 10, 13)), '2026-2027')
+        self.assertEqual(school_year_for_date(date(2027, 3, 1)), '2026-2027')
+        self.assertEqual(school_year_for_date('2026-10-13'), '2026-2027')
+        self.assertEqual(school_year_for_date(None), '')
+
+    def test_analyze_psat_infers_school_year(self):
+        from dataLoader.utils.psat_column_analyzer import analyze_psat_csv
+
+        result = analyze_psat_csv(self.SAMPLE_89, '136028_PSAT89.csv')
+        self.assertEqual(result.inferred_school_year, '2026-2027')
+
+
+class PSATStudentMatcherTests(TestCase):
+    """Tests for matching PSAT STATE_STUDENT_ID / DISTRICT_STUDENT_ID to SSIDs."""
+
+    SCHOOL_YEAR = '2026-2027'
+    NEXT_YEAR = '2027-2028'
+
+    def setUp(self):
+        from studata.models import CurrentStudent, StudentEnroll
+
+        StudentEnroll.objects.create(
+            stu_enrollment_key='psat_enr_1',
+            ssid='7247399725',
+            student_id='20178003',
+            first_name='Sebastian',
+            last_name='Aceves Mayoral',
+            birth_date='2013-08-12',
+            school_name='La Quinta MS',
+            school_year=self.SCHOOL_YEAR,
+        )
+        CurrentStudent.objects.create(
+            stu_annual_key='psat_cur_1',
+            ssid='7247399725',
+            student_id='20178003',
+            student_name='Aceves Mayoral, Sebastian',
+            school='La Quinta MS',
+            school_year=self.SCHOOL_YEAR,
+        )
+        # Student only present in a prior year.
+        StudentEnroll.objects.create(
+            stu_enrollment_key='psat_enr_2',
+            ssid='5049072077',
+            student_id='20177449',
+            first_name='Julian',
+            last_name='Acosta',
+            birth_date='2013-04-05',
+            school_name='La Quinta MS',
+            school_year='2025-2026',
+        )
+
+    def _match(self, school_year, **kwargs):
+        from dataLoader.utils.psat_student_matcher import PSATStudentMatcher
+
+        matcher = PSATStudentMatcher(school_year)
+        defaults = dict(
+            record_key='k1',
+            state_student_id='',
+            district_student_id='',
+            first_name='Sebastian',
+            last_name='Aceves Mayoral',
+            dob='2013-08-12',
+            school='La Quinta MS',
+        )
+        defaults.update(kwargs)
+        return matcher, matcher.match_student(**defaults)
+
+    def test_matches_state_student_id_in_selected_year(self):
+        _, result = self._match(self.SCHOOL_YEAR, state_student_id='7247399725')
+        self.assertTrue(result.matched)
+        self.assertEqual(result.ssid, '7247399725')
+        self.assertEqual(result.match_method, 'ssid')
+
+    def test_matches_state_student_id_when_year_has_no_records(self):
+        _, result = self._match(self.NEXT_YEAR, state_student_id='7247399725')
+        self.assertTrue(result.matched)
+        self.assertEqual(result.ssid, '7247399725')
+        self.assertEqual(result.match_method, 'ssid_all_years')
+
+    def test_normalizes_formatted_state_ids(self):
+        for raw in (
+            '7247399725',
+            '7247399725.0',
+            "'7247399725",
+            ' 7247399725 ',
+            '7.247399725E+09',
+        ):
+            _, result = self._match(self.NEXT_YEAR, state_student_id=raw)
+            self.assertTrue(result.matched, msg=raw)
+            self.assertEqual(result.ssid, '7247399725', msg=raw)
+
+    def test_district_student_id_matches_local_student_id(self):
+        _, result = self._match(
+            self.NEXT_YEAR,
+            district_student_id='20178003',
+            first_name='Someone',
+            last_name='Else',
+            dob='2000-01-01',
+        )
+        self.assertTrue(result.matched)
+        self.assertEqual(result.ssid, '7247399725')
+        self.assertEqual(result.match_method, 'sis_student_id_all_years')
+
+    def test_falls_back_to_name_dob_when_year_has_no_records(self):
+        _, result = self._match(self.NEXT_YEAR)
+        self.assertTrue(result.matched)
+        self.assertEqual(result.ssid, '7247399725')
+        self.assertEqual(result.match_method, 'exact_name_dob_all_years')
+
+    def test_search_students_falls_back_to_other_years(self):
+        from dataLoader.utils.psat_student_matcher import PSATStudentMatcher
+
+        matcher = PSATStudentMatcher(self.NEXT_YEAR)
+        results = matcher.search_students(first_name='Julian', last_name='Acosta')
+        self.assertTrue(any(r['ssid'] == '5049072077' for r in results))
+
+
 class SATSchoolResolverTests(SimpleTestCase):
     """Tests for mapping SAT institutions to district school short names."""
 
@@ -920,6 +1112,87 @@ class IBClickHouseSyncTests(TestCase):
         with patch('dataLoader.utils.ib_response_loader.run_ib_clickhouse_sync_async') as mock_sync:
             ib_delete_import(req, log.pk)
             mock_sync.assert_called_once()
+
+
+class PSATClickHouseSyncTests(TestCase):
+    def test_run_psat_clickhouse_sync_async_invokes_management_command(self):
+        from unittest.mock import patch
+        from dataLoader.utils.psat_response_loader import run_psat_clickhouse_sync_async
+
+        with patch('django.core.management.call_command') as mock_cmd:
+            thread = run_psat_clickhouse_sync_async()
+            if thread:
+                thread.join(timeout=5)
+            mock_cmd.assert_called_with(
+                'sync_to_clickhouse',
+                tables='analytics_psat_results',
+                full=True,
+            )
+
+    def test_psat_toggle_publish_triggers_clickhouse_sync(self):
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from dataLoader.models import PSATImportLog, PSATImportStatus
+        from dataLoader.views import psat_toggle_publish
+
+        User = get_user_model()
+        user = User.objects.create(username='psat_admin', is_staff=True, is_superuser=True)
+        log = PSATImportLog.objects.create(
+            name='Test PSAT Log',
+            school_year='2026-2027',
+            psat_type='PSAT89',
+            filename='psat89.csv',
+            status=PSATImportStatus.COMPLETED,
+            is_published=False,
+            uploaded_by=user,
+        )
+
+        rf = RequestFactory()
+        req = rf.post(f'/dataLoader/psat/{log.pk}/toggle-publish/')
+        req.user = user
+        req.session = {}
+        setattr(req, '_messages', FallbackStorage(req))
+
+        with patch('dataLoader.utils.psat_response_loader.run_psat_clickhouse_sync_async') as mock_sync:
+            psat_toggle_publish(req, log.pk)
+            mock_sync.assert_called_once()
+
+        log.refresh_from_db()
+        self.assertTrue(log.is_published)
+
+    def test_psat_delete_import_triggers_clickhouse_sync(self):
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from dataLoader.models import PSATImportLog, PSATImportStatus
+        from dataLoader.views import psat_delete_import
+
+        User = get_user_model()
+        user = User.objects.create(username='psat_admin2', is_staff=True, is_superuser=True)
+        log = PSATImportLog.objects.create(
+            name='Test PSAT Log 2',
+            school_year='2026-2027',
+            psat_type='PSATNM',
+            filename='psatnm.csv',
+            status=PSATImportStatus.COMPLETED,
+            is_published=True,
+            uploaded_by=user,
+        )
+
+        rf = RequestFactory()
+        req = rf.post(f'/dataLoader/psat/{log.pk}/delete/')
+        req.user = user
+        req.session = {}
+        setattr(req, '_messages', FallbackStorage(req))
+
+        with patch('dataLoader.utils.psat_response_loader.run_psat_clickhouse_sync_async') as mock_sync:
+            psat_delete_import(req, log.pk)
+            mock_sync.assert_called_once()
+
+        self.assertFalse(PSATImportLog.objects.filter(pk=log.pk).exists())
 
 
 

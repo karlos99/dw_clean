@@ -925,3 +925,135 @@ class IBExamResult(models.Model):
     def exam_count(self) -> int:
         return len(self.exam_results) if self.exam_results else 0
 
+
+class PSATExamType(models.TextChoices):
+    PSAT_89 = 'PSAT89', 'PSAT 8/9'
+    PSAT_NMSQT = 'PSATNM', 'PSAT/NMSQT'
+
+
+class PSATImportStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    PARTIAL = 'PARTIAL', 'Partially Completed'
+
+
+class PSATImportLog(models.Model):
+    """Tracks each College Board PSAT results import (PSAT 8/9 or PSAT/NMSQT)."""
+    name = models.CharField(max_length=255, help_text='User-provided name for this import')
+    school_year = models.CharField(max_length=9, help_text="School year (e.g., '2025-2026')")
+    psat_type = models.CharField(
+        max_length=10,
+        choices=PSATExamType.choices,
+        help_text='Detected from file: PSAT 8/9 or PSAT/NMSQT',
+    )
+    filename = models.CharField(max_length=255, help_text='Original filename uploaded')
+    file_hash = models.CharField(max_length=64, blank=True, help_text='SHA256 hash for duplicate detection')
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='psat_data_imports',
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=PSATImportStatus.choices,
+        default=PSATImportStatus.PENDING,
+    )
+
+    total_students = models.PositiveIntegerField(default=0)
+    records_detected = models.PositiveIntegerField(default=0)
+    records_created = models.PositiveIntegerField(default=0)
+    records_skipped = models.PositiveIntegerField(default=0)
+    students_matched = models.PositiveIntegerField(default=0)
+    students_unmatched = models.PositiveIntegerField(default=0)
+    records_processed = models.PositiveIntegerField(default=0)
+
+    manual_overrides = models.JSONField(
+        default=dict,
+        help_text="Manually-entered SSID overrides (e.g., {'record_key': 'ssid'})",
+    )
+    error_count = models.PositiveIntegerField(default=0)
+    error_log = models.JSONField(default=list)
+    warnings = models.JSONField(default=list)
+
+    is_published = models.BooleanField(
+        default=False,
+        help_text="When enabled, this import's PSAT results are available in the Data Explorer",
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='published_psat_imports',
+    )
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        verbose_name = 'PSAT Import Log'
+        verbose_name_plural = 'PSAT Import Logs'
+
+    def __str__(self):
+        return f"{self.name} - {self.uploaded_at.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def compute_file_hash(file_content):
+        if isinstance(file_content, str):
+            file_content = file_content.encode('utf-8')
+        return hashlib.sha256(file_content).hexdigest()
+
+
+class PSATResult(models.Model):
+    """PSAT scores for a student with extended response fields in JSON."""
+    import_log = models.ForeignKey(
+        PSATImportLog, on_delete=models.CASCADE, related_name='results',
+    )
+    record_key = models.CharField(max_length=120, unique=True, db_index=True)
+    psat_type = models.CharField(max_length=10, choices=PSATExamType.choices, db_index=True)
+    ssid = models.CharField(max_length=50, db_index=True, blank=True)
+    state_student_id = models.CharField(max_length=50, db_index=True, blank=True)
+    district_student_id = models.CharField(max_length=50, db_index=True, blank=True)
+    cb_id = models.CharField(max_length=50, db_index=True, blank=True)
+    last_name = models.CharField(max_length=100, blank=True)
+    first_name = models.CharField(max_length=100, blank=True)
+    middle_initial = models.CharField(max_length=10, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=20, blank=True)
+    school_code = models.CharField(max_length=50, blank=True)
+    school_name = models.CharField(max_length=255, blank=True)
+
+    test_date = models.DateField(null=True, blank=True)
+    test_grade = models.PositiveSmallIntegerField(null=True, blank=True)
+    school_year = models.CharField(max_length=9)
+
+    total_score = models.PositiveIntegerField(null=True, blank=True)
+    ebrw_score = models.PositiveIntegerField(null=True, blank=True)
+    math_score = models.PositiveIntegerField(null=True, blank=True)
+
+    response_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Non-demographic PSAT response fields (percentiles, benchmarks, AP eligibility, etc.)',
+    )
+
+    match_method = models.CharField(max_length=40, blank=True)
+    match_confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-test_date', 'last_name', 'first_name']
+        indexes = [
+            models.Index(fields=['ssid', 'school_year', 'psat_type']),
+            models.Index(fields=['school_year', 'test_date']),
+        ]
+        verbose_name = 'PSAT Result'
+        verbose_name_plural = 'PSAT Results'
+
+    def __str__(self):
+        return f"{self.last_name}, {self.first_name} ({self.test_date}) = {self.total_score}"
+

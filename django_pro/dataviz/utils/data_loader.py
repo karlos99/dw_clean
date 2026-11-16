@@ -743,6 +743,88 @@ def _fetch_sat_data(students: list[dict], sat_infos: list[dict]):
                 student[info['col_name']] = str(value).strip()
 
 
+def _fetch_psat_rows_from_pg(ssids: list[str]) -> list[dict]:
+    """Fallback: read published PSAT rows from Postgres, keeping the latest test per type."""
+    columns = [
+        ('ssid', 'r.ssid'), ('school_year', 'r.school_year'),
+        ('psat_type', 'r.psat_type'), ('test_date', 'r.test_date'),
+        ('school_name', 'r.school_name'), ('test_grade', 'r.test_grade'),
+        ('total_score', 'r.total_score'), ('ebrw_score', 'r.ebrw_score'),
+        ('math_score', 'r.math_score'),
+    ]
+    col_names = [name for name, _ in columns]
+    select_cols = ', '.join(f'{expr} AS {name}' for name, expr in columns)
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT {select_cols}
+                FROM "dataLoader_psatresult" r
+                JOIN "dataLoader_psatimportlog" il ON r.import_log_id = il.id
+                WHERE r.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            rows = [dict(zip(col_names, row)) for row in cursor.fetchall()]
+    except Exception:
+        return []
+
+    best: dict = {}
+    for row in rows:
+        key = (
+            str(row.get('ssid') or '').strip(),
+            str(row.get('school_year') or '').strip(),
+            str(row.get('psat_type') or '').strip(),
+        )
+        current = best.get(key)
+        if current is None or (
+            str(row.get('test_date') or '') > str(current.get('test_date') or '')
+        ):
+            best[key] = row
+    return list(best.values())
+
+
+def _fetch_psat_data(students: list[dict], psat_infos: list[dict]):
+    """Bulk-fetch PSAT 8/9 and PSAT/NMSQT scores and merge into *students* in-place."""
+    if not students or not psat_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    from dataexploration.column_utils import psat_column_db_field
+
+    rows = _analytics_rows(
+        "SELECT * FROM analytics_psat_results WHERE ssid = ANY(%s)",
+        [ssids],
+    )
+    if rows is None:
+        rows = _fetch_psat_rows_from_pg(ssids)
+
+    by_key = {}
+    for row in rows:
+        ssid = str(row.get('ssid') or '').strip()
+        year = str(row.get('school_year') or '').strip()
+        psat_type = str(row.get('psat_type') or '').strip().upper()
+        by_key[(ssid, year, psat_type)] = row
+
+    for student in students:
+        ssid = str(student.get('ssid') or '').strip()
+        for info in psat_infos:
+            key = (
+                ssid,
+                info.get('year'),
+                str(info.get('psat_type') or '').strip().upper(),
+            )
+            row = by_key.get(key)
+            field = psat_column_db_field(info['col_name'])
+            value = row.get(field) if (row and field) else None
+            if value is None or str(value).strip() == '':
+                student[info['col_name']] = '\u2014'
+            else:
+                student[info['col_name']] = str(value).strip()
+
+
 def _fetch_ib_data(students: list[dict], selected_ib_cols: list[str]):
     """Bulk-fetch IB exam results (PL, Category, Level) and merge into *students* in-place."""
     if not students or not selected_ib_cols:

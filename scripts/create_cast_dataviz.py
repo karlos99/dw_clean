@@ -61,7 +61,8 @@ PL_COLORS = {
 }
 
 MULTI_YEAR_SKIP_FILTERS = ['test_year', 'school_year']
-PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+PROGRAM_ORDER = ['GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+ELL_ORDER = ['EL', 'IFEP', 'RFEP', 'EO', 'TBD', 'ADEL']
 RACE_ORDER = [
     'Hispanic', 'White', 'Asian', 'Black or African American', 'Filipino',
     'Multiple', 'American Indian or Alaska Native',
@@ -221,7 +222,7 @@ _STUDENT_DRILL = [
     'ssid', 'student_name', 'grade', 'grade_label', 'tested_grade_group',
     'level_band', 'school',
     'school_year', 'test_year', 'test_name', 'test_window', 'pl', 'ss',
-    'gender', 'race', 'ell', 'sed', 'sped', 'gate', 'foster',
+    'gender', 'race', 'ell', 'sed', 'sped', 'gate', 'foster', 'recent3',
 ]
 
 _PROGRAM_DRILL = _STUDENT_DRILL + ['migrant', 'program']
@@ -289,9 +290,20 @@ def discover_cast_metadata() -> None:
 def _student_results_sql(test_match: str, subject_match: str, *, cast_grades_only: bool = False) -> str:
     grade_clause = f'\n  AND {_CAST_TESTED_GRADES}' if cast_grades_only else ''
     return f"""
+WITH recent_years AS (
+    SELECT DISTINCT r.school_year
+    FROM results_with_tests r
+    WHERE {test_match}
+      AND {subject_match}
+      AND {_HAS_PL}
+      AND r.school_year IS NOT NULL AND trim(r.school_year) != ''
+    ORDER BY r.school_year DESC
+    LIMIT 3
+)
 SELECT DISTINCT
     r.test_id AS test_id,
-{_STUDENT_SELECT}
+{_STUDENT_SELECT},
+    if(r.school_year IN (SELECT school_year FROM recent_years), 1, 0) AS recent3
 {_RESULTS_JOINS}
 WHERE {test_match}
   AND {subject_match}
@@ -316,7 +328,6 @@ FROM (
     ) AS m ON m.ssid = d.ssid AND m.school_year = d.test_year
 ) AS d
 ARRAY JOIN arrayConcat(
-    if(upper(trim(coalesce(d.ell, ''))) = 'EL', ['ELL'], []),
     if(upper(trim(coalesce(d.gate, ''))) = 'Y', ['GATE'], []),
     if(upper(trim(coalesce(d.sed, ''))) = 'Y', ['SED'], []),
     if(upper(trim(coalesce(d.sped, ''))) = 'Y', ['SPED'], []),
@@ -631,31 +642,51 @@ def _demographic_charts() -> list[dict]:
             'name': f'{CAST_PREFIX} PL by Race',
             'chart_type': 'stacked_bar',
             'dataset': ds,
+            'source_filters': {'recent3': [1]},
             'drill_columns': _STUDENT_DRILL,
             'drill_through_filter_map': {'x_col': 'race', 'series_col': 'pl'},
-            'column_defs': {'race': 'Race', 'pl': 'Performance Level', 'ssid': 'Students'},
+            'column_defs': {'race': 'Race', 'test_year': 'Test Year', 'pl': 'Performance Level', 'ssid': 'Students'},
             'config': _base_cfg(
-                'stacked_bar', 'CAST: PL by Race',
+                'stacked_bar', 'CAST: PL by Race and Recent Year',
                 x_col='race', y_col='ssid', stack_col='pl', series_col='pl',
-                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
                 sort_col='__manual__', category_order=RACE_ORDER, x_label_rotation=25,
+                skip_page_filters=['test_year'],
+            ),
+        },
+        {
+            'name': f'{CAST_PREFIX} PL by ELL Status',
+            'chart_type': 'stacked_bar',
+            'dataset': ds,
+            'source_filters': {'recent3': [1]},
+            'drill_columns': _STUDENT_DRILL,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': 'pl'},
+            'column_defs': {'ell': 'ELL Status', 'test_year': 'Test Year', 'pl': 'Performance Level', 'ssid': 'Students'},
+            'config': _base_cfg(
+                'stacked_bar', 'CAST: PL by ELL Status and Recent Year',
+                x_col='ell', y_col='ssid', stack_col='pl', series_col='pl',
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                sort_col='__manual__', category_order=ELL_ORDER, x_label_rotation=25,
+                skip_page_filters=['test_year'],
             ),
         },
         {
             'name': f'{CAST_PREFIX} PL by Student Program',
             'chart_type': 'stacked_bar',
             'dataset': program_ds,
+            'source_filters': {'recent3': [1]},
             'drill_columns': _PROGRAM_DRILL,
             'drill_through_filter_map': {'x_col': 'program', 'series_col': 'pl'},
             'column_defs': {
-                'program': 'Student Program', 'pl': 'Performance Level',
-                'ssid': 'Students',
+                'program': 'Student Program', 'test_year': 'Test Year',
+                'pl': 'Performance Level', 'ssid': 'Students',
             },
             'config': _base_cfg(
-                'stacked_bar', 'CAST: PL by Student Program',
+                'stacked_bar', 'CAST: PL by Student Program and Recent Year',
                 x_col='program', y_col='ssid', stack_col='pl', series_col='pl',
-                stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
+                group_col='test_year', stack_order=PL_STACK_ORDER, color_map=PL_COLORS,
                 sort_col='__manual__', category_order=PROGRAM_ORDER,
+                skip_page_filters=['test_year'],
             ),
         },
     ]
@@ -854,9 +885,10 @@ PAGE_SPEC = {
             {'chart': f'{CAST_PREFIX} Life PL by Grade', 'gs_x': 4, 'gs_w': 4, 'gs_h': 7},
             {'chart': f'{CAST_PREFIX} Physical Sciences PL by Grade', 'gs_x': 8, 'gs_w': 4, 'gs_h': 7},
         ]},
-        {'tab': 'Demographics', 'label': 'Race and student programs', 'sections': [
-            {'chart': f'{CAST_PREFIX} PL by Race', 'gs_x': 0, 'gs_w': 6, 'gs_h': 8},
-            {'chart': f'{CAST_PREFIX} PL by Student Program', 'gs_x': 6, 'gs_w': 6, 'gs_h': 8},
+        {'tab': 'Demographics', 'label': 'Race, ELL, and student programs', 'sections': [
+            {'chart': f'{CAST_PREFIX} PL by Race', 'gs_x': 0, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'{CAST_PREFIX} PL by ELL Status', 'gs_x': 4, 'gs_w': 4, 'gs_h': 9},
+            {'chart': f'{CAST_PREFIX} PL by Student Program', 'gs_x': 8, 'gs_w': 4, 'gs_h': 9},
         ]},
         {'tab': 'Detail Tables', 'label': 'Counts', 'sections': [
             {'chart': f'{CAST_PREFIX} PL & Domain by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},

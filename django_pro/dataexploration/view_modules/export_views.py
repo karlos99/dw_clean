@@ -30,12 +30,15 @@ from ..column_utils import (
     _fetch_marks_live_from_alt,
     group_marks_by_ssid_course,
     get_sat_columns,
+    get_psat_columns,
     markall_course_filter_fn,
     build_markall_course_rank_key,
     order_student_courses_for_markall,
     parse_markall_key,
     markall_key as _markall_key,
     parse_sat_column_key,
+    parse_psat_column_key,
+    psat_column_db_field,
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
@@ -405,6 +408,10 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
     ))
+    selected_psat_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('psat_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('psat_')]
+    ))
     selected_survey_cols = [
         c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
     ]
@@ -423,7 +430,7 @@ def export_students_csv(request):
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'psat_', 'ib_', 'course_prog_')))
         and not is_mtss_column(c)
         and not is_incident_column(c)
         and c in COLUMN_DEFINITIONS
@@ -697,12 +704,28 @@ def export_students_csv(request):
                             'metric': _parsed.get('metric'),
                         })
 
+                psat_infos = []
+                for _col in selected_psat_cols:
+                    _parsed = parse_psat_column_key(_col)
+                    if _parsed:
+                        psat_infos.append({
+                            'col_name': _col,
+                            'year': _parsed['year'],
+                            'psat_type': _parsed['psat_type'],
+                            'field': _parsed['field'],
+                        })
+
                 # Prepare Dynamic Headers
                 if selected_sat_cols:
                     # Populate COLUMN_DEFINITIONS with SAT labels; the module
                     # constant is only filled when the selector is built.
                     try:
                         get_sat_columns()
+                    except Exception:
+                        pass
+                if selected_psat_cols:
+                    try:
+                        get_psat_columns()
                     except Exception:
                         pass
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
@@ -1175,6 +1198,13 @@ def export_students_csv(request):
                         try:
                             from dataviz.utils.data_loader import _fetch_sat_data
                             _fetch_sat_data(chunk_students, sat_infos)
+                        except Exception:
+                            pass
+
+                    if psat_infos:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_psat_data
+                            _fetch_psat_data(chunk_students, psat_infos)
                         except Exception:
                             pass
 

@@ -15,7 +15,8 @@ It assumes these five flat analytics tables are present and populated:
     * analytics_ccgi_application_status   (one row per student/system/status)
 
 and creates/refreshes only the DataViz metadata: Datasets, SavedCharts, and two
-published DataVizPage records (plus the "CCGI" menu category).
+DataVizPage records (plus the "CCGI" menu category, nested under College &
+Career Readiness when that category exists).
 
 The runtime environment (Django settings, PostgreSQL and ClickHouse connection
 details) is provided by the ``django`` service in docker-compose, so run the
@@ -87,6 +88,7 @@ CAREER_CLUSTER_TABLE = 'analytics_ccgi_career_cluster'
 COLLEGE_FINANCIAL_TABLE = 'analytics_ccgi_college_financial'
 COLLEGE_APPLICATION_TABLE = 'analytics_ccgi_college_application'
 APPLICATION_STATUS_TABLE = 'analytics_ccgi_application_status'
+WEBGRANTS_TABLE = 'webgrants'
 
 CCGI_TABLES = (
     FAVORITE_CAREER_TABLE,
@@ -94,6 +96,7 @@ CCGI_TABLES = (
     COLLEGE_FINANCIAL_TABLE,
     COLLEGE_APPLICATION_TABLE,
     APPLICATION_STATUS_TABLE,
+    WEBGRANTS_TABLE,
 )
 
 STUDENT_COLUMNS = [
@@ -116,7 +119,56 @@ STATUS_COLUMNS = STUDENT_COLUMNS + [
     'system', 'application_status', 'eligibility', 'csu_gpa', 'uc_gpa',
 ]
 
+# WebGrants is a PostgreSQL table with no school/grade columns, so the SQL
+# dataset joins it to current_student for the current school year.
+WEBGRANTS_SQL = """
+SELECT
+    w.ssid AS ssid,
+    coalesce(
+        cs.student_name,
+        trim(coalesce(w.last_name, '') || ', ' || coalesce(w.first_name, '')),
+        ''
+    ) AS student_name,
+    coalesce(cs.grade, '') AS grade,
+    coalesce(cs.school, 'Non-DS School') AS school,
+    coalesce(cs.school_state_id, '') AS school_state_id,
+    coalesce(cs.status, '') AS status,
+    coalesce(cs.school_year, '{{This School Year}}') AS school_year,
+    coalesce(w.fin_aid_app_submitted, '') AS fin_aid_app_submitted,
+    coalesce(w.awarded_cal_grant, '') AS awarded_cal_grant,
+    coalesce(w.action_needed, '') AS action_needed,
+    coalesce(w.calkids_claimed, '') AS calkids_claimed,
+    coalesce(w.gpa_uploaded, '') AS gpa_uploaded,
+    coalesce(w.gpa_matched, '') AS gpa_matched,
+    coalesce(w.sai, '') AS sai,
+    coalesce(w.enrl_date, '') AS enrl_date,
+    coalesce(w.withdrawal_date, '') AS withdrawal_date,
+    1 AS student_count
+FROM webgrants w
+LEFT JOIN current_student cs
+    ON cs.ssid = w.ssid
+   AND cs.school_year = '{{This School Year}}'
+WHERE w.ssid IS NOT NULL AND btrim(w.ssid) <> ''
+"""
+WEBGRANTS_COLUMNS = [
+    'ssid', 'student_name', 'grade', 'school', 'school_state_id', 'status',
+    'school_year', 'fin_aid_app_submitted', 'awarded_cal_grant',
+    'action_needed', 'calkids_claimed', 'gpa_uploaded', 'gpa_matched',
+    'sai', 'enrl_date', 'withdrawal_date', 'student_count',
+]
+
 COLLEGE_SYSTEMS = ('CSU', 'UC', 'CCC')
+
+CAL_GRANT_AWARD_ORDER = ['Yes', 'No', 'Not ready']
+ACTION_NEEDED_ORDER = [
+    'Outreach to submit app and/or missing contributor',
+    'Outreach to submit fin aid app & upload GPA',
+    'Outreach to resolve fin aid app errors or missing contributor',
+    'Manually match GPA',
+    'Upload GPA',
+    'Have student verify dependency status with college FAO',
+    'No Action Needed',
+]
 
 # One dataset per underlying analytics table.  Charts that need a single
 # college system narrow the shared applications/status dataset with a
@@ -168,12 +220,26 @@ DATASET_SPECS = [
                        'Completed, In Progress, or Not Applied — includes on-track '
                        'students who have not yet applied.',
     },
+    {
+        'name': 'CCGI WebGrants',
+        'source_type': 'sql',
+        'base_table': WEBGRANTS_TABLE,
+        'columns': WEBGRANTS_COLUMNS,
+        'sql': WEBGRANTS_SQL,
+        'description': 'WebGrants financial-aid application, Cal Grant award, '
+                       'GPA upload/match, and action-needed rows joined to the '
+                       'current student school and grade.',
+    },
 ]
 
 # Per-system datasets from an earlier schema, removed on run if present.
 OBSOLETE_DATASET_NAMES = [
     *[f'CCGI {system} Applications' for system in COLLEGE_SYSTEMS],
     *[f'CCGI {system} On-Track Status' for system in ('CSU', 'UC')],
+]
+
+OBSOLETE_CHART_NAMES = [
+    'CCGI/Cal Grant Award & Action Needed',
 ]
 
 # Drill-through columns per dataset.  ``ssid`` and ``student_id`` lead the
@@ -206,38 +272,144 @@ DRILL_COLUMNS_BY_DATASET = {
         'system', 'application_status', 'eligibility',
         'csu_gpa', 'uc_gpa', 'school_year',
     ],
+    'CCGI WebGrants': [
+        'ssid', 'student_name', 'grade', 'school',
+        'fin_aid_app_submitted', 'awarded_cal_grant', 'action_needed',
+        'calkids_claimed', 'gpa_uploaded', 'gpa_matched', 'sai',
+        'enrl_date', 'withdrawal_date', 'school_year',
+    ],
 }
 
 
 def _base_cfg(chart_type, title, **overrides):
-    """A minimal but complete chart config for the rendering engine."""
-    cfg = {
-        'chart_type': chart_type,
-        'chart_title': title,
-        'agg': 'count',
-        'x_col': '',
-        'y_col': '',
-        'stack_col': '',
-        'group_col': '',
-        'series_col': '',
-        'sort_col': '_value',
-        'sort_dir': 'desc',
-        'bar_layout': 'stacked' if chart_type == 'stacked_bar' else 'grouped',
-        'bar_orientation': 'vertical',
-        'bar_radial': False,
-        'background': 'white',
-        'legend_pos': 'bottom',
-        'data_labels': True,
-        'show_grid': True,
-        'show_zoom': False,
-        'show_tooltip': True,
-        'animation': True,
-        'palette': '',
-        'color_map': {},
-        'label_position': 'top',
-        'x_label_rotation': 0,
-        'x_label_font_size': 11,
-    }
+    """A complete chart config matching the saved CCGI charts."""
+    cfg = {'agg': 'count',
+ 'limit': None,
+ 'top_n': None,
+ 'x_col': '',
+ 'y_col': '',
+ 'smooth': False,
+ 'opacity': 0.9,
+ 'palette': '',
+ 'ds_lines': [],
+ 'grid_top': None,
+ 'pl_scale': [],
+ 'sort_col': '_value',
+ 'sort_dir': 'desc',
+ 'animation': True,
+ 'bar_polar': False,
+ 'color_map': {},
+ 'grid_left': None,
+ 'group_col': '',
+ 'group_gap': 0,
+ 'line_fill': False,
+ 'show_grid': True,
+ 'show_zoom': False,
+ 'stack_col': '',
+ 'title_top': None,
+ 'background': 'white',
+ 'bar_layout': 'grouped',
+ 'bar_radial': False,
+ 'chart_type': 'bar',
+ 'grid_right': None,
+ 'legend_pos': 'bottom',
+ 'legend_top': None,
+ 'pg_display': 'stacked_bar',
+ 'series_col': '',
+ 'show_title': True,
+ 'st_col_col': '',
+ 'st_row_col': '',
+ 'title_left': None,
+ 'y_axis_max': None,
+ 'y_axis_min': None,
+ 'chart_title': '',
+ 'compare_gap': 30,
+ 'data_labels': True,
+ 'ds_date_col': '',
+ 'grid_bottom': None,
+ 'legend_left': None,
+ 'line_layout': 'standard',
+ 'show_points': False,
+ 'st_agg_func': 'count',
+ 'st_col_cols': [],
+ 'st_col_mode': 'values',
+ 'st_row_cols': [],
+ 'stack_order': [],
+ 'x_value_map': {},
+ 'agg_decimals': None,
+ 'dyn_agg_func': 'count',
+ 'dyn_col_cols': [],
+ 'dyn_col_mode': 'pivot',
+ 'dyn_row_cols': [],
+ 'pg_after_col': '',
+ 'show_percent': False,
+ 'show_toolbox': True,
+ 'show_tooltip': True,
+ 'st_value_col': '',
+ 'ac_include_pl': [],
+ 'dyn_value_col': '',
+ 'legend_offset': 0,
+ 'pg_before_col': '',
+ 'show_subtitle': False,
+ 'x_date_bucket': '',
+ 'ac_col_filters': {},
+ 'category_order': [],
+ 'chart_subtitle': '',
+ 'ds_date_bucket': 'day',
+ 'dyn_drill_calc': '',
+ 'group_gap_size': 0,
+ 'label_distance': None,
+ 'label_position': 'top',
+ 'pg_after_label': '',
+ 'ac_include_cats': [],
+ 'bar_orientation': 'vertical',
+ 'compare_pl_cols': [],
+ 'container_width': None,
+ 'dyn_totals_only': False,
+ 'label_font_size': 10,
+ 'legend_item_gap': 10,
+ 'parliament_rows': None,
+ 'pg_before_label': '',
+ 'show_categories': True,
+ 'st_agg_decimals': None,
+ 'title_font_size': 16,
+ 'bar_category_gap': '20',
+ 'container_height': None,
+ 'dyn_agg_decimals': None,
+ 'dyn_calculations': [],
+ 'dyn_display_type': 'table',
+ 'legend_font_size': 11,
+ 'legend_icon_size': 10,
+ 'parliament_shape': 'semi-circle',
+ 'percent_decimals': 1,
+ 'show_axis_labels': True,
+ 'show_axis_titles': True,
+ 'show_group_total': False,
+ 'st_show_tooltips': True,
+ 'tooltip_show_pct': True,
+ 'x_label_rotation': 0,
+ 'bar_border_radius': 0,
+ 'dyn_show_tooltips': True,
+ 'group_total_label': 'Total',
+ 'tooltip_value_pct': False,
+ 'x_label_font_size': 11,
+ 'col_header_aliases': {},
+ 'parliament_show_ss': False,
+ 'st_show_col_totals': True,
+ 'st_show_row_totals': True,
+ 'tooltip_show_count': True,
+ 'x_label_max_length': 0,
+ 'center_group_labels': True,
+ 'dyn_show_col_totals': True,
+ 'dyn_show_row_totals': True,
+ 'show_percent_symbol': True,
+ 'compare_cat_rotation': 0,
+ 'parliament_dot_scale': 1.0,
+ 'compare_cat_font_size': 12,
+ 'force_show_all_labels': False,
+ 'one_row_per_stu_annual_key': False}
+    cfg['chart_type'] = chart_type
+    cfg['chart_title'] = title
     cfg.update(overrides)
     return cfg
 
@@ -245,7 +417,7 @@ def _base_cfg(chart_type, title, **overrides):
 CHART_SPECS = [
     # ── Career Explorer ──────────────────────────────────────────────
     {
-        'name': 'CCGI • Top Favorite Careers',
+        'name': 'CCGI/Top Favorite Careers',
         'chart_type': 'bar',
         'dataset': 'CCGI Career Explorer',
         'config': _base_cfg(
@@ -254,7 +426,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Students by Career Cluster',
+        'name': 'CCGI/Students by Career Cluster',
         'chart_type': 'bar',
         'dataset': 'CCGI Career Clusters',
         'config': _base_cfg(
@@ -263,18 +435,18 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Career Cluster Interest by Grade',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/Career Cluster Interest by Grade',
+        'chart_type': 'bar',
         'dataset': 'CCGI Career Clusters',
         'config': _base_cfg(
-            'stacked_bar', 'Career Cluster Interest Depth by Grade',
+            'bar', 'Career Cluster Interest Depth by Grade', bar_layout='stacked',
             x_col='cluster', stack_col='grade', series_col='grade',
             y_col='cluster_count', agg='sum', data_labels=False,
         ),
     },
     # ── College & Financial ──────────────────────────────────────────
     {
-        'name': 'CCGI • CSU Eligibility',
+        'name': 'CCGI/CSU Eligibility',
         'chart_type': 'donut',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
@@ -282,7 +454,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • UC Eligibility',
+        'name': 'CCGI/UC Eligibility',
         'chart_type': 'donut',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
@@ -290,27 +462,27 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • CSU Eligibility by School',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/CSU Eligibility by School',
+        'chart_type': 'bar',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
-            'stacked_bar', 'CSU Eligibility by School',
+            'bar', 'CSU Eligibility by School', bar_layout='stacked',
             x_col='school', stack_col='csu_eligibility',
             series_col='csu_eligibility', agg='count', data_labels=False,
         ),
     },
     {
-        'name': 'CCGI • UC Eligibility by School',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/UC Eligibility by School',
+        'chart_type': 'bar',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
-            'stacked_bar', 'UC Eligibility by School',
+            'bar', 'UC Eligibility by School', bar_layout='stacked',
             x_col='school', stack_col='uc_eligibility',
             series_col='uc_eligibility', agg='count', data_labels=False,
         ),
     },
     {
-        'name': 'CCGI • CCC Applications Completed by School',
+        'name': 'CCGI/CCC Applications Completed by School',
         'chart_type': 'bar',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
@@ -320,7 +492,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Financial Aid Application Status',
+        'name': 'CCGI/Financial Aid Application Status',
         'chart_type': 'donut',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
@@ -329,7 +501,37 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Requires Review Scope (CSU & UC)',
+        'name': 'CCGI/Financial Aid Application Submitted',
+        'chart_type': 'donut',
+        'dataset': 'CCGI WebGrants',
+        'config': _base_cfg(
+            'donut', 'Financial Aid Application Submitted',
+            x_col='fin_aid_app_submitted', y_col='ssid', agg='count_unique',
+        ),
+    },
+    {
+        'name': 'CCGI/Awarded Cal Grant',
+        'chart_type': 'donut',
+        'dataset': 'CCGI WebGrants',
+        'config': _base_cfg(
+            'donut', 'Awarded Cal Grant',
+            x_col='awarded_cal_grant', y_col='ssid', agg='count_unique',
+            category_order=list(CAL_GRANT_AWARD_ORDER), sort_col='__manual__',
+        ),
+    },
+    {
+        'name': 'CCGI/Action Needed',
+        'chart_type': 'bar',
+        'dataset': 'CCGI WebGrants',
+        'config': _base_cfg(
+            'bar', 'Action Needed',
+            x_col='action_needed', y_col='ssid', agg='count_unique',
+            bar_orientation='horizontal', data_labels=True, top_n=20,
+            sort_col='_value', sort_dir='desc',
+        ),
+    },
+    {
+        'name': 'CCGI/Requires Review Scope (CSU & UC)',
         'chart_type': 'donut',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
@@ -338,28 +540,28 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Students Requiring Review by School',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/Students Requiring Review by School',
+        'chart_type': 'bar',
         'dataset': 'CCGI College & Financial',
         'config': _base_cfg(
-            'stacked_bar', 'Students Requiring Review by School',
+            'bar', 'Students Requiring Review by School', bar_layout='stacked',
             x_col='school', stack_col='review_scope', series_col='review_scope',
             agg='count', data_labels=False,
         ),
     },
     # ── College applications (CSU / UC / CCC) ────────────────────────
     {
-        'name': 'CCGI • Applications by Status & System',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/Applications by Status & System',
+        'chart_type': 'bar',
         'dataset': 'CCGI College Applications',
         'config': _base_cfg(
-            'stacked_bar', 'College Applications by System',
+            'bar', 'College Applications by System', bar_layout='stacked',
             x_col='system', stack_col='application_status',
             series_col='application_status', agg='count',
         ),
     },
     {
-        'name': 'CCGI • CSU Applications by College',
+        'name': 'CCGI/CSU Applications by College',
         'chart_type': 'bar',
         'dataset': 'CCGI College Applications',
         'source_filters': {'system': ['CSU']},
@@ -369,7 +571,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • UC Applications by College',
+        'name': 'CCGI/UC Applications by College',
         'chart_type': 'bar',
         'dataset': 'CCGI College Applications',
         'source_filters': {'system': ['UC']},
@@ -379,7 +581,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • CCC Applications by College',
+        'name': 'CCGI/CCC Applications by College',
         'chart_type': 'bar',
         'dataset': 'CCGI College Applications',
         'source_filters': {'system': ['CCC']},
@@ -389,7 +591,7 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • Students Who Applied (Any System)',
+        'name': 'CCGI/Students Who Applied (Any System)',
         'chart_type': 'gauge',
         'dataset': 'CCGI College Applications',
         'config': _base_cfg(
@@ -398,12 +600,12 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • CSU On-Track Applicants by School',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/CSU On-Track Applicants by School',
+        'chart_type': 'bar',
         'dataset': 'CCGI Application Status',
         'source_filters': {'system': ['CSU'], 'eligibility': ['On-Track']},
         'config': _base_cfg(
-            'stacked_bar', 'CSU On-Track Applicants by School',
+            'bar', 'CSU On-Track Applicants by School', bar_layout='stacked',
             x_col='school', stack_col='application_status',
             series_col='application_status', y_col='ssid', agg='count_unique',
             stack_order=['Not Applied', 'In Progress', 'Completed'],
@@ -411,12 +613,12 @@ CHART_SPECS = [
         ),
     },
     {
-        'name': 'CCGI • UC On-Track Applicants by School',
-        'chart_type': 'stacked_bar',
+        'name': 'CCGI/UC On-Track Applicants by School',
+        'chart_type': 'bar',
         'dataset': 'CCGI Application Status',
         'source_filters': {'system': ['UC'], 'eligibility': ['On-Track']},
         'config': _base_cfg(
-            'stacked_bar', 'UC On-Track Applicants by School',
+            'bar', 'UC On-Track Applicants by School', bar_layout='stacked',
             x_col='school', stack_col='application_status',
             series_col='application_status', y_col='ssid', agg='count_unique',
             stack_order=['Not Applied', 'In Progress', 'Completed'],
@@ -447,11 +649,11 @@ PAGE_SPECS = [
         ],
         'rows': [
             {'label': 'Top Favorite Careers', 'sections': [
-                {'chart': 'CCGI • Top Favorite Careers', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/Top Favorite Careers', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'label': 'Career Cluster Interest', 'sections': [
-                {'chart': 'CCGI • Students by Career Cluster', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
-                {'chart': 'CCGI • Career Cluster Interest by Grade', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Students by Career Cluster', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Career Cluster Interest by Grade', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
             ]},
         ],
     },
@@ -459,8 +661,9 @@ PAGE_SPECS = [
         'title': 'CCGI College & Financial',
         'slug': 'ccgi-college-financial',
         'description': 'CSU, UC, and CCC eligibility and applications, plus '
-                       'financial-aid application status. Filter by school and '
-                       'drill into students from any chart.',
+                       'financial-aid application status, WebGrants financial-aid '
+                       'application submission, and Cal Grant award/action-needed '
+                       'data. Filter by school and drill into students from any chart.',
         'page_filters': [
             {
                 'id': 'school', 'label': 'School', 'source_col': 'school',
@@ -468,44 +671,51 @@ PAGE_SPECS = [
                 'widget': 'select', 'default_val': '', 'hidden': False,
             },
         ],
-        'tabs': ['Overview', 'CSU', 'UC', 'CCC'],
+        'tabs': ['Overview', 'WebGrants', 'CSU', 'UC', 'CCC'],
         'rows': [
             {'tab': 'Overview', 'label': 'Applicant Summary', 'sections': [
-                {'chart': 'CCGI • Students Who Applied (Any System)', 'gs_x': 0, 'gs_w': 4, 'gs_h': 5},
+                {'chart': 'CCGI/Students Who Applied (Any System)', 'gs_x': 0, 'gs_w': 4, 'gs_h': 5},
             ]},
             {'tab': 'Overview', 'label': 'Applications by System', 'sections': [
-                {'chart': 'CCGI • Applications by Status & System', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/Applications by Status & System', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'tab': 'Overview', 'label': 'Eligibility Requires Review', 'sections': [
-                {'chart': 'CCGI • Requires Review Scope (CSU & UC)', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
-                {'chart': 'CCGI • Students Requiring Review by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Requires Review Scope (CSU & UC)', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Students Requiring Review by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
             ]},
             {'tab': 'Overview', 'label': 'Financial Aid', 'sections': [
-                {'chart': 'CCGI • Financial Aid Application Status', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Financial Aid Application Status', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+            ]},
+            {'tab': 'WebGrants', 'label': 'Financial Aid Application and Cal Grant Award', 'sections': [
+                {'chart': 'CCGI/Financial Aid Application Submitted', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/Awarded Cal Grant', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+            ]},
+            {'tab': 'WebGrants', 'label': 'Action Needed', 'sections': [
+                {'chart': 'CCGI/Action Needed', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
             ]},
             {'tab': 'CSU', 'label': 'CSU Eligibility', 'sections': [
-                {'chart': 'CCGI • CSU Eligibility', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
-                {'chart': 'CCGI • CSU Eligibility by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/CSU Eligibility', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/CSU Eligibility by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
             ]},
             {'tab': 'CSU', 'label': 'CSU Applications', 'sections': [
-                {'chart': 'CCGI • CSU Applications by College', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/CSU Applications by College', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'tab': 'CSU', 'label': 'CSU On-Track Applicants (Not Applied / In Progress / Completed)', 'sections': [
-                {'chart': 'CCGI • CSU On-Track Applicants by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/CSU On-Track Applicants by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'tab': 'UC', 'label': 'UC Eligibility', 'sections': [
-                {'chart': 'CCGI • UC Eligibility', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
-                {'chart': 'CCGI • UC Eligibility by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/UC Eligibility', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/UC Eligibility by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
             ]},
             {'tab': 'UC', 'label': 'UC Applications', 'sections': [
-                {'chart': 'CCGI • UC Applications by College', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/UC Applications by College', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'tab': 'UC', 'label': 'UC On-Track Applicants (Not Applied / In Progress / Completed)', 'sections': [
-                {'chart': 'CCGI • UC On-Track Applicants by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+                {'chart': 'CCGI/UC On-Track Applicants by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
             ]},
             {'tab': 'CCC', 'label': 'CCC Applications', 'sections': [
-                {'chart': 'CCGI • CCC Applications Completed by School', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
-                {'chart': 'CCGI • CCC Applications by College', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/CCC Applications Completed by School', 'gs_x': 0, 'gs_w': 6, 'gs_h': 6},
+                {'chart': 'CCGI/CCC Applications by College', 'gs_x': 6, 'gs_w': 6, 'gs_h': 6},
             ]},
         ],
     },
@@ -555,25 +765,37 @@ def enable_dataset_tables():
 def upsert_dataset(spec, owner):
     from dataviz.models import Dataset
 
-    base = spec['base_table']
-    columns = [f'{base}.{c}' for c in spec['columns']]
-    mappings = {f'{base}.{c}': c for c in spec['columns']}
-    dataset, _ = Dataset.objects.update_or_create(
-        name=spec['name'],
-        owner=owner,
-        defaults={
-            'source_type': Dataset.SOURCE_VISUAL,
-            'base_table': base,
-            'distinct': True,
-            'columns': columns,
-            'column_mappings': mappings,
-            'joins': [],
-            'filters': spec.get('filters', []),
-            'status_filter': [],  # all statuses
-            'order_by': [],
-            'description': spec['description'],
-        },
+    dataset = (
+        Dataset.objects.filter(name=spec['name'], owner=owner)
+        .order_by('id')
+        .first()
     )
+    if dataset is None:
+        dataset = Dataset(name=spec['name'], owner=owner)
+
+    source_type = spec.get('source_type', Dataset.SOURCE_VISUAL)
+    dataset.source_type = source_type
+    dataset.description = spec['description']
+    dataset.joins = []
+    dataset.filters = spec.get('filters', [])
+    dataset.status_filter = []  # all statuses
+    dataset.order_by = []
+
+    if source_type == Dataset.SOURCE_SQL:
+        dataset.source_sql = spec['sql']
+        dataset.base_table = spec['base_table']
+        dataset.distinct = False
+        dataset.columns = list(spec['columns'])
+        dataset.column_mappings = {c: c for c in spec['columns']}
+    else:
+        base = spec['base_table']
+        dataset.source_sql = ''
+        dataset.base_table = base
+        dataset.distinct = True
+        dataset.columns = [f'{base}.{c}' for c in spec['columns']]
+        dataset.column_mappings = {f'{base}.{c}': c for c in spec['columns']}
+
+    dataset.save()
     print(f'  dataset ready: {dataset.name} (#{dataset.pk})')
     return dataset
 
@@ -586,6 +808,21 @@ def remove_obsolete_datasets():
     if count:
         qs.delete()
         print(f'  removed {count} obsolete dataset(s): {", ".join(OBSOLETE_DATASET_NAMES)}')
+
+
+def remove_obsolete_charts():
+    from dataviz.models import SavedChart, DataVizPageSection
+
+    qs = SavedChart.objects.filter(name__in=OBSOLETE_CHART_NAMES)
+    attached = set(
+        DataVizPageSection.objects.filter(chart__in=qs)
+        .values_list('chart_id', flat=True)
+    )
+    qs = qs.exclude(pk__in=attached)
+    count = qs.count()
+    if count:
+        qs.delete()
+    print(f'  removed {count} obsolete chart(s)')
 
 
 def upsert_chart(spec, datasets, owner):
@@ -609,7 +846,7 @@ def upsert_chart(spec, datasets, owner):
                 DRILL_COLUMNS_BY_DATASET.get(spec['dataset'], []),
             ),
             'drill_through_filter_map': spec.get('drill_through_filter_map', {}),
-            'description': spec['config'].get('chart_title', ''),
+            'description': '',
         },
     )
     print(f'  chart ready:   {chart.name} (#{chart.pk})')
@@ -633,7 +870,7 @@ def upsert_page(spec, charts, owner):
             'show_header': True,
             'owner': owner,
             'page_filters': spec['page_filters'],
-            'status': DataVizPage.STATUS_ACTIVE,
+            'status': DataVizPage.STATUS_DRAFT,
         },
     )
     with transaction.atomic():
@@ -676,6 +913,7 @@ def attach_to_menu(pages):
     """Place the CCGI pages under a shared 'CCGI' menu category."""
     from users.models_pages import Page
 
+    parent = Page.objects.filter(slug='college-career-readiness').first()
     category, _ = Page.objects.update_or_create(
         slug='ccgi',
         defaults={
@@ -686,7 +924,8 @@ def attach_to_menu(pages):
             'status': 'active',
             'is_menu_category': True,
             'show_in_menu': True,
-            'menu_order': 60,
+            'parent_page': parent,
+            'menu_order': 1 if parent else 60,
             'required_roles': [],
             'is_public': False,
         },
@@ -735,6 +974,7 @@ def main():
         pages.append(upsert_page(spec, charts, owner))
 
     attach_to_menu(pages)
+    remove_obsolete_charts()
 
     print()
     print(f'Done. {len(datasets)} datasets, {len(charts)} charts, '

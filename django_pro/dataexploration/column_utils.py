@@ -816,6 +816,118 @@ def get_sat_columns(column_filters=None):
     return columns
 
 
+# ── PSAT (College Board) columns ─────────────────────────────────────────────
+PSAT_TYPES = (
+    ('PSAT89', 'PSAT 8/9'),
+    ('PSATNM', 'PSAT/NMSQT'),
+)
+PSAT_TYPE_LABELS = dict(PSAT_TYPES)
+# (field suffix, display label, ClickHouse column)
+PSAT_SCORE_FIELDS = (
+    ('TOTAL', 'Total', 'total_score'),
+    ('RW', 'Reading & Writing', 'ebrw_score'),
+    ('MATH', 'Math', 'math_score'),
+    ('DATE', 'Test Date', 'test_date'),
+    ('SCHOOL', 'School', 'school_name'),
+    ('GRADE', 'Test Grade', 'test_grade'),
+)
+PSAT_SCORE_DB_FIELDS = {f[0]: f[2] for f in PSAT_SCORE_FIELDS}
+
+
+def psat_column_key(year, psat_type, field=None):
+    """Build a stable column key for PSAT score/metadata columns."""
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    type_key = (psat_type or 'PSAT89').upper()
+    return f"psat_{year_key}_{type_key}_{(field or 'TOTAL').upper()}"
+
+
+def parse_psat_column_key(col_key):
+    """Parse a ``psat_`` column key into year/psat_type/field."""
+    if not isinstance(col_key, str) or not col_key.startswith('psat_'):
+        return None
+    parts = col_key[len('psat_'):].split('_')
+    if len(parts) < 4 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    year = f"{parts[0]}-{parts[1]}"
+    psat_type = parts[2].upper()
+    field = parts[3].upper()
+    if psat_type not in PSAT_TYPE_LABELS or field not in PSAT_SCORE_DB_FIELDS:
+        return None
+    return {'year': year, 'psat_type': psat_type, 'field': field}
+
+
+def psat_column_db_field(col_key):
+    """Return the analytics_psat_results column for a ``psat_`` key, or None."""
+    parsed = parse_psat_column_key(col_key)
+    if not parsed:
+        return None
+    return PSAT_SCORE_DB_FIELDS.get(parsed['field'])
+
+
+def get_psat_columns(column_filters=None):
+    """Get dynamic PSAT 8/9 and PSAT/NMSQT columns organized by school year.
+
+    Only published PSAT imports contribute. Structure::
+
+        {
+            year: {
+                'types': {
+                    'PSAT 8/9': {'type_code': 'PSAT89', 'scores': {label: col_key}},
+                    'PSAT/NMSQT': {...},
+                },
+            },
+        }
+    """
+    cache_key = _generate_cache_key("psat_columns", column_filters, "")
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+    columns = {}
+
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT DISTINCT r.school_year, r.psat_type
+            FROM "dataLoader_psatresult" r
+            JOIN "dataLoader_psatimportlog" il ON r.import_log_id = il.id
+            WHERE il.is_published = true AND r.ssid <> ''
+            ORDER BY r.school_year DESC, r.psat_type
+            """
+        )
+        rows = cursor.fetchall()
+
+    years: dict[str, set] = {}
+    for year, psat_type in rows:
+        year = (year or '').strip()
+        psat_type = (psat_type or '').strip().upper()
+        if not year or psat_type not in PSAT_TYPE_LABELS:
+            continue
+        years.setdefault(year, set()).add(psat_type)
+
+    for year in sorted(years, reverse=True):
+        bucket = {'types': {}}
+        present = years[year]
+        for type_code, type_label in PSAT_TYPES:
+            if type_code not in present:
+                continue
+            type_bucket = {'type_code': type_code, 'scores': {}}
+            for field, label, _db in PSAT_SCORE_FIELDS:
+                key = psat_column_key(year, type_code, field=field)
+                disp = f"{type_label} {label} ({year})"
+                COLUMN_DEFINITIONS[key] = disp
+                new_definitions[key] = disp
+                type_bucket['scores'][label] = key
+            bucket['types'][type_label] = type_bucket
+        columns[year] = bucket
+
+    cache.set(cache_key, (columns, new_definitions), timeout=3600)
+    return columns
+
+
 def parse_markall_key(col_key):
     """Resolve a ``markall_`` umbrella/expanded key to (year, subject_norm, idx, kind).
 
@@ -1160,7 +1272,7 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
     # (and some, like the "All Marks" umbrella, are bookkeeping only), so skip
     # them entirely — otherwise they fall through to a bogus cs.<col> predicate.
     if isinstance(col, str) and col.startswith(
-        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'iball_')
+        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'psat_', 'ib_', 'iball_')
     ):
         return
 
@@ -1257,7 +1369,7 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
             where_clauses.append(f"({' OR '.join(conditions)})")
         return
 
-    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_', 'ib_')):
+    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_', 'psat_', 'ib_')):
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
 

@@ -229,6 +229,7 @@ TABLE_WHITELIST = {
     'analytics_ap_results': 'analytics_ap_results',
     'analytics_ap_awards': 'analytics_ap_awards',
     'analytics_sat_results': 'analytics_sat_results',
+    'analytics_psat_results': 'analytics_psat_results',
     'analytics_survey_responses': 'analytics_survey_responses',
     'analytics_dbuilder_ap_results': 'analytics_dbuilder_ap_results',
     'analytics_dbuilder_panorama_survey': 'analytics_dbuilder_panorama_survey',
@@ -496,6 +497,10 @@ COLUMN_WHITELIST = {
         'percentile_country_total', 'percentile_country_rw', 'percentile_country_math',
         'percentile_natrep_total', 'percentile_natrep_rw', 'percentile_natrep_math',
         'percentile_natuser_total', 'percentile_natuser_rw', 'percentile_natuser_math',
+    },
+    'analytics_psat_results': {
+        'ssid', 'school_year', 'psat_type', 'test_date', 'school_name',
+        'test_grade', 'total_score', 'ebrw_score', 'math_score',
     },
     'analytics_survey_responses': {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',

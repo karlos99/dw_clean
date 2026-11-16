@@ -508,9 +508,10 @@ def manage_default_columns(request):
         return HttpResponseForbidden("You don't have permission to manage default columns.")
 
     test_structure = get_test_columns()
-    from dataexploration.column_utils import get_ap_columns, get_sat_columns, get_ib_columns
+    from dataexploration.column_utils import get_ap_columns, get_sat_columns, get_psat_columns, get_ib_columns
     ap_structure = get_ap_columns()
     sat_structure = get_sat_columns()
+    psat_structure = get_psat_columns()
     ib_structure = get_ib_columns()
     
     # Get saved default columns or fall back to constants
@@ -521,7 +522,7 @@ def manage_default_columns(request):
         default_columns = DEFAULT_COLUMNS
 
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
-    _all_years = list(test_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys()) + list(ib_structure.keys())
+    _all_years = list(test_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys()) + list(psat_structure.keys()) + list(ib_structure.keys())
 
     if request.method == 'POST':
         import json
@@ -545,6 +546,7 @@ def manage_default_columns(request):
                 'test_structure': test_structure,
                 'ap_structure': ap_structure,
                 'sat_structure': sat_structure,
+                'psat_structure': psat_structure,
                 'ib_structure': ib_structure,
                 'selected_columns': columns,
                 'year_labels': get_year_labels_map(_all_years),
@@ -559,6 +561,7 @@ def manage_default_columns(request):
                 'test_structure': test_structure,
                 'ap_structure': ap_structure,
                 'sat_structure': sat_structure,
+                'psat_structure': psat_structure,
                 'ib_structure': ib_structure,
                 'selected_columns': default_columns,
                 'year_labels': get_year_labels_map(_all_years),
@@ -572,6 +575,7 @@ def manage_default_columns(request):
         'test_structure': test_structure,
         'ap_structure': ap_structure,
         'sat_structure': sat_structure,
+        'psat_structure': psat_structure,
         'ib_structure': ib_structure,
         'selected_columns': default_columns,
         'year_labels': get_year_labels_map(_all_years),

@@ -32,6 +32,24 @@ MENU_NAME = 'College & Career Readiness'
 MENU_ORDER = 56
 THIS_YEAR = '{{This School Year}}'
 
+# Dynamic three-year window (current year + two prior years), resolved at query
+# time from {{This School Year}} so charts roll over without code changes.
+_YEAR_WINDOW_CTE = """
+year_params AS MATERIALIZED (
+    SELECT substring('{{This School Year}}', 1, 4)::int AS current_start
+),
+year_window AS MATERIALIZED (
+    SELECT (current_start - 2)::text || '-' || (current_start - 1)::text AS school_year
+    FROM year_params
+    UNION ALL
+    SELECT (current_start - 1)::text || '-' || current_start::text
+    FROM year_params
+    UNION ALL
+    SELECT current_start::text || '-' || (current_start + 1)::text
+    FROM year_params
+)
+"""
+
 DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
 DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 
@@ -42,7 +60,8 @@ COMPLETION_COLORS = {
     'Participation': '#f28e2b',
     'Other': '#bab0ac',
 }
-PROGRAM_ORDER = ['ELL', 'GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+PROGRAM_ORDER = ['GATE', 'SED', 'SPED', 'Migrant', 'Foster']
+ELL_ORDER = ['EL', 'IFEP', 'RFEP', 'EO', 'TBD', 'ADEL']
 PROGRAM_COLORS = {
     'ELL': '#4e79a7',
     'GATE': '#59a14f',
@@ -80,6 +99,26 @@ GRADE_COLORS = {
     '11th': '#59a14f',
     '12th': '#e15759',
 }
+PARTICIPATION_STAGE_ORDER = [
+    'CTE Completer',
+    'Capstone (In Progress)',
+    'Capstone (Not Completed)',
+    'Intro + Concentration (No Capstone)',
+    'Intro Only',
+    'Participation',
+    'Other',
+]
+PARTICIPATION_STAGE_COLORS = {
+    'CTE Completer': '#59a14f',
+    'Capstone (In Progress)': '#4e79a7',
+    'Capstone (Not Completed)': '#b07aa1',
+    'Intro + Concentration (No Capstone)': '#f28e2b',
+    'Intro Only': '#edc948',
+    'Participation': '#76b7b2',
+    'Other': '#bab0ac',
+}
+PATHWAY_COUNT_ORDER = ['1', '2', '3', '4+']
+COMPLETION_COUNT_ORDER = ['0', '1', '2', '3+']
 
 
 # ── SQL helpers (PostgreSQL syntax) ──────────────────────────────────────────
@@ -147,7 +186,9 @@ def _pathway_sql() -> str:
         "ELSE d.school_year END"
     )
     return f"""
-WITH cs_all AS MATERIALIZED (
+WITH
+{_YEAR_WINDOW_CTE},
+cs_all AS MATERIALIZED (
     SELECT
         ssid,
         substring(school_year, 1, 4) AS year4,
@@ -174,7 +215,7 @@ cc_cur AS MATERIALIZED (
 SELECT
     nullif(btrim(d.state_student_id), '') AS ssid,
     coalesce(cs.student_name, '') AS student_name,
-    coalesce(cs.school, d.school, 'Non-DS School') AS school,
+    coalesce(d.school, cs.school, 'Non-DS School') AS school,
     coalesce(cc.school, 'Non-DS School') AS enrolled_school,
     {g} AS grade,
     {_grade_label_sql(g)} AS grade_label,
@@ -206,13 +247,16 @@ LEFT JOIN cc_cur cc
     ON cc.ssid = nullif(btrim(d.state_student_id), '')
 WHERE d.school_year IS NOT NULL AND btrim(d.school_year) <> ''
   AND d.state_student_id IS NOT NULL AND btrim(d.state_student_id) <> ''
+  AND d.school_year IN (SELECT split_part(school_year, '-', 1) FROM year_window)
 """
 
 
 def _course_sql() -> str:
     g = "coalesce(cs.grade, '')"
     return f"""
-WITH cte_courses AS MATERIALIZED (
+WITH
+{_YEAR_WINDOW_CTE},
+cte_courses AS MATERIALIZED (
     SELECT
         nullif(btrim(s.ssid), '') AS ssid,
         min(s.stu_annual_key) AS stu_annual_key,
@@ -226,15 +270,23 @@ WITH cte_courses AS MATERIALIZED (
         coalesce(cte.cte_pathway, '') AS cte_pathway,
         coalesce(cte.career_cluster, '') AS industry_sector,
         coalesce(cte.cte_course_level, '') AS cte_course_level,
-        min(coalesce(s.school_name, '')) AS sched_school,
+        min(coalesce(
+            nullif(btrim(sch.school_name), ''),
+            nullif(btrim(s.school_name), ''),
+            ''
+        )) AS sched_school,
         1 AS course_enrollment
     FROM schedule_list s
     JOIN coursecatalog_cte_pathways cte
         ON cte.course_id IS NOT NULL AND btrim(cte.course_id) <> ''
        AND cte.course_id = nullif(btrim(s.course_code), '')
+    LEFT JOIN school sch
+        ON sch.state_id = s.state_school_id
+       AND sch.short_name = s.school_name
     WHERE s.schedule_status IN ('Active', 'Completed')
       AND s.ssid IS NOT NULL AND btrim(s.ssid) <> ''
       AND s.school_year IS NOT NULL AND btrim(s.school_year) <> ''
+      AND s.school_year IN (SELECT school_year FROM year_window)
       AND nullif(btrim(s.course_code), '') IN (
           SELECT c2.course_id
           FROM coursecatalog_cte_pathways c2
@@ -248,6 +300,30 @@ WITH cte_courses AS MATERIALIZED (
         coalesce(cte.career_cluster, ''),
         coalesce(cte.cte_course_level, '')
 ),
+course_staff AS MATERIALIZED (
+    SELECT
+        coalesce(cte.career_cluster, '') AS industry_sector,
+        coalesce(cte.cte_pathway, '') AS cte_pathway,
+        coalesce(
+            nullif(btrim(s.course_name), ''),
+            nullif(btrim(s.course_code), ''),
+            'Unknown course'
+        ) AS course_name,
+        string_agg(DISTINCT nullif(btrim(s.staff_name), ''), ', ') AS staff_list
+    FROM schedule_list s
+    JOIN coursecatalog_cte_pathways cte
+        ON cte.course_id IS NOT NULL AND btrim(cte.course_id) <> ''
+       AND cte.course_id = nullif(btrim(s.course_code), '')
+    WHERE s.schedule_status IN ('Active', 'Completed')
+      AND s.school_year IN (SELECT school_year FROM year_window)
+      AND nullif(btrim(s.course_code), '') IN (
+          SELECT c2.course_id
+          FROM coursecatalog_cte_pathways c2
+          WHERE c2.course_id IS NOT NULL AND btrim(c2.course_id) <> ''
+      )
+      AND s.staff_name IS NOT NULL AND btrim(s.staff_name) <> ''
+    GROUP BY 1, 2, 3
+),
 cc_cur AS MATERIALIZED (
     SELECT ssid, school
     FROM current_student
@@ -257,7 +333,7 @@ cc_cur AS MATERIALIZED (
 SELECT
     c.ssid,
     coalesce(cs.student_name, '') AS student_name,
-    coalesce(cs.school, c.sched_school, 'Non-DS School') AS school,
+    coalesce(c.sched_school, cs.school, 'Non-DS School') AS school,
     coalesce(cc.school, 'Non-DS School') AS enrolled_school,
     {g} AS grade,
     {_grade_label_sql(g)} AS grade_label,
@@ -273,13 +349,19 @@ SELECT
     c.industry_sector,
     c.cte_course_level,
     c.course_enrollment,
-    c.school_year || ' · ' || coalesce(c.cte_course_level, '') AS year_course_level
+    c.school_year || ' · ' || coalesce(c.cte_course_level, '') AS year_course_level,
+    c.industry_sector || ' ▸ ' || c.cte_pathway || ' ▸ ' || c.course_name AS industry_pathway_course,
+    coalesce(st.staff_list, '') AS staff_list
 FROM cte_courses c
 LEFT JOIN current_student cs
     ON cs.stu_annual_key = c.stu_annual_key
    AND cs.school_year = c.school_year
 LEFT JOIN cc_cur cc
     ON cc.ssid = c.ssid
+LEFT JOIN course_staff st
+    ON st.industry_sector = c.industry_sector
+   AND st.cte_pathway = c.cte_pathway
+   AND st.course_name = c.course_name
 """
 
 
@@ -308,7 +390,6 @@ FROM (
 ) d
 CROSS JOIN LATERAL (
     VALUES
-        ('ELL', CASE WHEN upper(btrim(coalesce(d.ell, ''))) = 'EL' THEN 1 ELSE 0 END),
         ('GATE', CASE WHEN upper(btrim(coalesce(d.gate, ''))) = 'Y' THEN 1 ELSE 0 END),
         ('SED', CASE WHEN upper(btrim(coalesce(d.sed, ''))) = 'Y' THEN 1 ELSE 0 END),
         ('SPED', CASE WHEN upper(btrim(coalesce(d.sped, ''))) = 'Y' THEN 1 ELSE 0 END),
@@ -316,6 +397,248 @@ CROSS JOIN LATERAL (
         ('Foster', CASE WHEN upper(btrim(coalesce(d.foster, ''))) = 'Y' THEN 1 ELSE 0 END)
 ) AS v(program, member)
 WHERE v.member = 1
+"""
+
+
+def _participation_sql() -> str:
+    return f"""
+WITH pathway_base AS MATERIALIZED (
+{_pathway_sql().strip().rstrip(';')}
+),
+recent_years AS MATERIALIZED (
+    SELECT DISTINCT school_year
+    FROM pathway_base
+    ORDER BY school_year DESC
+    LIMIT 3
+),
+recent AS MATERIALIZED (
+    SELECT p.*
+    FROM pathway_base p
+    JOIN recent_years y ON y.school_year = p.school_year
+    WHERE p.ssid IS NOT NULL AND btrim(p.ssid) <> ''
+      AND p.cte_pathway IS NOT NULL AND btrim(p.cte_pathway) <> ''
+),
+student_latest AS (
+    SELECT DISTINCT ON (ssid)
+        ssid, student_name, school, enrolled_school, grade, grade_label,
+        grade_display, level_band, gender, race, ell, sed, sped, gate, foster,
+        status, district_school, school_year AS latest_year
+    FROM recent
+    ORDER BY ssid, school_year DESC
+),
+pathway_agg AS (
+    SELECT
+        ssid,
+        cte_pathway,
+        max(is_completer) AS ever_completer,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'in progress' THEN 1 ELSE 0 END) AS ever_in_progress,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'needs capstone' THEN 1 ELSE 0 END) AS ever_needs_capstone,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'needs concentration' THEN 1 ELSE 0 END) AS ever_needs_concentration,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'participation' THEN 1 ELSE 0 END) AS ever_participation,
+        max(CASE WHEN year_scope = 'Current' AND lower(btrim(pathway_status)) = 'in progress' THEN 1 ELSE 0 END) AS currently_in_capstone
+    FROM recent
+    GROUP BY ssid, cte_pathway
+),
+pathway_flags AS (
+    SELECT
+        *,
+        CASE WHEN ever_needs_capstone = 1 AND ever_completer = 0 AND ever_in_progress = 0
+             THEN 1 ELSE 0 END AS no_capstone_after_concentration,
+        CASE WHEN ever_needs_concentration = 1 AND ever_needs_capstone = 0
+                  AND ever_completer = 0 AND ever_in_progress = 0
+             THEN 1 ELSE 0 END AS intro_only
+    FROM pathway_agg
+),
+student_agg AS (
+    SELECT
+        ssid,
+        count(DISTINCT cte_pathway) AS pathway_count,
+        string_agg(DISTINCT cte_pathway, ', ') AS pathway_list,
+        count(DISTINCT cte_pathway) FILTER (WHERE ever_completer = 1) AS completions,
+        string_agg(DISTINCT cte_pathway, ', ') FILTER (WHERE ever_completer = 1) AS completed_pathways,
+        max(ever_completer) AS ever_completer,
+        max(ever_in_progress) AS ever_in_progress,
+        max(ever_needs_capstone) AS ever_needs_capstone,
+        max(ever_needs_concentration) AS ever_needs_concentration,
+        max(ever_participation) AS ever_participation,
+        max(currently_in_capstone) AS currently_in_capstone,
+        max(no_capstone_after_concentration) AS no_capstone_after_concentration,
+        max(intro_only) AS intro_only
+    FROM pathway_flags
+    GROUP BY ssid
+),
+student_years AS (
+    SELECT ssid, string_agg(DISTINCT school_year, ', ') AS school_years
+    FROM recent
+    GROUP BY ssid
+)
+SELECT
+    s.ssid,
+    s.student_name,
+    s.school,
+    s.enrolled_school,
+    s.grade,
+    s.grade_label,
+    s.grade_display,
+    s.level_band,
+    s.gender,
+    s.race,
+    s.ell,
+    s.sed,
+    s.sped,
+    s.gate,
+    s.foster,
+    s.status,
+    s.district_school,
+    a.pathway_count,
+    a.pathway_list,
+    a.completions,
+    a.completed_pathways,
+    a.ever_completer,
+    a.ever_in_progress,
+    a.ever_needs_capstone,
+    a.ever_needs_concentration,
+    a.ever_participation,
+    a.currently_in_capstone,
+    a.no_capstone_after_concentration,
+    a.intro_only,
+    CASE WHEN a.pathway_count >= 2 THEN 1 ELSE 0 END AS multiple_pathways,
+    CASE WHEN a.completions >= 2 THEN 1 ELSE 0 END AS multiple_completions,
+    CASE
+        WHEN a.ever_completer = 1 THEN 'CTE Completer'
+        WHEN a.currently_in_capstone = 1 THEN 'Capstone (In Progress)'
+        WHEN a.ever_in_progress = 1 THEN 'Capstone (Not Completed)'
+        WHEN a.no_capstone_after_concentration = 1 THEN 'Intro + Concentration (No Capstone)'
+        WHEN a.intro_only = 1 THEN 'Intro Only'
+        WHEN a.ever_participation = 1 THEN 'Participation'
+        ELSE 'Other'
+    END AS participation_stage,
+    CASE WHEN a.pathway_count >= 4 THEN '4+' ELSE a.pathway_count::text END AS pathway_count_label,
+    CASE WHEN a.completions >= 3 THEN '3+' ELSE a.completions::text END AS completions_label,
+    s.latest_year,
+    ty.school_years
+FROM student_latest s
+JOIN student_agg a ON a.ssid = s.ssid
+LEFT JOIN student_years ty ON ty.ssid = s.ssid
+"""
+
+
+def _participation_year_sql() -> str:
+    return f"""
+WITH pathway_base AS MATERIALIZED (
+{_pathway_sql().strip().rstrip(';')}
+),
+student_year AS (
+    SELECT DISTINCT ON (ssid, school_year)
+        ssid, school_year, student_name, school, enrolled_school, grade,
+        grade_label, grade_display, level_band, gender, race, ell, sed, sped,
+        gate, foster, status, district_school
+    FROM pathway_base
+    WHERE ssid IS NOT NULL AND btrim(ssid) <> ''
+      AND cte_pathway IS NOT NULL AND btrim(cte_pathway) <> ''
+    ORDER BY ssid, school_year DESC
+),
+pathway_year_agg AS (
+    SELECT
+        ssid,
+        school_year,
+        cte_pathway,
+        max(is_completer) AS ever_completer,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'in progress' THEN 1 ELSE 0 END) AS ever_in_progress,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'needs capstone' THEN 1 ELSE 0 END) AS ever_needs_capstone,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'needs concentration' THEN 1 ELSE 0 END) AS ever_needs_concentration,
+        max(CASE WHEN lower(btrim(pathway_status)) = 'participation' THEN 1 ELSE 0 END) AS ever_participation
+    FROM pathway_base
+    WHERE ssid IS NOT NULL AND btrim(ssid) <> ''
+      AND cte_pathway IS NOT NULL AND btrim(cte_pathway) <> ''
+    GROUP BY ssid, school_year, cte_pathway
+),
+pathway_year_flags AS (
+    SELECT
+        *,
+        CASE WHEN ever_needs_capstone = 1 AND ever_completer = 0 AND ever_in_progress = 0
+             THEN 1 ELSE 0 END AS no_capstone_after_concentration,
+        CASE WHEN ever_needs_concentration = 1 AND ever_needs_capstone = 0
+                  AND ever_completer = 0 AND ever_in_progress = 0
+             THEN 1 ELSE 0 END AS intro_only
+    FROM pathway_year_agg
+),
+student_year_agg AS (
+    SELECT
+        ssid,
+        school_year,
+        count(DISTINCT cte_pathway) AS pathway_count,
+        string_agg(DISTINCT cte_pathway, ', ') AS pathway_list,
+        count(DISTINCT cte_pathway) FILTER (WHERE ever_completer = 1) AS completions,
+        string_agg(DISTINCT cte_pathway, ', ') FILTER (WHERE ever_completer = 1) AS completed_pathways,
+        max(ever_completer) AS ever_completer,
+        max(ever_in_progress) AS ever_in_progress,
+        max(ever_participation) AS ever_participation,
+        max(no_capstone_after_concentration) AS no_capstone_after_concentration,
+        max(intro_only) AS intro_only,
+        CASE WHEN count(DISTINCT cte_pathway) >= 2 THEN 1 ELSE 0 END AS multiple_pathways,
+        CASE WHEN count(DISTINCT cte_pathway) FILTER (WHERE ever_completer = 1) >= 2
+             THEN 1 ELSE 0 END AS multiple_completions
+    FROM pathway_year_flags
+    GROUP BY ssid, school_year
+)
+SELECT
+    s.ssid,
+    s.student_name,
+    s.school,
+    s.enrolled_school,
+    s.grade,
+    s.grade_label,
+    s.grade_display,
+    s.level_band,
+    s.gender,
+    s.race,
+    s.ell,
+    s.sed,
+    s.sped,
+    s.gate,
+    s.foster,
+    s.status,
+    s.district_school,
+    s.school_year,
+    a.pathway_count,
+    a.pathway_list,
+    a.completions,
+    a.completed_pathways,
+    a.ever_completer,
+    a.ever_in_progress,
+    a.ever_participation,
+    a.no_capstone_after_concentration,
+    a.intro_only,
+    a.multiple_pathways,
+    a.multiple_completions,
+    CASE
+        WHEN a.ever_completer = 1 THEN 'CTE Completer'
+        WHEN a.ever_in_progress = 1 THEN 'Capstone (In Progress)'
+        WHEN a.no_capstone_after_concentration = 1 THEN 'Intro + Concentration (No Capstone)'
+        WHEN a.intro_only = 1 THEN 'Intro Only'
+        WHEN a.ever_participation = 1 THEN 'Participation'
+        ELSE 'Other'
+    END AS participation_stage,
+    CASE WHEN a.pathway_count >= 4 THEN '4+' ELSE a.pathway_count::text END AS pathway_count_label,
+    CASE WHEN a.completions >= 3 THEN '3+' ELSE a.completions::text END AS completions_label,
+    s.school_year || ' · ' || CASE
+        WHEN a.ever_completer = 1 THEN 'CTE Completer'
+        WHEN a.ever_in_progress = 1 THEN 'Capstone (In Progress)'
+        WHEN a.no_capstone_after_concentration = 1 THEN 'Intro + Concentration (No Capstone)'
+        WHEN a.intro_only = 1 THEN 'Intro Only'
+        WHEN a.ever_participation = 1 THEN 'Participation'
+        ELSE 'Other'
+    END AS year_stage,
+    s.school_year || ' · ' || s.grade_display AS year_grade,
+    s.school_year || ' · ' ||
+        CASE WHEN a.pathway_count >= 4 THEN '4+' ELSE a.pathway_count::text END AS year_pathway_count,
+    s.school_year || ' · ' ||
+        CASE WHEN a.completions >= 3 THEN '3+' ELSE a.completions::text END AS year_completions
+FROM student_year s
+JOIN student_year_agg a
+    ON a.ssid = s.ssid
+   AND a.school_year = s.school_year
 """
 
 
@@ -334,7 +657,23 @@ _PATHWAY_PROGRAM_COLUMNS = _PATHWAY_COLUMNS + ['migrant', 'program', 'year_progr
 _COURSE_COLUMNS = _STUDENT_COLS + [
     'school_year', 'school_year_label', 'course_code', 'course_name',
     'cte_pathway', 'industry_sector', 'cte_course_level', 'course_enrollment',
-    'year_course_level',
+    'year_course_level', 'industry_pathway_course', 'staff_list',
+]
+_PARTICIPATION_COLUMNS = _STUDENT_COLS + [
+    'pathway_count', 'pathway_list', 'completions', 'completed_pathways',
+    'ever_completer', 'ever_in_progress', 'ever_needs_capstone',
+    'ever_needs_concentration', 'ever_participation', 'currently_in_capstone',
+    'no_capstone_after_concentration', 'intro_only', 'multiple_pathways',
+    'multiple_completions', 'participation_stage', 'pathway_count_label',
+    'completions_label', 'latest_year', 'school_years',
+]
+_PARTICIPATION_YEAR_COLUMNS = _STUDENT_COLS + [
+    'school_year', 'pathway_count', 'pathway_list', 'completions',
+    'completed_pathways', 'ever_completer', 'ever_in_progress',
+    'ever_participation', 'no_capstone_after_concentration', 'intro_only',
+    'multiple_pathways', 'multiple_completions', 'participation_stage',
+    'pathway_count_label', 'completions_label', 'year_stage', 'year_grade',
+    'year_pathway_count', 'year_completions',
 ]
 
 DATASET_SPECS = [
@@ -366,6 +705,28 @@ DATASET_SPECS = [
         ),
         'columns': _PATHWAY_PROGRAM_COLUMNS,
         'sql': _program_sql(),
+        'base_table': 'coursecatalog_cte_details',
+    },
+    {
+        'name': f'{PREFIX} Student Participation',
+        'description': (
+            'One row per CTE student with pathway counts, completion counts, '
+            'intro/concentration/capstone flags, no-capstone-after-concentration '
+            'flag, and multiple-pathway / multiple-completion flags.'
+        ),
+        'columns': _PARTICIPATION_COLUMNS,
+        'sql': _participation_sql(),
+        'base_table': 'coursecatalog_cte_details',
+    },
+    {
+        'name': f'{PREFIX} Student Participation by Year',
+        'description': (
+            'One row per CTE student/school year with that year\'s participation '
+            'stage, pathway count, completion count, and no-capstone / multiple '
+            'flags, for year-grouped participation charts and tables.'
+        ),
+        'columns': _PARTICIPATION_YEAR_COLUMNS,
+        'sql': _participation_year_sql(),
         'base_table': 'coursecatalog_cte_details',
     },
 ]
@@ -458,6 +819,8 @@ def _chart_specs() -> list[dict]:
     pathway_ds = f'{PREFIX} Student Pathways'
     course_ds = f'{PREFIX} Course Enrollment'
     program_ds = f'{PREFIX} Student Program Pathways'
+    participation_ds = f'{PREFIX} Student Participation'
+    participation_year_ds = f'{PREFIX} Student Participation by Year'
     charts = [
         # ── Overview ────────────────────────────────────────────────────
         {
@@ -537,6 +900,147 @@ def _chart_specs() -> list[dict]:
                 sort_col='school_year', sort_dir='asc', legend_pos='right',
                 show_percent=False, y_axis_max=None,
                 **_multi_year(),
+            ),
+        },
+
+        # ── Participation ──────────────────────────────────────────────
+        {
+            'name': f'{PREFIX} Participation Stages by Year',
+            'chart_type': 'stacked_bar',
+            'dataset': participation_year_ds,
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'drill_through_filter_map': {'x_col': 'school_year', 'series_col': 'participation_stage'},
+            'column_defs': {'school_year': 'School Year', 'participation_stage': 'Participation Stage', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Participation Stages by Year',
+                x_col='school_year', y_col='ssid', agg='count_unique',
+                stack_col='participation_stage', series_col='participation_stage',
+                stack_order=list(PARTICIPATION_STAGE_ORDER),
+                color_map=PARTICIPATION_STAGE_COLORS,
+                sort_col='school_year', sort_dir='asc', legend_pos='right',
+                show_percent=False, y_axis_max=None,
+            ),
+        },
+        {
+            'name': f'{PREFIX} Participation Stage by School and Year',
+            'chart_type': 'summary_table',
+            'dataset': participation_year_ds,
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'year_stage': 'Year · Participation Stage'},
+            'config': _summary_cfg(
+                'CTE: Participation Stage by School and Year',
+                'school', 'year_stage',
+                st_col_group_sep=' · ', sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} No-Capstone After Concentration by Year and Grade',
+            'chart_type': 'summary_table',
+            'dataset': participation_year_ds,
+            'source_filters': {'no_capstone_after_concentration': [1]},
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'year_grade': 'Year · Grade'},
+            'config': _summary_cfg(
+                'CTE: Intro + Concentration, No Capstone by Year and Grade',
+                'school', 'year_grade',
+                st_col_group_sep=' · ', sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} Students by Number of Pathways and Year',
+            'chart_type': 'stacked_bar',
+            'dataset': participation_year_ds,
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'drill_through_filter_map': {'x_col': 'school_year', 'series_col': 'pathway_count_label'},
+            'column_defs': {'school_year': 'School Year', 'pathway_count_label': 'Number of Pathways', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Students by Number of Pathways and Year',
+                x_col='school_year', y_col='ssid', agg='count_unique',
+                stack_col='pathway_count_label', series_col='pathway_count_label',
+                stack_order=list(PATHWAY_COUNT_ORDER),
+                sort_col='school_year', sort_dir='asc', legend_pos='right',
+                show_percent=False, y_axis_max=None,
+            ),
+        },
+        {
+            'name': f'{PREFIX} Multiple Pathways by School and Year',
+            'chart_type': 'summary_table',
+            'dataset': participation_year_ds,
+            'source_filters': {'multiple_pathways': [1]},
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'year_pathway_count': 'Year · Number of Pathways'},
+            'config': _summary_cfg(
+                'CTE: Students in Multiple Pathways by School and Year',
+                'school', 'year_pathway_count',
+                st_col_group_sep=' · ', sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} Students by Number of Completions and Year',
+            'chart_type': 'stacked_bar',
+            'dataset': participation_year_ds,
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'drill_through_filter_map': {'x_col': 'school_year', 'series_col': 'completions_label'},
+            'column_defs': {'school_year': 'School Year', 'completions_label': 'Completed Pathways', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Students by Number of Completed Pathways and Year',
+                x_col='school_year', y_col='ssid', agg='count_unique',
+                stack_col='completions_label', series_col='completions_label',
+                stack_order=list(COMPLETION_COUNT_ORDER),
+                sort_col='school_year', sort_dir='asc', legend_pos='right',
+                show_percent=False, y_axis_max=None,
+            ),
+        },
+        {
+            'name': f'{PREFIX} Multiple Completions by School and Year',
+            'chart_type': 'summary_table',
+            'dataset': participation_year_ds,
+            'source_filters': {'multiple_completions': [1]},
+            'drill_columns': _PARTICIPATION_YEAR_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'year_completions': 'Year · Completed Pathways'},
+            'config': _summary_cfg(
+                'CTE: Students with Multiple Completions by School and Year',
+                'school', 'year_completions',
+                st_col_group_sep=' · ', sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} No-Capstone After Concentration (Last 3 Years)',
+            'chart_type': 'summary_table',
+            'dataset': participation_ds,
+            'source_filters': {'no_capstone_after_concentration': [1]},
+            'drill_columns': _PARTICIPATION_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'grade_display': 'Grade'},
+            'config': _summary_cfg(
+                'CTE: Intro + Concentration, No Capstone (Last 3 Years)',
+                'school', 'grade_display',
+                st_col_order=list(GRADE_ORDER), sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} Multiple Pathways (Last 3 Years)',
+            'chart_type': 'summary_table',
+            'dataset': participation_ds,
+            'source_filters': {'multiple_pathways': [1]},
+            'drill_columns': _PARTICIPATION_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'pathway_count_label': 'Number of Pathways'},
+            'config': _summary_cfg(
+                'CTE: Students in Multiple Pathways (Last 3 Years)',
+                'school', 'pathway_count_label',
+                st_col_order=['2', '3', '4+'], sort_col='__alpha__',
+            ),
+        },
+        {
+            'name': f'{PREFIX} Multiple Completions (Last 3 Years)',
+            'chart_type': 'summary_table',
+            'dataset': participation_ds,
+            'source_filters': {'multiple_completions': [1]},
+            'drill_columns': _PARTICIPATION_COLUMNS,
+            'column_defs': {'school': 'CTE School', 'completions_label': 'Completed Pathways'},
+            'config': _summary_cfg(
+                'CTE: Students with Multiple Completions (Last 3 Years)',
+                'school', 'completions_label',
+                st_col_order=['2', '3+'], sort_col='__alpha__',
             ),
         },
 
@@ -629,15 +1133,28 @@ def _chart_specs() -> list[dict]:
             ),
         },
         {
-            'name': f'{PREFIX} Course Enrollment by Course and Year',
-            'chart_type': 'summary_table',
+            'name': f'{PREFIX} Course Enrollment by Industry, Pathway, Course, and Staff',
+            'chart_type': 'dynamic_summary_table',
             'dataset': course_ds,
             'drill_columns': _COURSE_COLUMNS,
-            'column_defs': {'course_name': 'CTE Course', 'school_year': 'School Year'},
-            'config': _summary_cfg(
-                'CTE: Course Enrollment by Course and Year',
-                'course_name', 'school_year', sort_col='__alpha__',
-            ),
+            'column_defs': {
+                'industry_sector': 'Industry Sector',
+                'cte_pathway': 'Career Pathway',
+                'course_name': 'CTE Course',
+                'staff_list': 'Staff',
+                'school_year': 'School Year',
+            },
+            'config': {
+                'chart_type': 'dynamic_summary_table',
+                'chart_title': 'CTE: Course Enrollment by Industry, Pathway, Course, and Staff',
+                'st_row_cols': ['industry_sector', 'cte_pathway', 'course_name', 'staff_list'],
+                'st_col_cols': ['school_year'],
+                'st_agg_func': 'count',
+                'st_value_col': '',
+                'st_show_row_totals': True,
+                'st_show_col_totals': True,
+                'sort_col': '__alpha__',
+            },
         },
         {
             'name': f'{PREFIX} Course Enrollment by Pathway, Year, and Level',
@@ -729,17 +1246,19 @@ def _chart_specs() -> list[dict]:
         # ── Demographics: race ──────────────────────────────────────────
         {
             'name': f'{PREFIX} Students by Race',
-            'chart_type': 'bar',
+            'chart_type': 'stacked_bar',
             'dataset': pathway_ds,
             'drill_columns': _PATHWAY_COLUMNS,
-            'drill_through_filter_map': {'x_col': 'race', 'series_col': ''},
-            'column_defs': {'race': 'Race', 'ssid': 'Students'},
-            'config': _base_cfg(
-                'CTE: Students by Race',
+            'drill_through_filter_map': {'x_col': 'race', 'series_col': 'school_year'},
+            'column_defs': {'race': 'Race', 'school_year': 'School Year', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Students by Race and Year',
                 x_col='race', y_col='ssid', agg='count_unique',
+                stack_col='school_year', series_col='school_year',
                 bar_orientation='horizontal',
                 sort_col='__manual__', category_order=list(RACE_ORDER),
-                x_label_rotation=0,
+                x_label_rotation=0, legend_pos='right',
+                show_percent=False, y_axis_max=None,
             ),
         },
         {
@@ -774,17 +1293,38 @@ def _chart_specs() -> list[dict]:
 
         # ── Demographics: student programs ──────────────────────────────
         {
+            'name': f'{PREFIX} Students by ELL Status',
+            'chart_type': 'stacked_bar',
+            'dataset': pathway_ds,
+            'drill_columns': _PATHWAY_COLUMNS,
+            'drill_through_filter_map': {'x_col': 'ell', 'series_col': 'school_year'},
+            'column_defs': {'ell': 'ELL Status', 'school_year': 'School Year', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Students by ELL Status and Year',
+                x_col='ell', y_col='ssid', agg='count_unique',
+                stack_col='school_year', series_col='school_year',
+                bar_orientation='horizontal',
+                sort_col='__manual__', category_order=list(ELL_ORDER),
+                data_labels=True, label_position='inside',
+                x_label_rotation=0, legend_pos='right',
+                show_percent=False, y_axis_max=None,
+            ),
+        },
+        {
             'name': f'{PREFIX} Students by Student Program',
-            'chart_type': 'bar',
+            'chart_type': 'stacked_bar',
             'dataset': program_ds,
             'drill_columns': _PATHWAY_PROGRAM_COLUMNS,
-            'drill_through_filter_map': {'x_col': 'program', 'series_col': ''},
-            'column_defs': {'program': 'Student Program', 'ssid': 'Students'},
-            'config': _base_cfg(
-                'CTE: Students by Student Program',
+            'drill_through_filter_map': {'x_col': 'program', 'series_col': 'school_year'},
+            'column_defs': {'program': 'Student Program', 'school_year': 'School Year', 'ssid': 'Students'},
+            'config': _stacked_cfg(
+                'CTE: Students by Student Program and Year',
                 x_col='program', y_col='ssid', agg='count_unique',
+                stack_col='school_year', series_col='school_year',
                 bar_orientation='horizontal',
                 sort_col='__manual__', category_order=list(PROGRAM_ORDER),
+                legend_pos='right',
+                show_percent=False, y_axis_max=None,
             ),
         },
         {
@@ -824,9 +1364,9 @@ def _chart_specs() -> list[dict]:
             'drill_through_filter_map': {'x_col': 'industry_sector', 'series_col': 'program'},
             'column_defs': {'industry_sector': 'Industry Sector', 'program': 'Student Program', 'ssid': 'Students'},
             'config': _stacked_cfg(
-                'CTE: Industry Participation by Student Program',
+                'CTE: Industry Participation by Student Program and Year',
                 x_col='industry_sector', y_col='ssid', agg='count_unique',
-                stack_col='program', series_col='program',
+                stack_col='program', series_col='program', group_col='school_year',
                 bar_orientation='horizontal',
                 stack_order=list(PROGRAM_ORDER), color_map=PROGRAM_COLORS,
                 sort_col='industry_sector', legend_pos='right',
@@ -868,26 +1408,34 @@ PAGE_SPEC = {
     'slug': PAGE_SLUG,
     'folder': 'College & Career Readiness',
     'description': (
-        'CTE participation and course enrollment by school, grade, pathway, industry '
-        'sector, and course level. Charts and tables use the most recent three years; '
+        'CTE participation and course enrollment by CTE course site, grade, pathway, '
+        'industry sector, and course level. School means the school where the CTE '
+        'course is offered (not the student enrollment school). Charts and tables use '
+        'the most recent three years; '
         'year-grouped tables show the year header with the measurement beneath it. '
-        'Tracks pathway completion status over time, current on-track students, and '
-        'past CTE completers. The Demographics tab compares participation by race and '
+        'The Participation tab groups students by pathway stage (completer, capstone, '
+        'intro + concentration without capstone, intro only) by school year, and flags '
+        'students in multiple pathways or with multiple completions. Tracks pathway completion '
+        'status over time, current on-track students, and past CTE completers. '
+        'The Demographics tab compares participation by race and '
         'by student program membership (ELL, GATE, SED, SPED, Migrant, Foster). '
         'Click a chart or table cell to drill into CTE records.'
     ),
     'page_filters': [
         {
-            'id': 'school', 'label': 'School (CTE year)', 'source_col': 'school',
+            'id': 'school', 'label': 'CTE School (course site)', 'source_col': 'school',
             'source_table': 'coursecatalog_cte_details',
-            'source_distinct_sql': """
-SELECT DISTINCT coalesce(cs.school, d.school, 'Non-DS School') AS v
+            'source_distinct_sql': f"""
+WITH
+{_YEAR_WINDOW_CTE}
+SELECT DISTINCT coalesce(d.school, cs.school, 'Non-DS School') AS v
 FROM coursecatalog_cte_details d
 LEFT JOIN current_student cs
     ON cs.ssid = nullif(btrim(d.state_student_id), '')
    AND substring(cs.school_year, 1, 4) = d.school_year
 WHERE d.school_year IS NOT NULL AND btrim(d.school_year) <> ''
-  AND trim(coalesce(cs.school, d.school, '')) <> ''
+  AND d.school_year IN (SELECT split_part(school_year, '-', 1) FROM year_window)
+  AND trim(coalesce(d.school, cs.school, '')) <> ''
 ORDER BY v
 """,
             'widget': 'multi', 'default_val': '', 'hidden': False,
@@ -896,12 +1444,15 @@ ORDER BY v
             'id': 'enrolled_school', 'label': 'Enrolled School (current)',
             'source_col': 'enrolled_school', 'source_table': 'coursecatalog_cte_details',
             'source_distinct_sql': f"""
+WITH
+{_YEAR_WINDOW_CTE}
 SELECT DISTINCT coalesce(cc.school, 'Non-DS School') AS v
 FROM coursecatalog_cte_details d
 LEFT JOIN current_student cc
     ON cc.ssid = nullif(btrim(d.state_student_id), '')
    AND cc.school_year = '{THIS_YEAR}'
 WHERE d.school_year IS NOT NULL AND btrim(d.school_year) <> ''
+  AND d.school_year IN (SELECT split_part(school_year, '-', 1) FROM year_window)
   AND trim(coalesce(cc.school, '')) <> ''
 ORDER BY v
 """,
@@ -910,13 +1461,16 @@ ORDER BY v
         {
             'id': 'grade', 'label': 'Grade (CTE year)', 'source_col': 'grade_label',
             'source_table': 'coursecatalog_cte_details',
-            'source_distinct_sql': """
+            'source_distinct_sql': f"""
+WITH
+{_YEAR_WINDOW_CTE}
 SELECT DISTINCT coalesce(cs.grade, d.grade, '') AS v
 FROM coursecatalog_cte_details d
 LEFT JOIN current_student cs
     ON cs.ssid = nullif(btrim(d.state_student_id), '')
    AND substring(cs.school_year, 1, 4) = d.school_year
 WHERE d.school_year IS NOT NULL AND btrim(d.school_year) <> ''
+  AND d.school_year IN (SELECT split_part(school_year, '-', 1) FROM year_window)
   AND trim(coalesce(cs.grade, d.grade, '')) <> ''
 ORDER BY v
 """,
@@ -927,12 +1481,15 @@ ORDER BY v
                 'id': col, 'label': label, 'source_col': col,
                 'source_table': 'coursecatalog_cte_details',
                 'source_distinct_sql': f"""
+WITH
+{_YEAR_WINDOW_CTE}
 SELECT DISTINCT coalesce(cs.{col}, '') AS v
 FROM coursecatalog_cte_details d
 LEFT JOIN current_student cs
     ON cs.ssid = nullif(btrim(d.state_student_id), '')
    AND substring(cs.school_year, 1, 4) = d.school_year
 WHERE d.school_year IS NOT NULL AND btrim(d.school_year) <> ''
+  AND d.school_year IN (SELECT split_part(school_year, '-', 1) FROM year_window)
   AND trim(coalesce(cs.{col}, '')) <> ''
 ORDER BY v
 """,
@@ -948,8 +1505,8 @@ ORDER BY v
         ],
     ],
     'tabs': [
-        'Overview', 'Pathways & Industry', 'Courses', 'Completion',
-        'Demographics', 'Detail Tables',
+        'Overview', 'Participation', 'Pathways & Industry', 'Courses',
+        'Completion', 'Demographics', 'Detail Tables',
     ],
     'rows': [
         {'tab': 'Overview', 'label': 'Participation', 'sections': [
@@ -964,6 +1521,36 @@ ORDER BY v
         ]},
         {'tab': 'Overview', 'label': 'Industry participation over the years', 'sections': [
             {'chart': f'{PREFIX} Pathway Participation by Industry over the Years', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+        ]},
+        {'tab': 'Participation', 'label': 'Participation stages by year', 'sections': [
+            {'chart': f'{PREFIX} Participation Stages by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+        ]},
+        {'tab': 'Participation', 'label': 'Participation stage by school and year', 'sections': [
+            {'chart': f'{PREFIX} Participation Stage by School and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 14},
+        ]},
+        {'tab': 'Participation', 'label': 'Intro + concentration, no capstone by year and grade', 'sections': [
+            {'chart': f'{PREFIX} No-Capstone After Concentration by Year and Grade', 'gs_x': 0, 'gs_w': 12, 'gs_h': 14},
+        ]},
+        {'tab': 'Participation', 'label': 'Students by number of pathways and year', 'sections': [
+            {'chart': f'{PREFIX} Students by Number of Pathways and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+        ]},
+        {'tab': 'Participation', 'label': 'Multiple pathways by school and year', 'sections': [
+            {'chart': f'{PREFIX} Multiple Pathways by School and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+        ]},
+        {'tab': 'Participation', 'label': 'Students by number of completions and year', 'sections': [
+            {'chart': f'{PREFIX} Students by Number of Completions and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+        ]},
+        {'tab': 'Participation', 'label': 'Multiple completions by school and year', 'sections': [
+            {'chart': f'{PREFIX} Multiple Completions by School and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+        ]},
+        {'tab': 'Participation', 'label': 'No capstone after concentration (last 3 years)', 'sections': [
+            {'chart': f'{PREFIX} No-Capstone After Concentration (Last 3 Years)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+        ]},
+        {'tab': 'Participation', 'label': 'Multiple pathways (last 3 years)', 'sections': [
+            {'chart': f'{PREFIX} Multiple Pathways (Last 3 Years)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+        ]},
+        {'tab': 'Participation', 'label': 'Multiple completions (last 3 years)', 'sections': [
+            {'chart': f'{PREFIX} Multiple Completions (Last 3 Years)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
         ]},
         {'tab': 'Pathways & Industry', 'label': 'Career pathways by year', 'sections': [
             {'chart': f'{PREFIX} Students by Career Pathway', 'gs_x': 0, 'gs_w': 12, 'gs_h': 14},
@@ -983,8 +1570,8 @@ ORDER BY v
         {'tab': 'Courses', 'label': 'Top courses', 'sections': [
             {'chart': f'{PREFIX} Top CTE Courses by Enrollment', 'gs_x': 0, 'gs_w': 12, 'gs_h': 14},
         ]},
-        {'tab': 'Courses', 'label': 'Course enrollment by course and year', 'sections': [
-            {'chart': f'{PREFIX} Course Enrollment by Course and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 24},
+        {'tab': 'Courses', 'label': 'Course enrollment by industry, pathway, course, and staff', 'sections': [
+            {'chart': f'{PREFIX} Course Enrollment by Industry, Pathway, Course, and Staff', 'gs_x': 0, 'gs_w': 12, 'gs_h': 30},
         ]},
         {'tab': 'Courses', 'label': 'Course enrollment by pathway, year, and level', 'sections': [
             {'chart': f'{PREFIX} Course Enrollment by Pathway, Year, and Level', 'gs_x': 0, 'gs_w': 12, 'gs_h': 18},
@@ -1012,6 +1599,9 @@ ORDER BY v
         ]},
         {'tab': 'Demographics', 'label': 'Pathway participation by race', 'sections': [
             {'chart': f'{PREFIX} Pathway Participation by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 18},
+        ]},
+        {'tab': 'Demographics', 'label': 'Students by ELL status', 'sections': [
+            {'chart': f'{PREFIX} Students by ELL Status', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
         ]},
         {'tab': 'Demographics', 'label': 'Students by student program', 'sections': [
             {'chart': f'{PREFIX} Students by Student Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
@@ -1106,6 +1696,24 @@ def enable_dataset_tables():
         print(f'Enabled dataset tables: {", ".join(added)}')
 
 
+def _year_window(limit: int = 3) -> list[str]:
+    """Return the current school year plus the prior (limit - 1) years."""
+    from dataexploration.constants import SY_THIS_YEAR
+    from dataexploration.school_year_utils import resolve_school_year
+
+    current = resolve_school_year(SY_THIS_YEAR)
+    try:
+        start = int(str(current)[:4])
+    except (TypeError, ValueError):
+        return []
+    if start <= 0:
+        return []
+    return [
+        f'{start - i}-{start - i + 1}'
+        for i in range(limit - 1, -1, -1)
+    ]
+
+
 def _course_years() -> list[str]:
     from dataviz.utils.data_loader import run_raw_sql
 
@@ -1151,11 +1759,19 @@ def _course_schools() -> list[str]:
     from dataviz.utils.data_loader import run_raw_sql
 
     res = run_raw_sql("""
-        SELECT DISTINCT coalesce(cs.school, s.school_name, 'Non-DS School') AS school
+        SELECT DISTINCT coalesce(
+            nullif(btrim(sch.school_name), ''),
+            nullif(btrim(s.school_name), ''),
+            cs.school,
+            'Non-DS School'
+        ) AS school
         FROM schedule_list s
         JOIN coursecatalog_cte_pathways cte
             ON cte.course_id IS NOT NULL AND btrim(cte.course_id) <> ''
            AND cte.course_id = nullif(btrim(s.course_code), '')
+        LEFT JOIN school sch
+            ON sch.state_id = s.state_school_id
+           AND sch.short_name = s.school_name
         LEFT JOIN current_student cs
             ON cs.stu_annual_key = s.stu_annual_key
            AND cs.school_year = s.school_year
@@ -1182,6 +1798,8 @@ def _school_year_category_order(years: list[str]) -> list[str]:
 def _prepare_charts(course_years: list[str], detail_years: list[str]) -> list[dict]:
     pathway_ds = f'{PREFIX} Student Pathways'
     program_ds = f'{PREFIX} Student Program Pathways'
+    participation_ds = f'{PREFIX} Student Participation'
+    participation_year_ds = f'{PREFIX} Student Participation by Year'
     course_years = list(course_years)[-3:]
     detail_years = list(detail_years)[-3:]
     all_years = sorted({*course_years, *detail_years})
@@ -1194,12 +1812,16 @@ def _prepare_charts(course_years: list[str], detail_years: list[str]) -> list[di
         st_row = str(cfg.get('st_row_col') or '')
         st_col = str(cfg.get('st_col_col') or '')
         dataset = item.get('dataset')
-        chart_years = detail_years if dataset in (pathway_ds, program_ds) else course_years
 
-        # Every chart/table uses only the most recent three years of its dataset.
-        sf = dict(item.get('source_filters') or {})
-        sf['school_year'] = list(chart_years)
-        item['source_filters'] = sf
+        if dataset == participation_ds:
+            chart_years = []
+        elif dataset in (pathway_ds, program_ds, participation_year_ds):
+            chart_years = detail_years
+        else:
+            chart_years = course_years
+
+        # Datasets are limited to the dynamic last-three-year window in SQL, so
+        # charts never bake a school-year filter into their saved config.
 
         if x_col == 'school_year':
             cfg['x_value_map'] = alias_map
@@ -1212,6 +1834,15 @@ def _prepare_charts(course_years: list[str], detail_years: list[str]) -> list[di
         elif x_col == 'grade_display':
             cfg['category_order'] = list(GRADE_ORDER)
             cfg['sort_col'] = '__manual__'
+        elif x_col == 'participation_stage':
+            cfg['category_order'] = list(PARTICIPATION_STAGE_ORDER)
+            cfg['sort_col'] = '__manual__'
+        elif x_col == 'pathway_count_label':
+            cfg['category_order'] = list(PATHWAY_COUNT_ORDER)
+            cfg['sort_col'] = '__manual__'
+        elif x_col == 'completions_label':
+            cfg['category_order'] = list(COMPLETION_COUNT_ORDER)
+            cfg['sort_col'] = '__manual__'
 
         if str(cfg.get('stack_col') or '') == 'school_year':
             cfg['stack_order'] = list(chart_years)
@@ -1221,6 +1852,14 @@ def _prepare_charts(course_years: list[str], detail_years: list[str]) -> list[di
             cfg['sort_col'] = '__manual__'
         if st_col == 'school_year':
             cfg['st_col_order'] = list(chart_years)
+        elif st_col == 'participation_stage':
+            cfg['st_col_order'] = list(PARTICIPATION_STAGE_ORDER)
+        elif st_col == 'grade_display':
+            cfg['st_col_order'] = list(GRADE_ORDER)
+        elif st_col == 'pathway_count_label':
+            cfg['st_col_order'] = ['2', '3', '4+']
+        elif st_col == 'completions_label':
+            cfg['st_col_order'] = ['2', '3+']
 
         composite_orders = {
             'year_grade': GRADE_ORDER,
@@ -1228,6 +1867,9 @@ def _prepare_charts(course_years: list[str], detail_years: list[str]) -> list[di
             'year_program': PROGRAM_ORDER,
             'year_completion': COMPLETION_ORDER,
             'year_course_level': COURSE_LEVEL_ORDER,
+            'year_stage': PARTICIPATION_STAGE_ORDER,
+            'year_pathway_count': ['2', '3', '4+'],
+            'year_completions': ['2', '3+'],
         }
         if st_col in composite_orders:
             cfg['st_col_order'] = [
@@ -1401,21 +2043,27 @@ def qa_dataviz() -> int:
 
     print('=== QA: dataset counts ===')
     for spec in DATASET_SPECS:
-        res = run_raw_sql(f"""
-            SELECT school_year, count(*) AS n_rows, count(DISTINCT ssid) AS n_stu
-            FROM ({spec['sql']}) q GROUP BY school_year ORDER BY school_year
-        """)
+        if 'school_year' in spec['columns']:
+            res = run_raw_sql(f"""
+                SELECT school_year, count(*) AS n_rows, count(DISTINCT ssid) AS n_stu
+                FROM ({spec['sql']}) q GROUP BY school_year ORDER BY school_year
+            """)
+        else:
+            res = run_raw_sql(f"""
+                SELECT count(*) AS n_rows, count(DISTINCT ssid) AS n_stu
+                FROM ({spec['sql']}) q
+            """)
         if res.get('error'):
             fail(f'{spec["name"]}: {res["error"]}')
         else:
             for r in res.get('rows') or []:
-                print(f'  ok  {spec["name"]} {r["school_year"]}: {r["n_rows"]} rows / {r["n_stu"]} students')
+                label = r.get('school_year', 'all years')
+                print(f'  ok  {spec["name"]} {label}: {r["n_rows"]} rows / {r["n_stu"]} students')
 
     print('=== QA: chart columns and drill maps ===')
     columns = {s['name']: set(s['columns']) for s in DATASET_SPECS}
-    course_years = _course_years()
-    detail_years = _detail_years()
-    for spec in _prepare_charts(course_years, detail_years):
+    years = _year_window()
+    for spec in _prepare_charts(years, years):
         name = spec['name']
         cols = columns[spec['dataset']]
         refs = set(spec.get('drill_columns') or [])
@@ -1467,6 +2115,27 @@ def qa_dataviz() -> int:
         for r in res.get('rows') or []:
             print(f'  ok  program {r["program"]}: {r["n_stu"]} students')
 
+    print('=== QA: student participation ===')
+    res = run_raw_sql(f"""
+        SELECT
+            participation_stage,
+            count(*) AS n_stu,
+            count(*) FILTER (WHERE no_capstone_after_concentration = 1) AS no_capstone,
+            count(*) FILTER (WHERE multiple_pathways = 1) AS multiple_pathways,
+            count(*) FILTER (WHERE multiple_completions = 1) AS multiple_completions
+        FROM ({_participation_sql()}) q
+        GROUP BY participation_stage ORDER BY n_stu DESC
+    """)
+    if res.get('error'):
+        fail(f'participation: {res["error"]}')
+    else:
+        for r in res.get('rows') or []:
+            print(
+                f'  ok  stage {r["participation_stage"]}: {r["n_stu"]} students'
+                f' (no capstone {r["no_capstone"]}, multi-pathway {r["multiple_pathways"]},'
+                f' multi-completion {r["multiple_completions"]})'
+            )
+
     if failures:
         print(f'\nQA FAILED ({len(failures)} issue(s)).')
         return 1
@@ -1488,15 +2157,13 @@ def main():
     print(f'Using owner: {owner}')
 
     enable_dataset_tables()
-    course_years = _course_years()
-    detail_years = _detail_years()
-    print(f'CTE course years: {course_years}')
-    print(f'CTE detail years: {detail_years}')
+    years = _year_window()
+    print(f'CTE year window: {years}')
 
     datasets = {spec['name']: upsert_dataset(spec, owner) for spec in DATASET_SPECS}
     charts = {
         spec['name']: upsert_chart(spec, datasets, owner)
-        for spec in _prepare_charts(course_years, detail_years)
+        for spec in _prepare_charts(years, years)
     }
     page = upsert_page(charts, owner)
     cleanup_stale_charts(charts.keys())

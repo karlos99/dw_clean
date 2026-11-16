@@ -23,6 +23,7 @@ from .models import (
     APExamCode, APAwardType, APImportLog, APStudentAward, APExamResult, APImportStatus,
     SATImportLog, SATResult, SATSettings, SATImportStatus,
     SAT_PERCENTILE_REGIONS, SAT_PERCENTILE_METRICS,
+    PSATImportLog, PSATResult, PSATImportStatus,
     IBImportLog, IBExamResult, IBImportStatus,
 )
 from .utils.column_analyzer import analyze_csv, AnalysisResult
@@ -155,6 +156,43 @@ def _normalize_sat_import(obj):
     }
 
 
+def _normalize_psat_import(obj):
+    return {
+        'type': 'psat',
+        'type_label': 'PSAT',
+        'type_badge': 'bg-sky-100 text-sky-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Records',
+        'metric_value': obj.records_created,
+        'metric_note': (
+            f"{obj.get_psat_type_display()} · +{obj.records_skipped} skipped"
+            if obj.records_skipped
+            else obj.get_psat_type_display()
+        ),
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:psat_import_detail', args=[obj.pk]),
+        'progress_url': (
+            reverse('dataLoader:psat_import_progress', args=[obj.pk])
+            if obj.status == 'PROCESSING'
+            else None
+        ),
+        'delete_url': reverse('dataLoader:psat_delete_import', args=[obj.pk]),
+        'publish_url': (
+            reverse('dataLoader:psat_toggle_publish', args=[obj.pk])
+            if obj.status == 'COMPLETED'
+            else None
+        ),
+        'publish_css': 'bg-sky-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
 def _normalize_ib_import(obj):
     return {
         'type': 'ib',
@@ -191,6 +229,8 @@ def _build_loader_cards():
     sat_published = SATImportLog.objects.filter(is_published=True).count()
     ib_count = IBImportLog.objects.count()
     ib_published = IBImportLog.objects.filter(is_published=True).count()
+    psat_count = PSATImportLog.objects.count()
+    psat_published = PSATImportLog.objects.filter(is_published=True).count()
 
     return [
         {
@@ -243,6 +283,18 @@ def _build_loader_cards():
             'count': ib_count,
             'published': ib_published,
         },
+        {
+            'key': 'psat',
+            'name': 'PSAT',
+            'description': 'College Board PSAT 8/9 and PSAT/NMSQT results with scores and JSON response detail.',
+            'upload_url': reverse('dataLoader:psat_upload'),
+            'accent': 'sky',
+            'button_css': 'bg-sky-600 hover:bg-sky-700 focus:ring-sky-500',
+            'icon_bg': 'bg-sky-100',
+            'icon_css': 'text-sky-600',
+            'count': psat_count,
+            'published': psat_published,
+        },
     ]
 
 
@@ -267,17 +319,21 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
         ib_imports = list(
             IBImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
         )
+        psat_imports = list(
+            PSATImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
 
         recent = (
             [_normalize_survey_import(o) for o in survey_imports]
             + [_normalize_ap_import(o) for o in ap_imports]
             + [_normalize_sat_import(o) for o in sat_imports]
             + [_normalize_ib_import(o) for o in ib_imports]
+            + [_normalize_psat_import(o) for o in psat_imports]
         )
         recent.sort(key=lambda r: r['uploaded_at'], reverse=True)
 
         type_filter = self.request.GET.get('type', '').strip().lower()
-        if type_filter in ('survey', 'ap', 'sat', 'ib'):
+        if type_filter in ('survey', 'ap', 'sat', 'ib', 'psat'):
             recent = [r for r in recent if r['type'] == type_filter]
 
         paginator = Paginator(recent, self.page_size)
@@ -292,12 +348,14 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
             + APImportLog.objects.count()
             + SATImportLog.objects.count()
             + IBImportLog.objects.count()
+            + PSATImportLog.objects.count()
         )
         context['published_import_count'] = (
             ImportLog.objects.filter(ready_for_exploration=True).count()
             + APImportLog.objects.filter(is_published=True).count()
             + SATImportLog.objects.filter(is_published=True).count()
             + IBImportLog.objects.filter(is_published=True).count()
+            + PSATImportLog.objects.filter(is_published=True).count()
         )
         context['survey_definitions'] = SurveyDefinition.objects.filter(
             is_active=True
@@ -309,11 +367,13 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
                 + APImportLog.objects.count()
                 + SATImportLog.objects.count()
                 + IBImportLog.objects.count()
+                + PSATImportLog.objects.count()
             ),
             'survey': ImportLog.objects.count(),
             'ap': APImportLog.objects.count(),
             'sat': SATImportLog.objects.count(),
             'ib': IBImportLog.objects.count(),
+            'psat': PSATImportLog.objects.count(),
         }
         return context
 
@@ -1969,6 +2029,485 @@ def _invalidate_sat_caches():
         cache.delete_pattern('dv_sat_cols*')
     except Exception:
         pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PSAT Results import
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _invalidate_psat_caches():
+    """Invalidate cached PSAT column structures so publish changes reflect immediately."""
+    from django.core.cache import cache
+    try:
+        cache.delete_pattern('psat_columns*')
+        cache.delete_pattern('dv_psat_cols*')
+        cache.delete_pattern('*dataexp:column_structures_html*')
+    except Exception:
+        pass
+
+
+def _resolve_psat_school_year(selected_year: str, inferred_year: str) -> tuple[str, str]:
+    """Resolve the school year used for a PSAT import.
+
+    Returns ``(effective_year, original_year)``. When the selected year has no
+    student records yet (for example the newest, still-empty year at the top of
+    the dropdown) but the year inferred from the file's test/report date does,
+    the inferred year is used so scores are tagged against the right year.
+    """
+    if not inferred_year or inferred_year == selected_year:
+        return selected_year, selected_year
+
+    from studata.models import CurrentStudent, StudentEnroll
+
+    def _has_students(year):
+        return (
+            StudentEnroll.objects.filter(school_year=year).exists()
+            or CurrentStudent.objects.filter(school_year=year).exists()
+        )
+
+    if not _has_students(selected_year) and _has_students(inferred_year):
+        return inferred_year, selected_year
+    return selected_year, selected_year
+
+
+class PSATUploadView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/psat_upload.html'
+
+    def get(self, request):
+        return render(request, self.template_name, {
+            'school_year_choices': get_school_year_choices(),
+        })
+
+    def post(self, request):
+        name = request.POST.get('name', '').strip()
+        school_year = request.POST.get('school_year', '')
+        csv_file = request.FILES.get('csv_file')
+
+        errors = []
+        if not name:
+            errors.append('Upload name is required')
+        if not school_year:
+            errors.append('School year is required')
+        if not csv_file:
+            errors.append('CSV file is required')
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return redirect('dataLoader:psat_upload')
+
+        try:
+            file_content = csv_file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            csv_file.seek(0)
+            try:
+                file_content = csv_file.read().decode('latin-1')
+            except Exception as e:
+                messages.error(request, f'Could not decode CSV file: {e}')
+                return redirect('dataLoader:psat_upload')
+
+        file_hash = hashlib.sha256(file_content.encode()).hexdigest()
+
+        tmp_dir = os.path.join(tempfile.gettempdir(), 'psat_uploads')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f'{file_hash}.csv')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(file_content)
+
+        from .utils.psat_column_analyzer import analyze_psat_csv
+        from .utils.sat_school_resolver import resolve_school_short_name
+
+        try:
+            analysis = analyze_psat_csv(file_content, csv_file.name)
+        except Exception as e:
+            messages.error(request, f'Could not analyze CSV: {e}')
+            return redirect('dataLoader:psat_upload')
+
+        # The PSAT test date determines the school year. If the selected year
+        # has no student data yet (e.g. a future year that is still empty),
+        # fall back to the year inferred from the file so SSID matching works.
+        inferred_school_year = analysis.inferred_school_year
+        school_year, school_year_original = _resolve_psat_school_year(
+            school_year, inferred_school_year
+        )
+        if school_year != school_year_original:
+            messages.warning(
+                request,
+                f'No student records exist for {school_year_original}. '
+                f'Using {school_year}, inferred from the PSAT test date.'
+            )
+
+        request.session['psat_upload_data'] = {
+            'name': name,
+            'school_year': school_year,
+            'school_year_original': school_year_original,
+            'inferred_school_year': inferred_school_year,
+            'filename': csv_file.name,
+            'file_hash': file_hash,
+            'tmp_path': tmp_path,
+            'analysis': {
+                'psat_type': analysis.psat_type,
+                'psat_type_label': analysis.psat_type_label,
+                'student_columns': analysis.student_columns,
+                'score_columns': analysis.score_columns,
+                'total_students': analysis.total_students,
+                'total_with_scores': analysis.total_with_scores,
+                'total_missing_state_id': analysis.total_missing_state_id,
+                'header_row_index': analysis.header_row_index,
+                'total_columns': analysis.total_columns,
+                'inferred_school_year': analysis.inferred_school_year,
+                'warnings': analysis.warnings,
+                'sample_students': [
+                    {
+                        'last_name': s.last_name,
+                        'first_name': s.first_name,
+                        'state_student_id': s.state_student_id,
+                        'district_student_id': s.district_student_id,
+                        'cb_id': s.cb_id,
+                        'dob': s.dob,
+                        'school_code': s.school_code,
+                        'school_name': resolve_school_short_name(s.school_name, s.school_code),
+                        'test_date': s.test_date,
+                        'total_score': s.total_score,
+                        'ebrw_score': s.ebrw_score,
+                        'math_score': s.math_score,
+                    }
+                    for s in analysis.sample_students
+                ],
+            },
+        }
+
+        return redirect('dataLoader:psat_preview')
+
+
+class PSATPreviewView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/psat_preview.html'
+
+    def get(self, request):
+        upload_data = request.session.get('psat_upload_data')
+        if not upload_data:
+            messages.warning(request, 'No upload data found. Please upload a file first.')
+            return redirect('dataLoader:psat_upload')
+
+        from .utils.psat_student_matcher import (
+            PSATStudentMatcher,
+            _normalize_ssid,
+            _normalize_student_id,
+        )
+        from .utils.psat_column_analyzer import parse_psat_csv_rows
+        from .utils.sat_column_analyzer import parse_date, parse_int, _to_str
+        from .utils.psat_response_loader import build_record_key
+        from .utils.sat_school_resolver import resolve_school_short_name
+
+        matcher = PSATStudentMatcher(upload_data['school_year'])
+        analysis = upload_data['analysis']
+        psat_type = analysis.get('psat_type', 'PSAT89')
+        diagnostics = []
+
+        db_students = matcher.total_current_students_loaded
+        db_enrollments = matcher.total_enrollment_loaded
+        diagnostics.append(
+            f"student_enroll: {db_enrollments} rows, current_student: {db_students} rows "
+            f"for {upload_data['school_year']} "
+            f"(STATE_STUDENT_ID→ssid, DISTRICT_STUDENT_ID→student_id)"
+        )
+        if db_students == 0 and db_enrollments == 0:
+            diagnostics.append(
+                f"WARNING: No student records exist for {upload_data['school_year']}. "
+                "SSIDs will still be matched against every school year, but the "
+                "selected year has no enrollment data."
+            )
+
+        inferred_school_year = (
+            upload_data.get('inferred_school_year')
+            or analysis.get('inferred_school_year', '')
+        )
+
+        try:
+            tmp_path = upload_data.get('tmp_path', '')
+            if tmp_path and os.path.exists(tmp_path):
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+            else:
+                file_content = upload_data.get('file_content', '')
+        except Exception as e:
+            diagnostics.append(f'ERROR reading file: {e}')
+            file_content = upload_data.get('file_content', '')
+
+        rows = list(parse_psat_csv_rows(file_content, analysis['header_row_index']))
+        diagnostics.append(
+            f"Detected {analysis.get('psat_type_label', 'PSAT')}; "
+            f"{len(rows)} rows, {analysis.get('total_with_scores', 0)} with scores"
+        )
+
+        if not inferred_school_year:
+            from .utils.psat_column_analyzer import school_year_for_date
+
+            dates = [
+                parse_date(row.get('LATEST_PSAT_DATE', '')) for row in rows
+            ]
+            dates = [d for d in dates if d]
+            if not dates:
+                dates = [parse_date(row.get('REPORT_DATE', '')) for row in rows]
+                dates = [d for d in dates if d]
+            if dates:
+                inferred_school_year = school_year_for_date(max(dates))
+                upload_data['inferred_school_year'] = inferred_school_year
+
+        if inferred_school_year and inferred_school_year != upload_data['school_year']:
+            diagnostics.append(
+                f"WARNING: The file's test/report date suggests school year "
+                f"{inferred_school_year}, but {upload_data['school_year']} was selected."
+            )
+
+        matched_count = 0
+        unmatched_students = []
+
+        for row in rows:
+            state_student_id = _normalize_ssid(row.get('STATE_STUDENT_ID', ''))
+            district_student_id = _normalize_student_id(row.get('DISTRICT_STUDENT_ID', ''))
+            cb_id = _to_str(row.get('CB_ID', ''))
+            last_name = _to_str(row.get('NAME_LAST', ''))
+            first_name = _to_str(row.get('NAME_FIRST', ''))
+            school_code = _to_str(row.get('AI_CODE', ''))
+            school_name = resolve_school_short_name(_to_str(row.get('AI_NAME', '')), school_code)
+            dob_date = parse_date(row.get('BIRTH_DATE', ''))
+            test_date = parse_date(row.get('LATEST_PSAT_DATE', ''))
+
+            if not state_student_id and not district_student_id and not cb_id and not last_name and not first_name:
+                continue
+
+            record_key = build_record_key(
+                psat_type,
+                cb_id,
+                state_student_id,
+                district_student_id,
+                last_name,
+                first_name,
+                dob_date.isoformat() if dob_date else '',
+                test_date.isoformat() if test_date else '',
+            )
+
+            result = matcher.match_student(
+                record_key=record_key,
+                state_student_id=state_student_id,
+                district_student_id=district_student_id,
+                first_name=first_name,
+                last_name=last_name,
+                dob=dob_date.isoformat() if dob_date else '',
+                school=school_name,
+                cb_id=cb_id,
+            )
+
+            if result.matched:
+                matched_count += 1
+            else:
+                unmatched_students.append({
+                    'record_key': record_key,
+                    'state_student_id': state_student_id,
+                    'district_student_id': district_student_id,
+                    'cb_id': cb_id,
+                    'last_name': last_name,
+                    'first_name': first_name,
+                    'dob': dob_date.isoformat() if dob_date else '',
+                    'school': school_name,
+                    'total_score': parse_int(row.get('LATEST_PSAT_TOTAL', '')),
+                    'reason': result.reason or 'No match found',
+                })
+
+        return render(request, self.template_name, {
+            'upload_data': upload_data,
+            'analysis': analysis,
+            'matched_count': matched_count,
+            'unmatched_count': len(unmatched_students),
+            'unmatched_students': unmatched_students[:200],
+            'total_students': analysis.get('total_students', 0),
+            'total_with_scores': analysis.get('total_with_scores', 0),
+            'total_missing_state_id': analysis.get('total_missing_state_id', 0),
+            'total_sis_students': db_students,
+            'total_enrollment_students': db_enrollments,
+            'has_year_students': bool(db_students or db_enrollments),
+            'inferred_school_year': inferred_school_year,
+            'diagnostics': diagnostics,
+        })
+
+    def post(self, request):
+        upload_data = request.session.get('psat_upload_data')
+        if not upload_data:
+            messages.error(request, 'Upload data expired. Please upload again.')
+            return redirect('dataLoader:psat_upload')
+
+        manual_overrides = {}
+        for key, value in request.POST.items():
+            if key.startswith('ssid_override_') and value.strip():
+                record_key = key.replace('ssid_override_', '')
+                manual_overrides[record_key] = value.strip()
+
+        analysis = upload_data['analysis']
+
+        tmp_path = upload_data.get('tmp_path', '')
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+        else:
+            file_content = upload_data.get('file_content', '')
+
+        # Older preview sessions may not have stored the inferred year; derive it
+        # from the file so an empty/wrong selection cannot mis-tag the import.
+        inferred_school_year = (
+            upload_data.get('inferred_school_year')
+            or analysis.get('inferred_school_year', '')
+        )
+        if not inferred_school_year and file_content:
+            try:
+                from .utils.psat_column_analyzer import analyze_psat_csv
+
+                inferred_school_year = analyze_psat_csv(
+                    file_content, upload_data.get('filename', '')
+                ).inferred_school_year
+            except Exception:
+                inferred_school_year = ''
+
+        school_year, school_year_original = _resolve_psat_school_year(
+            upload_data['school_year'], inferred_school_year
+        )
+
+        psat_import_log = PSATImportLog.objects.create(
+            name=upload_data['name'],
+            school_year=school_year,
+            psat_type=analysis.get('psat_type', 'PSAT89'),
+            filename=upload_data['filename'],
+            file_hash=upload_data['file_hash'],
+            uploaded_by=request.user,
+            status=PSATImportStatus.PENDING,
+            manual_overrides=manual_overrides,
+        )
+        if school_year != school_year_original:
+            messages.info(
+                request,
+                f'Import tagged as {school_year} (inferred from the PSAT test date).'
+            )
+
+        from .utils.psat_response_loader import run_psat_import_async
+
+        run_psat_import_async(
+            import_log_id=psat_import_log.pk,
+            file_content=file_content,
+            analysis_data={**analysis, 'inferred_school_year': inferred_school_year},
+            user_id=request.user.pk,
+        )
+
+        del request.session['psat_upload_data']
+        messages.info(request, 'PSAT import started! Progress will update automatically.')
+        return redirect('dataLoader:psat_import_progress', pk=psat_import_log.pk)
+
+
+@project_admin_required
+def psat_student_search(request):
+    first_name = request.GET.get('first_name', '').strip()
+    last_name = request.GET.get('last_name', '').strip()
+    school_year = request.GET.get('school_year', '').strip()
+
+    if not school_year:
+        return JsonResponse({'error': 'School year is required'}, status=400)
+
+    from .utils.psat_student_matcher import PSATStudentMatcher
+    matcher = PSATStudentMatcher(school_year)
+    return JsonResponse({'students': matcher.search_students(first_name=first_name, last_name=last_name)})
+
+
+class PSATImportDetailView(ProjectAdminRequiredMixin, DetailView):
+    model = PSATImportLog
+    template_name = 'dataLoader/psat_import_detail.html'
+    context_object_name = 'import_log'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        import_log = self.object
+        context['psat_results'] = PSATResult.objects.filter(import_log=import_log)[:50]
+        total = import_log.students_matched + import_log.students_unmatched
+        context['match_rate'] = round((import_log.students_matched / total) * 100) if total else 0
+        return context
+
+
+class PSATImportProgressView(ProjectAdminRequiredMixin, DetailView):
+    model = PSATImportLog
+    template_name = 'dataLoader/psat_import_progress.html'
+    context_object_name = 'import_log'
+
+
+@project_admin_required
+def psat_import_status(request, pk):
+    import_log = get_object_or_404(PSATImportLog, pk=pk)
+    progress = 0
+    if import_log.total_students > 0:
+        progress = int((import_log.records_processed / import_log.total_students) * 100)
+    return JsonResponse({
+        'status': import_log.status,
+        'status_display': import_log.get_status_display(),
+        'records_processed': import_log.records_processed,
+        'total_students': import_log.total_students,
+        'records_detected': import_log.records_detected,
+        'records_created': import_log.records_created,
+        'records_skipped': import_log.records_skipped,
+        'students_matched': import_log.students_matched,
+        'students_unmatched': import_log.students_unmatched,
+        'error_count': import_log.error_count,
+        'progress': progress,
+        'is_complete': import_log.status in [
+            PSATImportStatus.COMPLETED, PSATImportStatus.FAILED, PSATImportStatus.PARTIAL,
+        ],
+    })
+
+
+@project_admin_required
+def psat_delete_import(request, pk):
+    psat_import_log = get_object_or_404(PSATImportLog, pk=pk)
+    if request.method == 'POST':
+        name = psat_import_log.name
+        record_count = PSATResult.objects.filter(import_log=psat_import_log).count()
+        psat_import_log.delete()
+        _invalidate_psat_caches()
+        from .utils.psat_response_loader import run_psat_clickhouse_sync_async
+        run_psat_clickhouse_sync_async()
+        messages.success(request, f"Deleted PSAT import '{name}' and {record_count:,} PSAT results.")
+        return redirect('dataLoader:dashboard')
+
+    return render(request, 'dataLoader/psat_delete_confirm.html', {
+        'import_log': psat_import_log,
+        'record_count': PSATResult.objects.filter(import_log=psat_import_log).count(),
+    })
+
+
+@project_admin_required
+def psat_toggle_publish(request, pk):
+    psat_import_log = get_object_or_404(PSATImportLog, pk=pk)
+    if request.method != 'POST':
+        return redirect('dataLoader:psat_import_detail', pk=pk)
+
+    if psat_import_log.status != PSATImportStatus.COMPLETED:
+        messages.error(request, 'Only completed PSAT imports can be published.')
+        return redirect('dataLoader:psat_import_detail', pk=pk)
+
+    if psat_import_log.is_published:
+        psat_import_log.is_published = False
+        psat_import_log.published_at = None
+        psat_import_log.published_by = None
+        psat_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{psat_import_log.name}' unpublished.")
+    else:
+        psat_import_log.is_published = True
+        psat_import_log.published_at = timezone.now()
+        psat_import_log.published_by = request.user
+        psat_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{psat_import_log.name}' is marked published.")
+
+    _invalidate_psat_caches()
+
+    from .utils.psat_response_loader import run_psat_clickhouse_sync_async
+    run_psat_clickhouse_sync_async()
+
+    return redirect('dataLoader:psat_import_detail', pk=pk)
 
 
 # ── International Baccalaureate (IB) Data Loader views ──

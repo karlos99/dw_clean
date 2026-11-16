@@ -10,6 +10,8 @@ from ..column_utils import (
     get_mark_columns,
     parse_sat_column_key,
     sat_column_db_field,
+    parse_psat_column_key,
+    psat_column_db_field,
     parse_apall_sort_key,
     _normalise_markall_course_picker,
 )
@@ -779,6 +781,30 @@ def apply_column_filters(
             conditions = []
             if real_values:
                 conditions.append(f"cs.ssid IN ({sub_base} AND r.{sat_db_field}::text = ANY(%s))")
+                params.extend(sub_params + [[str(v) for v in real_values]])
+            if has_blank:
+                conditions.append(f"cs.ssid NOT IN ({sub_base})")
+                params.extend(sub_params)
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('psat_'):
+            parsed = parse_psat_column_key(col)
+            if not parsed:
+                continue
+            psat_db_field = psat_column_db_field(col)
+            if not psat_db_field:
+                continue
+            sub_base = (
+                "SELECT r.ssid FROM \"dataLoader_psatresult\" r "
+                "INNER JOIN \"dataLoader_psatimportlog\" il ON r.import_log_id = il.id "
+                "WHERE r.school_year = %s AND r.psat_type = %s AND il.is_published = true "
+            )
+            sub_params = [parsed['year'], parsed['psat_type']]
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base} AND r.{psat_db_field}::text = ANY(%s))")
                 params.extend(sub_params + [[str(v) for v in real_values]])
             if has_blank:
                 conditions.append(f"cs.ssid NOT IN ({sub_base})")
