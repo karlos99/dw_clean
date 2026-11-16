@@ -2168,11 +2168,8 @@ def warm_published_page_charts(limit=200, warm_schools=True):
             _timing_log.exception('op=warm_published_page_charts chart_id=%s school_id=%s', c_id, sch_id)
             return False
         finally:
-            try:
-                from django.db import connections
-                connections['default'].close()
-            except Exception:
-                pass
+            from clickhouse_utils.thread_pool import close_thread_db_connection
+            close_thread_db_connection()
 
     if len(tasks) <= 1:
         warmed = sum(1 for t in tasks if _warm_one(t))
@@ -2711,7 +2708,7 @@ def chart_batch_render_api(request):
         )
         permitted = allowed
 
-    from clickhouse_utils.thread_pool import get_io_pool
+    from clickhouse_utils.thread_pool import get_io_pool, close_thread_db_connection
     pool = get_io_pool()
 
     def _one(cid):
@@ -2735,6 +2732,8 @@ def chart_batch_render_api(request):
             }
         except Exception as exc:
             return cid, {'html': '', 'error': str(exc)}
+        finally:
+            close_thread_db_connection()
 
     futures = [pool.submit(_one, cid) for cid in chart_ids]
     charts = {}

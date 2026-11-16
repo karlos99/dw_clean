@@ -92,6 +92,15 @@ class ThreadPoolSizingTests(SimpleTestCase):
         from clickhouse_utils.thread_pool import get_io_pool
         self.assertEqual(get_io_pool()._max_workers, 8)
 
+    def test_close_thread_db_connection_calls_default_close(self):
+        from unittest.mock import patch
+        from clickhouse_utils.thread_pool import close_thread_db_connection
+
+        mock_conn = Mock()
+        with patch('django.db.connections', {'default': mock_conn}):
+            close_thread_db_connection()
+        mock_conn.close.assert_called_once()
+
 
 class ClickHouseClientHealthTests(SimpleTestCase):
     def tearDown(self):
