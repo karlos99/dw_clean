@@ -149,6 +149,9 @@ def _deduplicate_count_drill_rows(rows, chart):
     if not rows:
         return rows
 
+    if (chart.config or {}).get('drill_show_detail_rows'):
+        return rows
+
     if (chart.config or {}).get('one_row_per_stu_annual_key'):
         from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
         return dedupe_rows_by_stu_annual_key(rows)

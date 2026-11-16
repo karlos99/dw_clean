@@ -65,6 +65,16 @@ _STUDENT_SELECT = """
     if(dsch.state_id != '', 1, 0) AS district_school
 """
 
+_ENROLLED_GRADE_LABEL_SQL = """
+    multiIf(
+        upper(trim(ifNull(cc.grade, ''))) IN ('TK'), 'TK',
+        upper(trim(ifNull(cc.grade, ''))) IN ('KN', 'K', 'KG'), 'KN',
+        match(trim(ifNull(cc.grade, '')), '^[0-9]+$'),
+        lpad(toString(toInt32OrZero(trim(cc.grade))), 2, '0'),
+        if(trim(ifNull(cc.grade, '')) = '', 'Unknown', trim(cc.grade))
+    )
+"""
+
 _AP_JOINS = """
 FROM analytics_ap_results AS r
 LEFT JOIN current_student AS cs
@@ -127,6 +137,14 @@ SELECT
     r.exam_id AS exam_id,
     1 AS exam_count,
 {_STUDENT_SELECT},
+    if(trim(coalesce(cc.school, '')) != '', 1, 0) AS enrolled_current,
+    ({_ENROLLED_GRADE_LABEL_SQL}) AS enrolled_grade_label,
+    transform(
+        ({_ENROLLED_GRADE_LABEL_SQL}),
+        ['KN','01','02','03','04','05','06','07','08','09','10','11','12'],
+        ['Kindergarten','1st','2nd','3rd','4th','5th','6th','7th','8th','9th','10th','11th','12th'],
+        if(trim(ifNull(cc.grade, '')) = '', 'Unknown', trim(cc.grade))
+    ) AS enrolled_grade_display,
     if(r.admin_year IN (SELECT admin_year FROM recent_years), 1, 0) AS recent3
 """
 
@@ -160,6 +178,17 @@ _EXAM_PROGRAM_DRILL = _EXAM_DRILL + ['migrant', 'program']
 _STUDENT_DRILL = _STUDENT_SELECT_COLS + [
     'test_year', 'exam_count', 'best_score', 'scored_3_plus', 'scored_3_plus_pct',
 ]
+_STUDENT_CAREER_DRILL = [
+    'ssid', 'student_name', 'enrolled_school', 'enrolled_grade_label', 'enrolled_grade_display',
+    'gender', 'race', 'ell', 'sed', 'sped', 'gate', 'foster', 'status', 'district_school',
+    'ap_years', 'exam_count', 'exams_scored_3_plus', 'best_score',
+    'enrolled_current', 'two_plus_exams', 'two_plus_scored_3_plus',
+]
+_MULTI_EXAM_DRILL = [
+    'ssid', 'student_name', 'enrolled_school', 'enrolled_grade_display',
+    'test_year', 'exam_name', 'exam_grade', 'subject_exam',
+]
+_EXAM_CAREER_EXTRA = ['two_plus_exams', 'two_plus_scored_3_plus']
 _AWARD_DRILL = _STUDENT_SELECT_COLS + ['test_year', 'award_description']
 
 PL_COLORS = {
@@ -269,6 +298,54 @@ FROM (
     {_exam_results_sql()}
 )
 GROUP BY ssid, test_year
+"""
+
+
+def _student_career_sql() -> str:
+    """One row per student: AP exams and 3+ counts across all admin years."""
+    return f"""
+SELECT
+    ap.ssid AS ssid,
+    any(ap.student_name) AS student_name,
+    argMax(ap.enrolled_school, ap.enrolled_current) AS enrolled_school,
+    argMax(ap.enrolled_grade_label, ap.enrolled_current) AS enrolled_grade_label,
+    argMax(ap.enrolled_grade_display, ap.enrolled_current) AS enrolled_grade_display,
+    argMax(ap.gender, ap.enrolled_current) AS gender,
+    argMax(ap.race, ap.enrolled_current) AS race,
+    argMax(ap.ell, ap.enrolled_current) AS ell,
+    argMax(ap.sed, ap.enrolled_current) AS sed,
+    argMax(ap.sped, ap.enrolled_current) AS sped,
+    argMax(ap.gate, ap.enrolled_current) AS gate,
+    argMax(ap.foster, ap.enrolled_current) AS foster,
+    argMax(ap.status, ap.enrolled_current) AS status,
+    maxIf(ap.district_school, ap.enrolled_current = 1) AS district_school,
+    uniqExact(ap.test_year) AS ap_years,
+    count() AS exam_count,
+    max(ap.score_num) AS best_score,
+    uniqIf(ap.exam_id, ap.score_num >= 3 AND ap.score_valid = 1) AS exams_scored_3_plus,
+    max(ap.enrolled_current) AS enrolled_current,
+    if(count() >= 2, 1, 0) AS two_plus_exams,
+    if(uniqIf(ap.exam_id, ap.score_num >= 3 AND ap.score_valid = 1) >= 2, 1, 0) AS two_plus_scored_3_plus
+FROM (
+    {_exam_results_sql()}
+) AS ap
+GROUP BY ap.ssid
+"""
+
+
+def _exam_career_enriched_sql() -> str:
+    """Exam-level rows with per-student career qualification flags for filtering."""
+    return f"""
+SELECT
+    ex.*,
+    car.two_plus_exams AS two_plus_exams,
+    car.two_plus_scored_3_plus AS two_plus_scored_3_plus
+FROM (
+    {_exam_results_sql()}
+) AS ex
+INNER JOIN (
+    {_student_career_sql()}
+) AS car ON car.ssid = ex.ssid
 """
 
 
@@ -387,6 +464,24 @@ DATASET_SPECS = [
         'sql': _student_results_sql(),
     },
     {
+        'name': f'{AP_PREFIX} Student Career',
+        'description': (
+            'One row per student with AP exams and 3+ performance summed across '
+            'all years; current enrollment school and grade.'
+        ),
+        'columns': _STUDENT_CAREER_DRILL,
+        'sql': _student_career_sql(),
+    },
+    {
+        'name': f'{AP_PREFIX} Exam Results (Career)',
+        'description': (
+            'One row per AP exam with career qualification flags '
+            '(2+ exams, 2+ scores of 3+) for multi-exam performance charts.'
+        ),
+        'columns': _EXAM_DRILL + _EXAM_CAREER_EXTRA,
+        'sql': _exam_career_enriched_sql(),
+    },
+    {
         'name': f'{AP_PREFIX} Scholar Awards',
         'description': 'One row per AP Scholar award by student and award year.',
         'columns': _AWARD_DRILL,
@@ -398,6 +493,8 @@ DATASET_SPECS = [
 def _chart_specs() -> list[dict]:
     exam_ds = f'{AP_PREFIX} Exam Results'
     student_ds = f'{AP_PREFIX} Student Results'
+    career_ds = f'{AP_PREFIX} Student Career'
+    exam_career_ds = f'{AP_PREFIX} Exam Results (Career)'
     award_ds = f'{AP_PREFIX} Scholar Awards'
     program_ds = f'{AP_PREFIX} Student Program Results'
     charts = [
@@ -470,6 +567,42 @@ def _chart_specs() -> list[dict]:
                 show_axis_labels=False, show_axis_titles=False,
                 x_label_rotation=0, x_label_font_size=14,
                 **_multi_year(),
+            ),
+        },
+        {
+            'name': f'{AP_PREFIX} Multi-Exam 3+ (Currently Enrolled)',
+            'chart_type': 'bar',
+            'dataset': exam_career_ds,
+            'source_filters': {
+                'district_school': [1],
+                'enrolled_current': [1],
+                'two_plus_exams': [1],
+                'two_plus_scored_3_plus': [1],
+            },
+            'drill_columns': _MULTI_EXAM_DRILL,
+            'drill_through_filter_map': {
+                'x_col': 'enrolled_school,enrolled_grade_display', 'series_col': '',
+            },
+            'column_defs': {
+                'enrolled_school': 'School (current enrollment)',
+                'enrolled_grade_display': 'Grade',
+                'ssid': 'Students',
+                'test_year': 'AP Year',
+                'exam_name': 'AP Exam',
+                'exam_grade': 'Score',
+                'subject_exam': 'Subject / Exam',
+            },
+            'config': _base_cfg(
+                'AP: Currently Enrolled — 2+ Exams (All Years) with 3+ on 2+ Exams',
+                x_col='enrolled_school,enrolled_grade_display', y_col='ssid', agg='count_unique',
+                one_row_per_ssid=True,
+                drill_show_detail_rows=True,
+                sort_col='__manual__', category_order=[],
+                group_gap=4, group_gap_size=1, bar_category_gap='4',
+                center_group_labels=True, force_show_all_labels=True,
+                show_axis_labels=False, show_axis_titles=False,
+                x_label_rotation=0, x_label_font_size=14,
+                skip_page_filters=['test_year', 'school_year'],
             ),
         },
         {
@@ -633,7 +766,8 @@ PAGE_SPEC = {
     'slug': 'ap-results',
     'folder': CHART_FOLDER,
     'description': (
-        'Advanced Placement participation, exam counts, 3+ performance, AP Scholar '
+        'Advanced Placement participation, exam counts, 3+ performance, multi-exam '
+        'success for currently enrolled students, AP Scholar '
         'awards, assessment-based pass rates by school and exam, subject performance, and school-level exam history. All charts and tables use all available AP years; '
         'year is shown directly in the performance and detail tables. School is the enrollment school in the AP year. '
         'Enrolled School (current) filters by the current enrollment school. '
@@ -714,6 +848,9 @@ ORDER BY v
             {'chart': f'{AP_PREFIX} Students Scoring 3+ by School', 'gs_x': 0, 'gs_w': 6, 'gs_h': 9},
             {'chart': f'{AP_PREFIX} Pass Rate by School', 'gs_x': 6, 'gs_w': 6, 'gs_h': 9},
         ]},
+        {'tab': 'Performance', 'label': 'Multi-exam success (currently enrolled)', 'sections': [
+            {'chart': f'{AP_PREFIX} Multi-Exam 3+ (Currently Enrolled)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+        ]},
         {'tab': 'Performance', 'label': 'Pass rate by exam — Part 1', 'sections': [
             {'chart': f'{AP_PREFIX} Pass Rate by Exam (Part 1)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
         ]},
@@ -775,6 +912,42 @@ def _recent_years(limit: int = 5) -> list[str]:
     """)
     years = [str(r['y']).strip() for r in res.get('rows') or [] if r.get('y')]
     return list(reversed(years))
+
+
+def _enrolled_school_grade_category_order(dataset_name: str) -> list[str]:
+    """School-major axis order so grouped school headers stay contiguous on the chart."""
+    from dataviz.utils.data_loader import run_raw_sql
+
+    ds_sql = next(s['sql'] for s in DATASET_SPECS if s['name'] == dataset_name)
+    res = run_raw_sql(f"""
+        SELECT DISTINCT
+            enrolled_school AS school,
+            enrolled_grade_display AS grade
+        FROM ({ds_sql})
+        WHERE enrolled_current = 1
+          AND two_plus_exams = 1
+          AND two_plus_scored_3_plus = 1
+        ORDER BY school, grade
+    """)
+    if res.get('error'):
+        return []
+    by_school: dict[str, set[str]] = {}
+    for row in res.get('rows') or []:
+        school = str(row.get('school') or '').strip()
+        grade = str(row.get('grade') or '').strip()
+        if not school or not grade:
+            continue
+        by_school.setdefault(school, set()).add(grade)
+    grade_rank = {g: i for i, g in enumerate(GRADE_ORDER)}
+
+    def _grade_key(g: str) -> tuple:
+        return (grade_rank.get(g, 999), g)
+
+    out: list[str] = []
+    for school in sorted(by_school):
+        for grade in sorted(by_school[school], key=_grade_key):
+            out.append(f'{school} · {grade}')
+    return out
 
 
 def _school_year_category_order(dataset_name: str, years: list[str]) -> list[str]:
@@ -848,6 +1021,9 @@ def _prepare_charts(years: list[str]) -> list[dict]:
             item['source_filters'] = sf
         if str(cfg.get('x_col') or '').replace(' ', '') == 'school,test_year':
             cfg['category_order'] = _school_year_category_order(item['dataset'], chart_years)
+            cfg['sort_col'] = '__manual__'
+        elif str(cfg.get('x_col') or '').replace(' ', '') == 'enrolled_school,enrolled_grade_display':
+            cfg['category_order'] = _enrolled_school_grade_category_order(item['dataset'])
             cfg['sort_col'] = '__manual__'
         elif str(cfg.get('x_col') or '').replace(' ', '') == 'exam_name,test_year':
             from dataviz.utils.data_loader import run_raw_sql
@@ -1078,23 +1254,33 @@ def qa_dataviz() -> int:
 
     print('=== QA: dataset counts ===')
     ds_map = {s['name']: s['sql'] for s in DATASET_SPECS}
+    columns = {s['name']: set(s['columns']) for s in DATASET_SPECS}
     for name, sql in ds_map.items():
-        res = run_raw_sql(f"""
-            SELECT test_year, count() AS n_rows, uniqExact(ssid) AS n_stu
-            FROM ({sql}) GROUP BY test_year ORDER BY test_year
-        """)
+        if 'test_year' in columns[name]:
+            res = run_raw_sql(f"""
+                SELECT test_year, count() AS n_rows, uniqExact(ssid) AS n_stu
+                FROM ({sql}) GROUP BY test_year ORDER BY test_year
+            """)
+        else:
+            res = run_raw_sql(f"""
+                SELECT count() AS n_rows, uniqExact(ssid) AS n_stu
+                FROM ({sql})
+            """)
         if res.get('error'):
             fail(f'{name}: {res["error"]}')
         else:
             for r in res.get('rows') or []:
-                print(f'  ok  {name} {r["test_year"]}: {r["n_rows"]} rows / {r["n_stu"]} students')
+                if 'test_year' in r:
+                    print(f'  ok  {name} {r["test_year"]}: {r["n_rows"]} rows / {r["n_stu"]} students')
+                else:
+                    print(f'  ok  {name}: {r["n_rows"]} rows / {r["n_stu"]} students')
 
     print('=== QA: chart references and drill maps ===')
-    columns = {s['name']: set(s['columns']) for s in DATASET_SPECS}
+    drill_cols = {s['name']: set(s['columns']) for s in DATASET_SPECS}
     years = _recent_years()
     for spec in _prepare_charts(years):
         name = spec['name']
-        cols = columns[spec['dataset']]
+        cols = drill_cols[spec['dataset']]
         refs = set(spec.get('drill_columns') or [])
         for key in ('x_col', 'y_col', 'stack_col', 'series_col', 'group_col',
                     'st_row_col', 'st_col_col', 'st_value_col'):
