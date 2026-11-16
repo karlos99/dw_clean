@@ -19,6 +19,7 @@ recommend.py          ``recommend_chart_types`` / ``auto_describe_chart``
 from .constants import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403
 from .charts import *  # noqa: F401,F403
+from .sankey import *  # noqa: F401,F403
 from .tables import *  # noqa: F401,F403
 from .progress_growth import *  # noqa: F401,F403
 from .assessment_compare import *  # noqa: F401,F403

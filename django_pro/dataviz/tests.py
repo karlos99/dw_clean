@@ -5433,3 +5433,268 @@ class ChartIndexListTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.chart.refresh_from_db()
         self.assertFalse(self.chart.is_user_menu)
+
+
+class SankeyChartBuilderTests(SimpleTestCase):
+    """The Sankey pathway builder accepts JSON, delimited and column paths."""
+
+    @staticmethod
+    def _pathways():
+        return [
+            {
+                'school_and_college_history': json.dumps({
+                    'grade_5': 'Johnson',
+                    'grade_8': 'Indio MS',
+                    'high_school': 'Summit',
+                    'college': 'COLLEGE OF THE DESERT',
+                    'college_sequence': 0,
+                    'colleges': [{'college': 'COLLEGE OF THE DESERT', 'college_sequence': 0}],
+                }),
+                'first_post_hs_college_name': 'COLLEGE OF THE DESERT',
+                'first_post_hs_college_type': '2-Year',
+                'first_post_hs_college_control': 'Public',
+                'first_post_hs_college_state': 'CA',
+            },
+            {
+                'school_and_college_history': json.dumps({
+                    'grade_5': 'Truman',
+                    'grade_8': 'La Quinta MS',
+                    'high_school': 'Summit',
+                    'college': 'CALIFORNIA STATE UNIVERSITY - SAN BERNARDINO',
+                    'college_sequence': 1,
+                    'colleges': [
+                        {'college': 'COLLEGE OF THE DESERT', 'college_sequence': 0},
+                        {'college': 'CALIFORNIA STATE UNIVERSITY - SAN BERNARDINO', 'college_sequence': 1},
+                    ],
+                }),
+                'first_post_hs_college_name': 'COLLEGE OF THE DESERT',
+                'first_post_hs_college_type': '2-Year',
+                'first_post_hs_college_control': 'Public',
+                'first_post_hs_college_state': 'CA',
+            },
+            {
+                'school_and_college_history': json.dumps({
+                    'grade_5': 'Carter',
+                    'grade_8': 'Palm Desert Charter',
+                    'high_school': 'Summit',
+                    'college': 'UNIVERSITY OF CALIFORNIA - RIVERSIDE',
+                    'college_sequence': 1,
+                    'colleges': [
+                        {'college': 'UNIVERSITY OF CALIFORNIA - RIVERSIDE', 'college_sequence': 1},
+                    ],
+                }),
+                'first_post_hs_college_name': 'UNIVERSITY OF CALIFORNIA - RIVERSIDE',
+                'first_post_hs_college_type': '4-Year',
+                'first_post_hs_college_control': 'Public',
+                'first_post_hs_college_state': 'CA',
+            },
+        ]
+
+    def test_json_object_builds_stages_and_college_trajectory(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._pathways(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'school_and_college_history',
+        })
+        series = opt['series'][0]
+        names = [node['name'] for node in series['data']]
+        links = {(link['source'], link['target']): link['value'] for link in series['links']}
+
+        self.assertIn('Elementary · Johnson', names)
+        self.assertIn('College 2 · CALIFORNIA STATE UNIVERSITY - SAN BERNARDINO', names)
+        self.assertEqual(
+            links[('High School · Summit', 'College 1 · COLLEGE OF THE DESERT')],
+            2.0,
+        )
+        self.assertEqual(
+            links[(
+                'College 1 · COLLEGE OF THE DESERT',
+                'College 2 · CALIFORNIA STATE UNIVERSITY - SAN BERNARDINO',
+            )],
+            1.0,
+        )
+        self.assertTrue(series['levels'])
+        self.assertTrue(opt['__no_drill__'])
+
+    def test_college_type_filter_narrows_population(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._pathways(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'school_and_college_history',
+            'sk_college_types': ['4-Year'],
+        })
+        node_names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('Elementary · Carter', node_names)
+        self.assertNotIn('Elementary · Johnson', node_names)
+
+    def test_college_system_filter_uses_name_classifier(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._pathways(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'school_and_college_history',
+            'sk_college_systems': ['UC'],
+        })
+        node_names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('College 1 · UNIVERSITY OF CALIFORNIA - RIVERSIDE', node_names)
+        self.assertNotIn('College 1 · COLLEGE OF THE DESERT', node_names)
+
+    def test_delimited_path_uses_college_stage_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'path': 'Seq 1: COLLEGE OF THE DESERT -> Seq 2: CSU SAN BERNARDINO'}]
+        opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        link = opt['series'][0]['links'][0]
+        self.assertEqual(link['source'], 'College 1 · COLLEGE OF THE DESERT')
+        self.assertEqual(link['target'], 'College 2 · CSU SAN BERNARDINO')
+
+    def test_several_stage_columns(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'grade_5': 'Johnson', 'grade_8': 'Indio MS', 'high_school': 'Summit'}]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_stage_cols': ['grade_5', 'grade_8', 'high_school'],
+        })
+        links = [(l['source'], l['target']) for l in opt['series'][0]['links']]
+        self.assertIn(('Elementary · Johnson', 'Middle School · Indio MS'), links)
+        self.assertIn(('Middle School · Indio MS', 'High School · Summit'), links)
+
+    def test_blank_stage_keeps_the_flow_connected(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{
+            'path': json.dumps({
+                'grade_5': None,
+                'grade_8': 'Indio MS',
+                'high_school': 'Summit',
+                'colleges': [],
+            }),
+        }]
+        opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('Elementary · (Not reported)', names)
+        self.assertIn('Middle School · Indio MS', names)
+
+    def test_missing_path_column_returns_message(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option([{'x': 1}], {}, {'chart_type': 'sankey'})
+        self.assertTrue(opt.get('__is_message__'))
+
+
+class SankeyRegistrationTests(SimpleTestCase):
+    def test_chart_type_is_registered(self):
+        from dataviz.utils.chart_builder import CHART_TYPES
+
+        keys = [key for key, _label, _icon, _group in CHART_TYPES]
+        self.assertIn('sankey', keys)
+
+    def test_sankey_query_columns_include_path_and_filters(self):
+        from dataviz.views.api.chart_api import _chart_extra_query_columns
+
+        cfg = {
+            'chart_type': 'sankey',
+            'sk_path_col': 'school_and_college_history',
+            'sk_college_type_source': 'college_type',
+            'sk_filters': [{'col': 'cohort', 'values': ['2022-23']}],
+        }
+        cols = _chart_extra_query_columns(cfg)
+        self.assertIn('school_and_college_history', cols)
+        self.assertIn('college_type', cols)
+        self.assertIn('cohort', cols)
+
+
+class SankeyLayoutTests(SimpleTestCase):
+    """Colour, grouping and stacking behaviour for the Sankey chart."""
+
+    @staticmethod
+    def _rows():
+        def row(grade5, colleges):
+            return {
+                'path': json.dumps({
+                    'grade_5': grade5,
+                    'grade_8': 'Middle',
+                    'high_school': 'High',
+                    'colleges': [{'college': c, 'college_sequence': i} for i, c in enumerate(colleges)],
+                }),
+            }
+        return [
+            row('Johnson', ['Alpha College']),
+            row('Johnson', ['Alpha College']),
+            row('Johnson', ['Bravo College']),
+            row('Truman', ['Charlie College']),
+            row('Truman', ['Delta College']),
+        ]
+
+    def test_first_stage_sorted_by_value_with_distinct_colours(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._rows(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_color_mode': 'node',
+        })
+        series = opt['series'][0]
+        first = [node for node in series['data'] if node['depth'] == 0]
+        self.assertEqual([node['name'] for node in first], [
+            'Elementary · Johnson', 'Elementary · Truman',
+        ])
+        colors = [node['itemStyle']['color'] for node in first]
+        self.assertEqual(len(set(colors)), 2)
+
+    def test_small_colleges_group_into_other(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._rows(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_top_per_stage': 2,
+            'sk_group_after_stage': 1,
+        })
+        series = opt['series'][0]
+        other = [node for node in series['data'] if node['name'] == 'College 1 · Other']
+        self.assertEqual(len(other), 1)
+        # Five distinct college-1 values: the top two stay, three collapse.
+        self.assertEqual(other[0]['value'], 2.0)
+        self.assertEqual(other[0]['itemStyle']['color'], '#94a3b8')
+
+    def test_grouping_can_be_disabled(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._rows(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_top_per_stage': 0,
+        })
+        names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertFalse(any(name.endswith(' · Other') for name in names))
+
+    def test_value_order_stacks_largest_first(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._rows(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_order_mode': 'value',
+        })
+        series = opt['series'][0]
+        college1 = [node for node in series['data'] if node['depth'] == 1]
+        self.assertEqual(college1[0]['name'], 'College 1 · Alpha College')
+        self.assertEqual(college1[0]['value'], 2.0)
+
+    def test_stage_colour_mode_uses_one_colour_per_depth(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._rows(), {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_color_mode': 'stage',
+        })
+        series = opt['series'][0]
+        first = [node for node in series['data'] if node['depth'] == 0]
+        self.assertEqual(len({node['itemStyle']['color'] for node in first}), 1)

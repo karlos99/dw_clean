@@ -987,7 +987,7 @@
     </div>{# /colsOpen wrapper #}
 
     {# ══════════ CENTER: Configuration ══════════ #}
-    <div x-data="{ configOpen: true }" class="flex flex-row flex-shrink-0 relative">
+    <div class="flex flex-row flex-shrink-0 relative">
       {# ── Collapse toggle tab ── #}
       <button type="button" @click="configOpen = !configOpen"
               class="absolute -right-3 top-24 z-10 w-6 h-12 bg-white border border-slate-200
@@ -2054,6 +2054,277 @@
           </p>
         </div>
 
+        {# ── Sankey pathway config — visible only for sankey type ── #}
+        <div x-show="chartType==='sankey'" x-transition class="space-y-4">
+          <p class="text-[10px] text-slate-500 leading-snug">
+            Build a flow from any ordered path. Point <b>Path column</b> at a JSON column (for example
+            <code class="text-[9px] bg-slate-100 px-1 rounded">school_and_college_history</code>) or drag several
+            stage columns into <b>X</b>. When the JSON object has a college list, the college trajectory is appended
+            automatically as College&nbsp;1, College&nbsp;2, …
+            <span class="block mt-1 text-amber-700">For student counts, create the dataset with <b>Distinct off</b> (every row is a student).</span>
+          </p>
+
+          <div>
+            <label class="text-xs font-semibold text-slate-700 mb-1 block">Path Column (JSON / delimited)</label>
+            <select x-model="skPathCol" @change="_schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+              <option value="">— use X stage columns —</option>
+              <template x-for="c in activeCols" :key="'skpath_'+c">
+                <option :value="c" x-text="colLabel(c)"></option>
+              </template>
+            </select>
+            <p class="text-[9px] text-slate-400 mt-0.5">Leave blank when using several ordinary columns as stages.</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Path Format</label>
+              <select x-model="skPathFormat" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="auto">Auto-detect</option>
+                <option value="json">JSON</option>
+                <option value="delimited">Delimited (A → B)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Max College Steps</label>
+              <input type="number" min="0" max="12" x-model.number="skMaxCollegeSteps" @change="_schedulePreview()"
+                     placeholder="0 = auto (4)"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Stage Fields</label>
+              <input type="text" x-model="skStagesText" @input.debounce.300ms="_schedulePreview()"
+                     placeholder="auto: grade_5, grade_8, high_school"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              <p class="text-[9px] text-slate-400 mt-0.5">JSON keys or stage column names, comma separated.</p>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Stage Labels</label>
+              <input type="text" x-model="skStageLabelsText" @input.debounce.300ms="_schedulePreview()"
+                     placeholder="Elementary, Middle School, High School"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">College List Key</label>
+              <input type="text" x-model="skCollegesKey" @input.debounce.300ms="_schedulePreview()"
+                     placeholder="colleges"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">College Name Key</label>
+              <input type="text" x-model="skCollegeNameKey" @input.debounce.300ms="_schedulePreview()"
+                     placeholder="college"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Blank Stage Label</label>
+              <input type="text" x-model="skBlankLabel" @input.debounce.300ms="_schedulePreview()"
+                     placeholder="(Not reported)"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              <p class="text-[9px] text-slate-400 mt-0.5">Empty the field to stop paths at the first missing stage.</p>
+            </div>
+            <label class="flex items-center gap-2 text-xs text-slate-600 pt-5 cursor-pointer">
+              <input type="checkbox" x-model="skCollapseCollege" @change="_schedulePreview()"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Collapse colleges into one stage
+            </label>
+          </div>
+
+          <div class="pt-2 border-t border-slate-100 space-y-2">
+            <label class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+              <span class="w-4 h-4 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold flex items-center justify-center">F</span>
+              College Filters
+            </label>
+            <p class="text-[9px] text-slate-400 leading-snug">
+              Applies to each student's <b>first post-HS college</b> by default (switch to latest below).
+              Filtering never changes the path itself — it only narrows the population.
+            </p>
+
+            <div>
+              <span class="text-[10px] font-semibold text-slate-500 block mb-1">College Type</span>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="val in ['2-Year','4-Year','Less Than 2 Years']" :key="'skt_'+val">
+                  <button type="button" @click="toggleSkValue('skCollegeTypes', val)"
+                          :class="skCollegeTypes.includes(val) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'"
+                          class="text-[10px] border rounded-full px-2 py-0.5 font-medium transition"
+                          x-text="val"></button>
+                </template>
+              </div>
+            </div>
+
+            <div>
+              <span class="text-[10px] font-semibold text-slate-500 block mb-1">College System</span>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="opt in [['UC','UC'],['CSU','CSU'],['CCC','CCC'],['Private','Private'],['Out-of-State','Out of State'],['Other','Other'],['Unknown','Unknown']]" :key="'sks_'+opt[0]">
+                  <button type="button" @click="toggleSkValue('skCollegeSystems', opt[0])"
+                          :class="skCollegeSystems.includes(opt[0]) ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'"
+                          class="text-[10px] border rounded-full px-2 py-0.5 font-medium transition"
+                          x-text="opt[1]"></button>
+                </template>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-500 block mb-1">Filter Scope</label>
+                <select x-model="skCollegeFilterScope" @change="_schedulePreview()"
+                        class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <option value="first">First post-HS college</option>
+                  <option value="latest">Latest college</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-[10px] font-semibold text-slate-500 block mb-1">Type Source Column</label>
+                <select x-model="skCollegeTypeSource" @change="_schedulePreview()"
+                        class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <option value="">auto (first_post_hs_college_type)</option>
+                  <template x-for="c in activeCols" :key="'sktc_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-500 block mb-1">System / Name Source Column</label>
+                <select x-model="skCollegeSystemSource" @change="_schedulePreview()"
+                        class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <option value="">auto (first_post_hs_college_name)</option>
+                  <template x-for="c in activeCols" :key="'sksc_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+              <div>
+                <label class="text-[10px] font-semibold text-slate-500 block mb-1">Control / State Sources</label>
+                <div class="grid grid-cols-2 gap-1">
+                  <select x-model="skCollegeControlSource" @change="_schedulePreview()"
+                          class="w-full text-[10px] border border-slate-300 rounded px-1 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                    <option value="">control</option>
+                    <template x-for="c in activeCols" :key="'skcc_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                  </select>
+                  <select x-model="skCollegeStateSource" @change="_schedulePreview()"
+                          class="w-full text-[10px] border border-slate-300 rounded px-1 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                    <option value="">state</option>
+                    <template x-for="c in activeCols" :key="'skst_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Min Link Value</label>
+              <input type="number" min="1" step="1" x-model.number="skMinLinkValue" @change="_schedulePreview()"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Max Nodes (0 = all)</label>
+              <input type="number" min="0" step="10" x-model.number="skMaxNodes" @change="_schedulePreview()"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Orientation</label>
+              <select x-model="skOrient" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="horizontal">Horizontal</option>
+                <option value="vertical">Vertical</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Node Align</label>
+              <select x-model="skNodeAlign" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+                <option value="justify">Justify</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Label Mode</label>
+              <select x-model="skLabelMode" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="value">Value only</option>
+                <option value="stage">Stage only</option>
+                <option value="full">Stage + value</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Color By</label>
+              <select x-model="skColorMode" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="node">School / College (distinct)</option>
+                <option value="first">First school (cohort)</option>
+                <option value="stage">Stage only</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Node Order</label>
+              <select x-model="skOrderMode" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="value">Largest first</option>
+                <option value="cohort">First-school cohort</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Link Color</label>
+              <select x-model="skLinkColorMode" @change="_schedulePreview()"
+                      class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="source">Source node</option>
+                <option value="gradient">Gradient</option>
+                <option value="target">Target node</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Label Min Students</label>
+              <input type="number" min="0" step="1" x-model.number="skLabelMinValue" @change="_schedulePreview()"
+                     placeholder="5"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              <p class="text-[9px] text-slate-400 mt-0.5">First-stage labels always show; later nodes below this hide their labels.</p>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Top Per College Stage</label>
+              <input type="number" min="1" step="1" x-model.number="skTopPerStage" @change="_schedulePreview()"
+                     :disabled="!skGroupSmall"
+                     :class="!skGroupSmall ? 'opacity-50 cursor-not-allowed' : ''"
+                     placeholder="18"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              <p class="text-[9px] text-slate-400 mt-0.5">The long tail of colleges collapses into “Other”.</p>
+            </div>
+            <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Group From Stage</label>
+              <input type="number" min="0" step="1" x-model.number="skGroupAfterStage" @change="_schedulePreview()"
+                     :disabled="!skGroupSmall"
+                     :class="!skGroupSmall ? 'opacity-50 cursor-not-allowed' : ''"
+                     placeholder="3"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              <p class="text-[9px] text-slate-400 mt-0.5">0 = Elementary, 3 = College 1. Earlier stages keep every school.</p>
+            </div>
+            <label class="col-span-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" x-model="skGroupSmall" @change="_schedulePreview()"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Group small values into “Other” per stage
+            </label>
+            <label class="col-span-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" x-model="skShowStageFlow" @change="_schedulePreview()"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Show stage column headers
+            </label>
+            <label class="flex items-center gap-2 text-xs text-slate-600 pt-4 cursor-pointer">
+              <input type="checkbox" x-model="skShowLabels" @change="_schedulePreview()"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Show node labels
+            </label>
+          </div>
+        </div>
+
         {# ── Progress Growth config — visible only for progress_growth type ── #}
         <div x-show="chartType==='progress_growth'" x-transition class="space-y-3">
           {# Before PL #}
@@ -3074,7 +3345,7 @@
         </section>
 
         {# 5. Axes & Layout #}
-        <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+        <template x-if="!['pie','donut','funnel','treemap','radar','gauge','sankey'].includes(chartType)">
           <section x-data="{ open: true }" class="border-b border-slate-100">
             <button type="button" @click="open=!open"
                     class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
@@ -3232,7 +3503,7 @@
                   <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
                   <span class="text-[10px] font-medium text-slate-700">Toolbox Bar</span>
                 </label>
-                <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+                <template x-if="!['pie','donut','funnel','treemap','radar','gauge','sankey'].includes(chartType)">
                   <div class="contents">
                     <label class="flex items-center gap-1.5 cursor-pointer">
                       <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
@@ -3668,9 +3939,9 @@
           <!-- Right: Interactive Toggles & Fullscreen -->
           <div class="flex items-center gap-1.5 ml-auto">
             <span x-show="drillStatus && !editMode" class="inline-flex items-center gap-1 text-[10px] font-medium mr-2"
-                  :class="drillStatus.canDrill ? 'text-emerald-700' : 'text-amber-700'">
-              <span class="w-1.5 h-1.5 rounded-full" :class="drillStatus.canDrill ? 'bg-emerald-500' : 'bg-amber-500'"></span>
-              <span x-text="drillStatus.message"></span>
+                  :class="drillStatus?.canDrill ? 'text-emerald-700' : 'text-amber-700'">
+              <span class="w-1.5 h-1.5 rounded-full" :class="drillStatus?.canDrill ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+              <span x-text="drillStatus?.message || ''"></span>
             </span>
 
             <template x-if="previewViewMode==='chart'">
@@ -3718,20 +3989,20 @@
           <div class="flex items-center gap-2">
             <span class="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></span>
             <span class="font-bold text-indigo-800 uppercase text-[10px] tracking-wider">Point Selected:</span>
-            <span class="font-semibold text-slate-900 bg-white px-2 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint.xVal"></span>
-            <template x-if="selectedPreviewPoint.seriesVal">
+            <span class="font-semibold text-slate-900 bg-white px-2 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint?.xVal"></span>
+            <template x-if="selectedPreviewPoint?.seriesVal">
               <span class="text-slate-600 font-medium">· Series: <strong class="text-slate-800" x-text="selectedPreviewPoint.seriesVal"></strong></span>
             </template>
-            <span class="text-slate-600 font-medium">· Value: <strong class="text-indigo-900 font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint.value"></strong></span>
+            <span class="text-slate-600 font-medium">· Value: <strong class="text-indigo-900 font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint?.value"></strong></span>
           </div>
           <div class="flex items-center gap-2">
-            <template x-if="selectedPreviewPoint.url">
+            <template x-if="selectedPreviewPoint?.url">
               <a :href="selectedPreviewPoint.url" target="_blank"
                  class="inline-flex items-center gap-1 px-3 py-1 bg-indigo-600 text-white rounded-md text-[11px] font-bold hover:bg-indigo-700 shadow-xs transition">
                 <span>Test Drill In ↗</span>
               </a>
             </template>
-            <template x-if="selectedPreviewPoint.isUnsaved">
+            <template x-if="selectedPreviewPoint?.isUnsaved">
               <span class="text-[10px] text-amber-800 font-semibold bg-amber-100 border border-amber-200 px-2 py-0.5 rounded">
                 Save chart to drill into student records
               </span>
@@ -4008,13 +4279,13 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261116_sankey"></script>
 <script src="{% static 'js/dataviz/chart-editor.js' %}?v=20261027_preview"></script>
-<script src="{% static 'js/dataviz/chart-builder-ui.js' %}?v=20261027_preview"></script>
-<script src="{% static 'js/dataviz/chart-builder-data.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-ui.js' %}?v=20261116_sankey"></script>
+<script src="{% static 'js/dataviz/chart-builder-data.js' %}?v=20261116_sankey"></script>
 <script src="{% static 'js/dataviz/chart-builder-explorer.js' %}?v=20261027_preview"></script>
 <script src="{% static 'js/dataviz/chart-builder-filters.js' %}?v=20261027_preview"></script>
-<script src="{% static 'js/dataviz/chart-builder-preview.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-preview.js' %}?v=20261116_sankey"></script>
 <script>
 function chartBuilder() {
   const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
@@ -4065,6 +4336,7 @@ function chartBuilder() {
     scatter:      { x:{req:1,lbl:'X-Axis (numeric)'},    y:{req:1,lbl:'Y-Axis (numeric)'},   s:{req:0,lbl:'Color / Group'},      hint:'Both X and Y should be numeric columns' },
     bubble:       { x:{req:1,lbl:'X-Axis (numeric)'},    y:{req:1,lbl:'Y-Axis (numeric)'},   s:{req:0,lbl:'Color / Group'},      hint:'Scatter with variable point size' },
     heatmap:      { x:{req:1,lbl:'X-Axis / Category'},   y:{req:1,lbl:'Y-Axis / Category'},  s:{hide:1},                          hint:'Color intensity grid \u2014 both axes required' },
+    sankey:       { x:{req:0,lbl:'Path Column / Stage Columns'}, y:{hide:1}, s:{hide:1}, hint:'Flow between ordered stages \u2014 map a JSON pathway column, or drag stage columns into X' },
     histogram:    { x:{req:1,lbl:'Column to distribute'}, y:{hide:1},                          s:{req:0,lbl:'Split / Group-by'},   hint:'Frequency distribution of X values' },
     box:          { x:{req:0,lbl:'Group-by (optional)'},  y:{req:1,lbl:'Value (numeric)'},     s:{hide:1},                          hint:'Y must be numeric \u2014 X groups the boxes' },
     radar:        { x:{req:1,lbl:'Axes / Categories'},    y:{req:0,lbl:'Value'},               s:{hide:1},                          hint:'Spider-web chart across categories' },
@@ -4091,12 +4363,14 @@ function chartBuilder() {
     progress_growth: 'Student Progress & Growth',
     summary_table: 'Summary Pivot Table',
     dynamic_summary_table: 'Dynamic Multi-Dimension Pivot',
-    date_series: 'Date Series Timeline'
+    date_series: 'Date Series Timeline',
+    sankey: 'Sankey Student Flow'
   };
 
   return {
     /* ─── State ──────────────────────────────────────────── */
     centerTab:    'type',
+    configOpen:   true,
     CHART_NAMES:  CHART_NAMES,
     /* Preview Interactive state */
     previewViewMode: 'chart',   // 'chart' | 'table'
@@ -4178,6 +4452,44 @@ function chartBuilder() {
     dsDateCol:        existing?.config?.ds_date_col ?? '',
     dsDateBucket:     existing?.config?.ds_date_bucket ?? 'day',
     dsLines:          existing?.config?.ds_lines ?? [],
+    /* Sankey pathway */
+    skPathCol:            existing?.config?.sk_path_col ?? '',
+    skPathFormat:         existing?.config?.sk_path_format ?? 'auto',
+    skStagesText:         Array.isArray(existing?.config?.sk_stages) ? existing.config.sk_stages.join(', ') : (existing?.config?.sk_stages ?? ''),
+    skStageLabelsText:    Array.isArray(existing?.config?.sk_stage_labels)
+                            ? existing.config.sk_stage_labels.join(', ')
+                            : (typeof existing?.config?.sk_stage_labels === 'string'
+                                ? existing.config.sk_stage_labels
+                                : (existing?.config?.sk_stage_labels && typeof existing.config.sk_stage_labels === 'object'
+                                    ? Object.values(existing.config.sk_stage_labels).join(', ')
+                                    : '')),
+    skCollegesKey:        existing?.config?.sk_colleges_key ?? 'colleges',
+    skCollegeNameKey:     existing?.config?.sk_college_name_key ?? 'college',
+    skMaxCollegeSteps:    existing?.config?.sk_max_college_steps ?? 0,
+    skCollapseCollege:    existing ? existing.config?.sk_collapse_college === true : false,
+    skBlankLabel:         existing?.config?.sk_blank_label ?? '(Not reported)',
+    skCollegeTypes:       existing?.config?.sk_college_types ?? [],
+    skCollegeSystems:     existing?.config?.sk_college_systems ?? [],
+    skCollegeFilterScope: existing?.config?.sk_college_filter_scope ?? 'first',
+    skCollegeTypeSource:  existing?.config?.sk_college_type_source ?? '',
+    skCollegeSystemSource: existing?.config?.sk_college_system_source ?? '',
+    skCollegeControlSource: existing?.config?.sk_college_control_source ?? '',
+    skCollegeStateSource: existing?.config?.sk_college_state_source ?? '',
+    skMinLinkValue:       existing?.config?.sk_min_link_value ?? 1,
+    skMaxNodes:           existing?.config?.sk_max_nodes ?? 300,
+    skNodeAlign:          existing?.config?.sk_node_align ?? 'justify',
+    skOrient:             existing?.config?.sk_orient ?? 'horizontal',
+    skLabelMode:          existing?.config?.sk_label_mode ?? 'value',
+    skShowLabels:         existing ? (existing.config?.sk_show_labels !== false) : true,
+    skCurveness:          existing?.config?.sk_curveness ?? 0.35,
+    skColorMode:          existing?.config?.sk_color_mode ?? 'node',
+    skOrderMode:          existing?.config?.sk_order_mode ?? 'value',
+    skLinkColorMode:      existing?.config?.sk_link_color_mode ?? 'source',
+    skTopPerStage:        existing?.config?.sk_top_per_stage ?? 12,
+    skGroupAfterStage:    existing?.config?.sk_group_after_stage ?? 3,
+    skGroupSmall:         existing ? (existing.config?.sk_top_per_stage !== 0) : true,
+    skLabelMinValue:      existing?.config?.sk_label_min_value ?? 5,
+    skShowStageFlow:      existing ? (existing.config?.sk_show_stage_flow !== false) : true,
     aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
     aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
@@ -4266,7 +4578,7 @@ function chartBuilder() {
     titleTop:        existing?.config?.title_top     ?? null,
     labelDistance:   existing?.config?.label_distance ?? null,
     containerWidth:  existing?.config?.container_width  ?? null,
-    containerHeight: existing?.config?.container_height ?? null,
+    containerHeight: existing?.config?.container_height ?? (existing?.chart_type === 'sankey' ? 900 : null),
     /* Edit mode */
     editMode:           false,
     showStylePanel:     false,
@@ -4394,6 +4706,12 @@ function chartBuilder() {
     get pgScaleParsed() {
       return this.pgScaleText.split(',').map(v => v.trim()).filter(Boolean);
     },
+    get skStagesParsed() {
+      return String(this.skStagesText || '').split(/[,\n]+/).map(v => v.trim()).filter(Boolean);
+    },
+    get skStageLabelsParsed() {
+      return String(this.skStageLabelsText || '').split(/[,\n]+/).map(v => v.trim()).filter(Boolean);
+    },
     get _dsLinesValid() {
       if (!this.dsDateCol || !this.dsLines.length) return false;
       return this.dsLines.every(l => {
@@ -4421,6 +4739,7 @@ function chartBuilder() {
     },
     get canPreview() {
       if (!this.hasData || !this.chartType) return false;
+      if (this.chartType === 'sankey') return !!(this.skPathCol || this.xCols.length > 1);
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
       if (this.chartType === 'progress_growth') return !!this.pgBeforeCol && !!this.pgAfterCol;
       if (this.chartType === 'summary_table') {
@@ -4453,7 +4772,9 @@ function chartBuilder() {
       const m = this.meta;
       // "Columns done" depends on chart type
       let colsDone;
-      if (this.chartType === 'progress_growth') {
+      if (this.chartType === 'sankey') {
+        colsDone = !!(this.skPathCol || this.xCols.length > 1);
+      } else if (this.chartType === 'progress_growth') {
         colsDone = !!this.pgBeforeCol && !!this.pgAfterCol;
       } else if (this.chartType === 'summary_table') {
         colsDone = this.stColMode === 'columns'

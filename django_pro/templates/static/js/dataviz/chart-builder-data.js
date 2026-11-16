@@ -24,6 +24,7 @@ function chartBuilderDataMethods() {
       this._recomputeFilterCols();
       // Load filter options in parallel (non-blocking)
       this.loadFilterOptions();
+      this.suggestSankeyPath();
       if (this.canPreview) this._scheduleDataPreview();
     },
 
@@ -58,6 +59,7 @@ function chartBuilderDataMethods() {
       this.columnsLoading = false;
       this._recomputeFilterCols();
       this._loadDatasetFilterOptions();
+      this.suggestSankeyPath();
       if (this.canPreview) this._scheduleDataPreview();
     },
 

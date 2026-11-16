@@ -196,6 +196,18 @@
       return;
     }
 
+    // Apply the server-requested minimum height for chart types that need
+    // vertical room (Sankey school bands). A page slot with an explicit height
+    // wins, so the page layout is never overridden.
+    if (option && option.__min_height__) {
+      var slotHasHeight = chartSlot && chartSlot.dataset.containerHeight;
+      var minH = Number(option.__min_height__);
+      if (!slotHasHeight && Number.isFinite(minH) && minH > 0) {
+        container.style.minHeight = minH + 'px';
+      }
+      delete option.__min_height__;
+    }
+
     // Table column layout: also on data-* so embed/page renders stay in sync
     // with saved config even when render HTML was cached before option JSON
     // included these keys.
@@ -346,7 +358,9 @@
 
     // Drill-through click handler
     const chartId = container.dataset.chartId;
-    const drillEnabled = container.dataset.drillEnabled === '1';
+    const noDrill = !!(option && option.__no_drill__);
+    delete option.__no_drill__;
+    const drillEnabled = container.dataset.drillEnabled === '1' && !noDrill;
     if (drillEnabled && chartId && chartId !== 'preview') {
       registerDrillThrough(chart, chartId, container);
     } else {

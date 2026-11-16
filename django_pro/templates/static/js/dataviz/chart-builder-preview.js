@@ -247,12 +247,43 @@ function chartBuilderPreviewMethods(urls) {
 
     /* ─── Config builder ─────────────────────────────────── */
     _buildConfig() {
-      const xColStr = this.xCols.join(',');
+      const isSankey = this.chartType === 'sankey';
+      const xColStr = isSankey && this.skPathCol ? this.skPathCol : this.xCols.join(',');
       const seriesColStr = this.seriesCols.join(',');
       return {
         chart_type: this.chartType,
         x_col: xColStr,
         x_date_bucket: this.xDateBucket,
+        sk_path_col: isSankey ? this.skPathCol : '',
+        sk_path_format: this.skPathFormat,
+        sk_stages: this.skStagesParsed,
+        sk_stage_labels: this.skStageLabelsParsed,
+        sk_colleges_key: this.skCollegesKey,
+        sk_college_name_key: this.skCollegeNameKey,
+        sk_max_college_steps: Number(this.skMaxCollegeSteps) || 0,
+        sk_collapse_college: !!this.skCollapseCollege,
+        sk_blank_label: this.skBlankLabel,
+        sk_college_types: this.skCollegeTypes,
+        sk_college_systems: this.skCollegeSystems,
+        sk_college_filter_scope: this.skCollegeFilterScope,
+        sk_college_type_source: this.skCollegeTypeSource,
+        sk_college_system_source: this.skCollegeSystemSource,
+        sk_college_control_source: this.skCollegeControlSource,
+        sk_college_state_source: this.skCollegeStateSource,
+        sk_min_link_value: Number(this.skMinLinkValue) || 0,
+        sk_max_nodes: Number(this.skMaxNodes) || 0,
+        sk_node_align: this.skNodeAlign,
+        sk_orient: this.skOrient,
+        sk_label_mode: this.skLabelMode,
+        sk_show_labels: !!this.skShowLabels,
+        sk_curveness: Number(this.skCurveness),
+        sk_color_mode: this.skColorMode,
+        sk_order_mode: this.skOrderMode,
+        sk_link_color_mode: this.skLinkColorMode,
+        sk_top_per_stage: this.skGroupSmall ? (Number(this.skTopPerStage) || 18) : 0,
+        sk_group_after_stage: Number(this.skGroupAfterStage) || 3,
+        sk_label_min_value: Number(this.skLabelMinValue) || 0,
+        sk_show_stage_flow: !!this.skShowStageFlow,
         y_col: this.yCol,
         series_col: seriesColStr,
         stack_col: seriesColStr,

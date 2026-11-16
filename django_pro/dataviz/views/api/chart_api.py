@@ -1226,8 +1226,32 @@ def _dyn_calc_query_columns(chart_cfg: dict) -> list:
     return cols
 
 
+def _sankey_query_columns(chart_type: str, chart_cfg: dict) -> list:
+    """Path/filter columns a Sankey chart needs in addition to the explorer selection."""
+    if chart_type != 'sankey':
+        return []
+    cfg = chart_cfg or {}
+    cols = []
+    for key in ('sk_path_col', 'sk_college_type_source', 'sk_college_system_source',
+                'sk_college_control_source', 'sk_college_state_source'):
+        col = cfg.get(key, '')
+        if isinstance(col, str) and col and col not in cols:
+            cols.append(col)
+    for col in (cfg.get('sk_stage_cols') or []):
+        if isinstance(col, str) and col and col not in cols:
+            cols.append(col)
+    for flt in (cfg.get('sk_filters') or []):
+        col = flt.get('col') if isinstance(flt, dict) else ''
+        if isinstance(col, str) and col and col not in cols:
+            cols.append(col)
+    return cols
+
+
 def _chart_extra_query_columns(chart_cfg: dict) -> list:
     extras = _progress_growth_query_columns((chart_cfg or {}).get('chart_type', ''), chart_cfg)
+    for col in _sankey_query_columns((chart_cfg or {}).get('chart_type', ''), chart_cfg):
+        if col not in extras:
+            extras.append(col)
     for col in _dyn_calc_query_columns(chart_cfg):
         if col not in extras:
             extras.append(col)
@@ -1540,6 +1564,7 @@ def chart_preview_api(request):
                 option = build_option(body['rows'], body.get('column_definitions', {}), cfg)
                 option.pop('__series_names__', None)
                 option.pop('__category_names__', None)
+                option.pop('__sk_diag__', None)
                 query_columns = list(body['rows'][0].keys()) if body['rows'] else []
                 return render(request, 'dataviz/partials/chart_preview.html', {
                     'option_json': json.dumps(option), 'chart_id': 'preview',
@@ -1743,8 +1768,12 @@ def chart_preview_api(request):
         col_header_keys = option.pop('__col_header_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
+        option.pop('__sk_diag__', None)
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
-        preview_rows_sample = rows[:100] if isinstance(rows, list) else []
+        # Pathway rows carry a full JSON document; a smaller sample keeps the
+        # preview response light while still filling the table view.
+        _preview_limit = 25 if cfg.get('chart_type') == 'sankey' else 100
+        preview_rows_sample = rows[:_preview_limit] if isinstance(rows, list) else []
         return render(request, 'dataviz/partials/chart_preview.html', {
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
@@ -2558,6 +2587,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             chart_cfg['is_embed'] = is_embed
             option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)
             option.pop('__series_names__', None)
+            option.pop('__sk_diag__', None)
             option_json = json.dumps(option)
             error = None
     except Exception as exc:

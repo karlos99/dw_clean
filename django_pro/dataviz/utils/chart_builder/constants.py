@@ -112,6 +112,7 @@ CHART_TYPES = [
     ('jitter',       'Jitter',        'chart-jitter',        'Relationship'),
     ('bubble',       'Bubble',        'chart-bubble',        'Relationship'),
     ('heatmap',      'Heatmap',       'chart-heatmap',       'Relationship'),
+    ('sankey',       'Sankey',        'chart-sankey',        'Relationship'),
     ('histogram',    'Histogram',     'chart-histogram',     'Distribution'),
     ('box',          'Box Plot',      'chart-box',           'Distribution'),
     ('radar',        'Radar',         'chart-radar',         'Advanced'),
