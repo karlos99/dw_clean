@@ -52,6 +52,7 @@
   @media (max-width: 1024px) {
     .page-grid {
       grid-template-columns: repeat(6, 1fr);
+      grid-auto-rows: auto;
     }
     .page-grid > [style*="grid-column"] {
       grid-column: 1 / -1 !important;
@@ -383,7 +384,7 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261116_sankey"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_expand3"></script>
 <script>
 (function () {
   // School scope toggle: "All Students" (default) vs the active school.
@@ -498,7 +499,7 @@
 
     // SWR Instant Client Cache: Check sessionStorage for instant rendering
     try {
-      const cacheKey = `dv_chart_v7_${cid}_${filterKey}`;
+      const cacheKey = `dv_chart_v10_${cid}_${filterKey}`;
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
         const item = JSON.parse(cached);
@@ -546,7 +547,7 @@
           slot.innerHTML = payload.html;
           needsInit = true;
           try {
-            const cacheKey = `dv_chart_v7_${cid}_${filterKey}`;
+            const cacheKey = `dv_chart_v10_${cid}_${filterKey}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
           } catch (e) {}
         } else {

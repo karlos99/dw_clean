@@ -36,8 +36,8 @@ _DEFAULT_STAGE_LABELS = {
     'grade5': 'Elementary',
     'elementary': 'Elementary',
     'elementary_school': 'Elementary',
-    'grade_8': 'Middle School',
-    'grade8': 'Middle School',
+    'grade_8': 'Grade 8',
+    'grade8': 'Grade 8',
     'middle_school': 'Middle School',
     'middle': 'Middle School',
     'high_school': 'High School',
@@ -114,6 +114,12 @@ _UC_NAME_TOKENS = (
 )
 _UC_WORD_RE = re.compile(r'\bUC\b')
 _CSU_WORD_RE = re.compile(r'\bCSU\b')
+
+# Used to recognise high schools that were stored in the ``grade_8`` field
+# (some students attended a high-school campus in 8th grade). Those nodes are
+# labelled "High School (8th)" instead of "Grade 8".
+_HS_VALUE_RE = re.compile(r'(?i)(?:\bHS\b|\bH\.S\.|HIGH SCHOOL)')
+_MS_VALUE_RE = re.compile(r'(?i)(?:\bMS\b|\bM\.S\.|MIDDLE SCHOOL)')
 
 
 def _norm_key(value) -> str:
@@ -376,7 +382,9 @@ def _college_items(value, cfg) -> list[tuple[str, float]]:
         except (TypeError, ValueError):
             seq_num = float(idx)
         out.append((name, seq_num))
-    out.sort(key=lambda pair: (pair[1], pair[0]))
+    # Preserve the JSON array order. The stored college_sequence is
+    # inconsistent across exports (some 0-based, some 1-based), while the array
+    # order is the actual trajectory.
     return out
 
 
@@ -738,6 +746,29 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
             cfg, error=True,
         )
 
+    # Some exports store a high-school campus in the ``grade_8`` field (the
+    # student attended that campus in 8th grade). Keep the value but label it
+    # as a high-school stage rather than a middle-school one.
+    middle_idx = None
+    for index, key in enumerate(stage_keys):
+        norm = str(key).lower().replace('-', '_')
+        if norm in ('grade_8', 'grade8', 'grade_8_school', 'middle_school', 'middle') or 'grade_8' in norm:
+            middle_idx = index
+            break
+
+    def _node_stage_label(depth: int, value: str) -> str:
+        if (
+            depth == middle_idx
+            and value
+            and _HS_VALUE_RE.search(str(value))
+            and not _MS_VALUE_RE.search(str(value))
+        ):
+            return 'High School (8th)'
+        return stage_labels[depth] if depth < len(stage_labels) else f'Stage {depth + 1}'
+
+    def _node_name(depth: int, value: str) -> str:
+        return f'{_node_stage_label(depth, value)} · {value}'
+
     min_link = max(1, _as_int(work_cfg.get('sk_min_link_value'), 1) or 1)
     max_nodes = _as_int(work_cfg.get('sk_max_nodes'), 300)
     if max_nodes is None:
@@ -774,20 +805,20 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         if len(values) < 2:
             continue
         linked += 1
-        first_node = f'{stage_labels[0]} · {values[0]}'
+        first_node = _node_name(0, values[0])
         first_totals[first_node] += 1
         for depth, value in enumerate(values):
             if not value:
                 continue
-            node = f'{stage_labels[depth]} · {value}'
+            node = _node_name(depth, value)
             node_totals[node] += 1
             node_depth.setdefault(node, depth)
             node_first_counts.setdefault(node, Counter())[first_node] += 1
         for depth in range(len(values) - 1):
             if not values[depth] or not values[depth + 1]:
                 continue
-            src = f'{stage_labels[depth]} · {values[depth]}'
-            dst = f'{stage_labels[depth + 1]} · {values[depth + 1]}'
+            src = _node_name(depth, values[depth])
+            dst = _node_name(depth + 1, values[depth + 1])
             if src == dst:
                 continue
             link_counts[(src, dst)] += 1
@@ -798,16 +829,30 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
             cfg,
         )
 
+    # Preserve colour assignments for values that are about to be grouped into
+    # "Other", so expanding the group can reuse the same distinct colours.
+    color_value_totals: Counter = Counter()
+    color_value_first_depth: dict[str, int] = {}
+    for node, total in node_totals.items():
+        value = node.split(' · ', 1)[1] if ' · ' in node else node
+        color_value_totals[value] += total
+        depth = node_depth.get(node, 0)
+        if value not in color_value_first_depth or depth < color_value_first_depth[value]:
+            color_value_first_depth[value] = depth
+
     # ── Keep the graph readable: group the long tail of college destinations ──
     # The first stages (elementary/middle/high school) are always kept; later
     # stages keep their top-N values and collapse the rest into one "Other"
     # node per stage.  Flow volumes are preserved.
+    node_remap: dict[str, str] = {}
+    other_details: dict[str, list[tuple[str, int]]] = {}
+    other_expand: dict[str, dict] = {}
     if top_per_stage > 0:
         by_depth: dict[int, list[str]] = {}
         for node, depth in node_depth.items():
             by_depth.setdefault(depth, []).append(node)
 
-        remap: dict[str, str] = {}
+        remap = node_remap
         for depth, depth_nodes in by_depth.items():
             if depth < group_after or len(depth_nodes) <= top_per_stage:
                 continue
@@ -824,12 +869,55 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
             node_totals[other] = sum(node_totals[n] for n in pruned)
             node_depth[other] = depth
             merged: Counter = Counter()
+            detail_rows = []
+            child_rows = []
             for n in pruned:
                 merged.update(node_first_counts.get(n, Counter()))
+                detail_rows.append((
+                    n.split(' · ', 1)[1] if ' · ' in n else n,
+                    int(node_totals[n]),
+                ))
+                incoming = [
+                    [src, int(count)]
+                    for (src, dst), count in link_counts.items()
+                    if dst == n and count >= min_link
+                ]
+                outgoing = [
+                    [dst, int(count)]
+                    for (src, dst), count in link_counts.items()
+                    if src == n and count >= min_link
+                ]
+                if incoming or outgoing:
+                    child_rows.append({
+                        'name': n,
+                        'value': int(node_totals[n]),
+                        'incoming': incoming,
+                        'outgoing': outgoing,
+                    })
                 node_first_counts.pop(n, None)
                 node_totals.pop(n, None)
                 node_depth.pop(n, None)
+            detail_rows.sort(key=lambda pair: (-pair[1], pair[0]))
+            child_rows.sort(key=lambda child: (-child['value'], child['name']))
+            other_details[other] = detail_rows
+            if child_rows:
+                other_expand[other] = {'depth': depth, 'children': child_rows}
             node_first_counts[other] = merged
+
+        # Endpoint nodes may themselves have been grouped at an earlier/later
+        # depth; point those links at the final "Other" node names.
+        for group in other_expand.values():
+            for child in group['children']:
+                child['incoming'] = [
+                    [node_remap.get(src, src), count]
+                    for src, count in child['incoming']
+                    if node_remap.get(src, src) != child['name']
+                ]
+                child['outgoing'] = [
+                    [node_remap.get(dst, dst), count]
+                    for dst, count in child['outgoing']
+                    if node_remap.get(dst, dst) != child['name']
+                ]
 
         if remap:
             grouped_links: Counter = Counter()
@@ -869,6 +957,40 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         node_totals = Counter({n: v for n, v in node_totals.items() if n in keep})
         node_depth = {n: d for n, d in node_depth.items() if n in keep}
         node_first_counts = {n: c for n, c in node_first_counts.items() if n in keep}
+        other_details = {n: rows for n, rows in other_details.items() if n in keep}
+        other_expand = {n: group for n, group in other_expand.items() if n in keep}
+
+    # ── Upstream ancestry, for click-to-trace ────────────────────────────────
+    # For every visible node, record the exact upstream school/college counts
+    # from the same rows. This is what powers the click panel in the renderer.
+    ancestor_payload = {}
+    if _as_bool(work_cfg.get('sk_trace_ancestors'), True):
+        for values in stage_rows:
+            while values and not str(values[-1]).strip():
+                values.pop()
+            if len(values) < 2:
+                continue
+            nodes: list[str] = []
+            for depth, value in enumerate(values):
+                if not value:
+                    continue
+                node = _node_name(depth, value)
+                node = node_remap.get(node, node)
+                if node in node_totals:
+                    nodes.append(node)
+            if len(nodes) < 2:
+                continue
+            for index in range(1, len(nodes)):
+                target = nodes[index]
+                entry = ancestor_payload.get(target)
+                if entry is None:
+                    entry = {
+                        'total': int(node_totals.get(target, 0)),
+                        'ancestors': Counter(),
+                    }
+                    ancestor_payload[target] = entry
+                for ancestor in nodes[:index]:
+                    entry['ancestors'][ancestor] += 1
 
     # ── Stable vertical order ────────────────────────────────────────────────
     # First-stage schools are ranked largest → smallest (blank/"Other" at the
@@ -905,14 +1027,10 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         return (depth, _is_neutral(node), -node_totals[node], node)
 
     # ── Colours ──────────────────────────────────────────────────────────────
-    value_totals: Counter = Counter()
-    value_first_depth: dict[str, int] = {}
-    for node, total in node_totals.items():
-        value = _node_value(node)
-        value_totals[value] += total
-        depth = node_depth.get(node, 0)
-        if value not in value_first_depth or depth < value_first_depth[value]:
-            value_first_depth[value] = depth
+    # Use the pre-grouping value map so expanded "Other" children keep the
+    # same distinct colours they would have had in the full chart.
+    value_totals = color_value_totals
+    value_first_depth = color_value_first_depth
 
     palette_name = str(work_cfg.get('palette') or '').strip()
     stage_palette = PALETTES.get(palette_name, _SK_STAGE_COLORS) if palette_name else _SK_STAGE_COLORS
@@ -933,9 +1051,30 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         else:
             value_colors[value] = _SK_NODE_COLORS[index % len(_SK_NODE_COLORS)]
 
+    # Assign colours to the children that will appear when "Other" expands.
+    for other, group in other_expand.items():
+        depth = group['depth']
+        stage_label = stage_labels[depth] if depth < len(stage_labels) else ''
+        for child in group['children']:
+            child_value = (
+                child['name'].split(' · ', 1)[1]
+                if ' · ' in child['name'] else child['name']
+            )
+            if color_mode == 'stage':
+                color = _stage_color(depth)
+            else:
+                color = value_colors.get(child_value, _stage_color(depth))
+            child['color'] = (
+                user_cmap.get(child_value)
+                or user_cmap.get(stage_label)
+                or color
+            )
+
     def _node_color(node: str, depth: int) -> str:
         value = _node_value(node)
         stage_label = stage_labels[depth] if depth < len(stage_labels) else ''
+        if value in neutral_values:
+            return user_cmap.get(value) or _SK_OTHER_COLOR
         if color_mode == 'stage':
             color = _stage_color(depth)
         elif color_mode == 'first':
@@ -1043,7 +1182,8 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         "return '<b>'+esc(a.slice(1).join(' · '))+' → '+esc(b.slice(1).join(' · '))+'</b><br/>"
         "Students: <b>'+v+'</b> ('+(v/" + str(total_students) + "*100).toFixed(1)+'% of flow)';}"
         "var q=String(p.name||'').split(' · ');var n=Number(p.value)||0;"
-        "return '<b>'+esc(q.slice(1).join(' · '))+'</b><br/>'+esc(q[0])+'<br/>Students: <b>'+n+'</b>';}"
+        "return '<b>'+esc(q.slice(1).join(' · '))+'</b><br/>'+esc(q[0])+'<br/>Students: <b>'+n+'</b>"
+        "<br/><span style=\"color:#64748b\">Click to trace upstream; click Other to expand</span>';}"
     )
 
     option = _base_option(cfg, axis_trigger=False)
@@ -1072,13 +1212,14 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         graphic = []
         for depth in range(depth_count):
             label = stage_labels[depth] if depth < len(stage_labels) else f'Stage {depth + 1}'
+            header_text = 'Grade 8 / HS' if depth == middle_idx else _short_header(label)
             item = {
                 'type': 'text',
                 'top': 50,
                 'z': 10,
                 'silent': True,
                 'style': {
-                    'text': _short_header(label),
+                    'text': header_text,
                     'fill': '#64748b',
                     'fontSize': 10,
                     'fontWeight': 'bold',
@@ -1130,6 +1271,24 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     option['__min_height__'] = requested_height if requested_height >= 600 else 900
     option['__category_names__'] = []
     option['__no_drill__'] = True
+    if ancestor_payload:
+        option['__sk_ancestors__'] = {
+            target: {
+                'total': entry['total'],
+                'ancestors': [
+                    [name, int(count)]
+                    for name, count in entry['ancestors'].most_common()
+                ],
+            }
+            for target, entry in ancestor_payload.items()
+        }
+    if other_details:
+        option['__sk_other_details__'] = {
+            node: [[name, count] for name, count in rows]
+            for node, rows in other_details.items()
+        }
+    if other_expand:
+        option['__sk_other_expand__'] = other_expand
     # Expose useful diagnostics to the preview (stripped before rendering).
     option['__sk_diag__'] = {
         'rows_used': linked,

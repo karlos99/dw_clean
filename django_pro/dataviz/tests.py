@@ -5559,8 +5559,8 @@ class SankeyChartBuilderTests(SimpleTestCase):
             'sk_stage_cols': ['grade_5', 'grade_8', 'high_school'],
         })
         links = [(l['source'], l['target']) for l in opt['series'][0]['links']]
-        self.assertIn(('Elementary · Johnson', 'Middle School · Indio MS'), links)
-        self.assertIn(('Middle School · Indio MS', 'High School · Summit'), links)
+        self.assertIn(('Elementary · Johnson', 'Grade 8 · Indio MS'), links)
+        self.assertIn(('Grade 8 · Indio MS', 'High School · Summit'), links)
 
     def test_blank_stage_keeps_the_flow_connected(self):
         from dataviz.utils.chart_builder import build_option
@@ -5576,7 +5576,7 @@ class SankeyChartBuilderTests(SimpleTestCase):
         opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
         names = [node['name'] for node in opt['series'][0]['data']]
         self.assertIn('Elementary · (Not reported)', names)
-        self.assertIn('Middle School · Indio MS', names)
+        self.assertIn('Grade 8 · Indio MS', names)
 
     def test_missing_path_column_returns_message(self):
         from dataviz.utils.chart_builder import build_option
@@ -5698,3 +5698,146 @@ class SankeyLayoutTests(SimpleTestCase):
         series = opt['series'][0]
         first = [node for node in series['data'] if node['depth'] == 0]
         self.assertEqual(len({node['itemStyle']['color'] for node in first}), 1)
+
+
+class SankeyGrade8MismatchTests(SimpleTestCase):
+    def test_high_school_in_grade_8_is_labelled_as_high_school_8th(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{
+            'path': json.dumps({
+                'grade_5': 'Ford',
+                'grade_8': 'La Quinta HS',
+                'high_school': 'Summit',
+                'colleges': [],
+            }),
+        }]
+        opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('High School (8th) · La Quinta HS', names)
+        self.assertIn('High School · Summit', names)
+        self.assertNotIn('Grade 8 · La Quinta HS', names)
+
+    def test_real_middle_school_stays_in_grade_8(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{
+            'path': json.dumps({
+                'grade_5': 'Ford',
+                'grade_8': 'La Quinta MS',
+                'high_school': 'Summit',
+                'colleges': [],
+            }),
+        }]
+        opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('Grade 8 · La Quinta MS', names)
+        self.assertNotIn('High School (8th) · La Quinta MS', names)
+
+
+class SankeyTraceTests(SimpleTestCase):
+    def test_college_ancestor_counts_include_every_upstream_stage(self):
+        from dataviz.utils.chart_builder import build_option
+
+        def row(grade5, grade8, high_school):
+            return {
+                'path': json.dumps({
+                    'grade_5': grade5,
+                    'grade_8': grade8,
+                    'high_school': high_school,
+                    'colleges': [{'college': 'CSU San Bernardino', 'college_sequence': 1}],
+                }),
+            }
+
+        rows = [
+            row('Johnson', 'Indio MS', 'Summit'),
+            row('Johnson', 'Indio MS', 'Summit'),
+            row('Reagan', 'La Quinta MS', 'La Quinta HS'),
+        ]
+        opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        trace = opt.get('__sk_ancestors__') or {}
+        entry = trace.get('College 1 · CSU San Bernardino')
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry['total'], 3)
+        counts = dict(entry['ancestors'])
+        self.assertEqual(counts['Elementary · Johnson'], 2)
+        self.assertEqual(counts['Grade 8 · Indio MS'], 2)
+        self.assertEqual(counts['High School · Summit'], 2)
+        self.assertEqual(counts['Elementary · Reagan'], 1)
+
+
+class SankeyOtherDetailsTests(SimpleTestCase):
+    def test_other_node_exposes_the_grouped_values(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Bravo College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Charlie College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Delta College'}]})},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_top_per_stage': 2,
+            'sk_group_after_stage': 1,
+        })
+        details = (opt.get('__sk_other_details__') or {}).get('College 1 · Other')
+        self.assertIsNotNone(details)
+        self.assertIn(['Charlie College', 1], details)
+        self.assertIn(['Delta College', 1], details)
+        other = next(n for n in opt['series'][0]['data'] if n['name'] == 'College 1 · Other')
+        self.assertEqual(sum(row[1] for row in details), other['value'])
+
+
+class SankeyOtherExpandTests(SimpleTestCase):
+    def test_other_node_can_expand_into_chart_nodes(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Bravo College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Charlie College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Delta College'}]})},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_top_per_stage': 2,
+            'sk_group_after_stage': 1,
+        })
+        group = (opt.get('__sk_other_expand__') or {}).get('College 1 · Other')
+        self.assertIsNotNone(group)
+        self.assertEqual(group['depth'], 1)
+        children = {child['name']: child for child in group['children']}
+        self.assertIn('College 1 · Charlie College', children)
+        self.assertIn('College 1 · Delta College', children)
+        child = children['College 1 · Charlie College']
+        self.assertEqual(child['value'], 1)
+        self.assertTrue(child['color'])
+        self.assertEqual(child['incoming'], [['Elementary · Truman', 1]])
+
+    def test_expanded_colleges_keep_distinct_colours(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Bravo College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Charlie College'}]})},
+            {'path': json.dumps({'grade_5': 'Truman', 'colleges': [{'college': 'Delta College'}]})},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_top_per_stage': 2,
+            'sk_group_after_stage': 1,
+        })
+        children = (opt['__sk_other_expand__']['College 1 · Other']['children'])
+        colors = {child['color'] for child in children}
+        self.assertGreaterEqual(len(colors), 2)
