@@ -5701,7 +5701,7 @@ class SankeyLayoutTests(SimpleTestCase):
 
 
 class SankeyGrade8MismatchTests(SimpleTestCase):
-    def test_high_school_in_grade_8_is_labelled_as_high_school_8th(self):
+    def test_high_school_in_grade_8_is_removed_from_grade_8(self):
         from dataviz.utils.chart_builder import build_option
 
         rows = [{
@@ -5713,10 +5713,34 @@ class SankeyGrade8MismatchTests(SimpleTestCase):
             }),
         }]
         opt = build_option(rows, {}, {'chart_type': 'sankey', 'sk_path_col': 'path'})
+        series = opt['series'][0]
+        names = [node['name'] for node in series['data']]
+        self.assertIn('Elementary · Ford', names)
+        self.assertIn('High School · Summit', names)
+        self.assertNotIn('High School (8th) · La Quinta HS', names)
+        self.assertNotIn('Grade 8 · La Quinta HS', names)
+        # The path skips the excluded Grade 8 stage.
+        links = [(link['source'], link['target']) for link in series['links']]
+        self.assertIn(('Elementary · Ford', 'High School · Summit'), links)
+
+    def test_high_school_can_stay_as_8th_grade_node_when_exclusion_is_off(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{
+            'path': json.dumps({
+                'grade_5': 'Ford',
+                'grade_8': 'La Quinta HS',
+                'high_school': 'Summit',
+                'colleges': [],
+            }),
+        }]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_exclude_hs_from_grade8': False,
+        })
         names = [node['name'] for node in opt['series'][0]['data']]
         self.assertIn('High School (8th) · La Quinta HS', names)
-        self.assertIn('High School · Summit', names)
-        self.assertNotIn('Grade 8 · La Quinta HS', names)
 
     def test_real_middle_school_stays_in_grade_8(self):
         from dataviz.utils.chart_builder import build_option
@@ -5841,3 +5865,44 @@ class SankeyOtherExpandTests(SimpleTestCase):
         children = (opt['__sk_other_expand__']['College 1 · Other']['children'])
         colors = {child['color'] for child in children}
         self.assertGreaterEqual(len(colors), 2)
+
+
+class SankeyStageColumnTests(SimpleTestCase):
+    def test_stage_columns_supply_schools_and_json_supplies_colleges(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{
+            'grade_5_school': 'Johnson',
+            'grade_8_school': 'La Quinta HS',
+            'high_school_name': 'Summit',
+            'path': json.dumps({
+                'grade_5': 'WRONG',
+                'grade_8': 'WRONG',
+                'high_school': 'WRONG',
+                'colleges': [{'college': 'CSU San Bernardino', 'college_sequence': 1}],
+            }),
+        }]
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stage_cols': [
+                'grade_5_school', 'grade_8_school', 'high_school_name',
+            ],
+            'sk_stage_labels': {
+                'grade_5_school': 'Elementary',
+                'grade_8_school': 'Grade 8',
+                'high_school_name': 'High School',
+            },
+        })
+        names = [node['name'] for node in opt['series'][0]['data']]
+        self.assertIn('Elementary · Johnson', names)
+        self.assertIn('High School · Summit', names)
+        self.assertIn('College 1 · CSU San Bernardino', names)
+        self.assertNotIn('High School (8th) · La Quinta HS', names)
+        self.assertNotIn('Elementary · WRONG', names)
+        self.assertNotIn('Grade 8 · La Quinta HS', names)
+        links = [
+            (link['source'], link['target'])
+            for link in opt['series'][0]['links']
+        ]
+        self.assertIn(('Elementary · Johnson', 'High School · Summit'), links)

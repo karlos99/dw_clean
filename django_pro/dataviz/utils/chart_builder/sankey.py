@@ -34,14 +34,17 @@ from .common import _base_option, _message_option, _theme
 _DEFAULT_STAGE_LABELS = {
     'grade_5': 'Elementary',
     'grade5': 'Elementary',
+    'grade_5_school': 'Elementary',
     'elementary': 'Elementary',
     'elementary_school': 'Elementary',
     'grade_8': 'Grade 8',
     'grade8': 'Grade 8',
+    'grade_8_school': 'Grade 8',
     'middle_school': 'Middle School',
     'middle': 'Middle School',
     'high_school': 'High School',
     'highschool': 'High School',
+    'high_school_name': 'High School',
     'hs': 'High School',
     'college': 'College',
 }
@@ -519,6 +522,46 @@ def _apply_filters(df, cfg):
 
 # ── Path extraction ──────────────────────────────────────────────────────────
 
+def _stage_index(keys: list[str], *, kind: str) -> int | None:
+    for index, key in enumerate(keys):
+        norm = str(key).lower().replace('-', '_')
+        if kind == 'middle':
+            if 'grade_8' in norm or norm in ('middle_school', 'middle'):
+                return index
+        elif kind == 'high':
+            if 'high_school' in norm or norm in ('highschool', 'hs'):
+                return index
+    return None
+
+
+def _repair_grade8_high_schools(values: list[str], keys: list[str], cfg: dict, blank_label: str) -> list[str]:
+    """Remove high-school values from the Grade 8 stage.
+
+    ``student_pathways.grade_8_school`` occasionally contains the high-school
+    campus the student attended in 8th grade.  When exclusion is enabled the
+    value is removed from Grade 8 (the chart connects the previous stage
+    directly to the next) and, if the high-school column is blank, moved there.
+    """
+    if not _as_bool(cfg.get('sk_exclude_hs_from_grade8'), True):
+        return values
+    middle_idx = _stage_index(keys, kind='middle')
+    if middle_idx is None or middle_idx >= len(values):
+        return values
+    middle_value = str(values[middle_idx] or '').strip()
+    if not middle_value:
+        return values
+    if not _HS_VALUE_RE.search(middle_value) or _MS_VALUE_RE.search(middle_value):
+        return values
+
+    high_idx = _stage_index(keys, kind='high')
+    if high_idx is not None and high_idx < len(values):
+        high_value = str(values[high_idx] or '').strip()
+        if not high_value or high_value == blank_label:
+            values[high_idx] = middle_value
+    values[middle_idx] = ''
+    return values
+
+
 def _extract_paths(df: pl.DataFrame, cfg: dict):
     """Return ``(stage_rows, stage_keys, stage_labels, skipped)``.
 
@@ -548,8 +591,102 @@ def _extract_paths(df: pl.DataFrame, cfg: dict):
     if stage_cols and not path_col:
         keys = list(stage_cols)
         labels = _unique_stage_labels(keys, cfg.get('sk_stage_labels'))
-        rows = [_clean([_as_scalar(v) for v in row]) for row in df.select(stage_cols).iter_rows()]
+        raw_rows = [
+            [_as_scalar(v) for v in row]
+            for row in df.select(stage_cols).iter_rows()
+        ]
+        rows = []
+        for raw_row in raw_rows:
+            values = [str(v or '').strip() or blank_label for v in raw_row]
+            _repair_grade8_high_schools(values, keys, cfg, blank_label)
+            rows.append(values)
         return rows, keys, labels, 0
+
+    # Hybrid mode: the school sequence comes from real columns
+    # (grade_5_school / grade_8_school / high_school_name) while the JSON path
+    # column supplies only the college trajectory.
+    if stage_cols and path_col:
+        scalar_keys = list(stage_cols)
+        raw_values = df[path_col].to_list()
+        colleges_key = str(cfg.get('sk_colleges_key') or 'colleges')
+        max_steps = _as_int(cfg.get('sk_max_college_steps'), 0) or 0
+        auto_cap = max(1, min(12, _as_int(cfg.get('sk_auto_max_college_steps'), 4) or 4))
+        college_base_label = str(cfg.get('sk_college_stage_label') or 'College')
+        collapse_colleges = _as_bool(cfg.get('sk_collapse_college'), False)
+        college_count = max_steps if max_steps > 0 else auto_cap
+        college_count = max(1, min(12, college_count))
+        if collapse_colleges:
+            college_keys = [colleges_key]
+        else:
+            college_keys = [f'{colleges_key}__{i}' for i in range(college_count)]
+
+        all_keys = scalar_keys + college_keys
+        labels_cfg = cfg.get('sk_stage_labels')
+        labels = _unique_stage_labels(all_keys, labels_cfg)
+        if isinstance(labels_cfg, dict):
+            college_labels = [labels_cfg.get(k) for k in college_keys]
+        elif isinstance(labels_cfg, (list, tuple)):
+            college_labels = list(labels_cfg[len(scalar_keys):])
+        else:
+            college_labels = []
+        for i, _key in enumerate(college_keys):
+            if i < len(college_labels) and college_labels[i]:
+                continue
+            label = college_base_label if collapse_colleges else f'{college_base_label} {i + 1}'
+            while label in labels:
+                label = f'{label} +'
+            labels[len(scalar_keys) + i] = label
+
+        def _clean_keep(seq):
+            """Keep one slot per scalar column so college positions stay aligned."""
+            return [str(v or '').strip() or blank_label for v in seq]
+
+        scalar_rows = [
+            _clean_keep([_as_scalar(v) for v in row])
+            for row in df.select(scalar_keys).iter_rows()
+        ]
+        rows = []
+        skipped = 0
+        for scalar_values, raw in zip(scalar_rows, raw_values):
+            parsed = _parse_path_value(raw)
+            colleges = []
+            if isinstance(parsed, dict) and '__delimited__' not in parsed:
+                college_items = _college_items(parsed.get(colleges_key), cfg)
+                if not college_items:
+                    top_college = _as_scalar(parsed.get('college'))
+                    if top_college:
+                        college_items = [(top_college, 0)]
+                colleges = [name for name, _seq in college_items]
+            elif isinstance(parsed, dict) and '__delimited__' in parsed:
+                colleges = _split_delimited(str(parsed['__delimited__']), cfg)
+            elif isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict):
+                        name = item.get(cfg.get('sk_college_name_key') or 'college')
+                        colleges.append(_as_scalar(name) or _as_scalar(item))
+                    else:
+                        colleges.append(_as_scalar(item))
+            colleges = _clean(colleges)
+
+            stage_values = _repair_grade8_high_schools(
+                list(scalar_values), scalar_keys, cfg, blank_label
+            )
+            if collapse_colleges:
+                if colleges:
+                    stage_values.append(colleges[-1])
+            else:
+                stage_values.extend(colleges[:len(college_keys)])
+            if len(stage_values) > len(all_keys):
+                stage_values = stage_values[:len(all_keys)]
+            if (
+                blank_label
+                and stage_values
+                and all(v == blank_label for v in stage_values)
+            ):
+                skipped += 1
+                continue
+            rows.append(stage_values)
+        return rows, all_keys, labels, skipped
 
     # No JSON path column: if the user mapped several columns into X, each one
     # is a stage.
@@ -559,7 +696,15 @@ def _extract_paths(df: pl.DataFrame, cfg: dict):
         if len(x_cols) > 1:
             keys = list(x_cols)
             labels = _unique_stage_labels(keys, cfg.get('sk_stage_labels'))
-            rows = [_clean([_as_scalar(v) for v in row]) for row in df.select(x_cols).iter_rows()]
+            raw_rows = [
+                [_as_scalar(v) for v in row]
+                for row in df.select(x_cols).iter_rows()
+            ]
+            rows = []
+            for raw_row in raw_rows:
+                values = [str(v or '').strip() or blank_label for v in raw_row]
+                _repair_grade8_high_schools(values, keys, cfg, blank_label)
+                rows.append(values)
             return rows, keys, labels, 0
         return [], [], [], df.height
 
@@ -674,6 +819,7 @@ def _extract_paths(df: pl.DataFrame, cfg: dict):
                     college_items = [(top_college, 0)]
             colleges = [name for name, _seq in college_items]
             values = _clean(values)
+            values = _repair_grade8_high_schools(values, scalar_keys, cfg, blank_label)
             colleges = _clean(colleges)
         elif mode == 'delimited':
             values = _clean(_split_delimited(str(parsed.get('__delimited__', '')), cfg))
@@ -798,27 +944,25 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     linked = 0
 
     for values in stage_rows:
-        # ``values`` is positional against the stage list; drop trailing empties
-        # so paths stop where the student's record ends.
-        while values and not str(values[-1]).strip():
-            values.pop()
-        if len(values) < 2:
+        # Keep stage depths for node names, but drop blank slots before linking.
+        # This lets an empty stage be skipped (e.g. no middle school) while still
+        # connecting the previous school directly to the next one.
+        compact = [(depth, value) for depth, value in enumerate(values) if value]
+        if len(compact) < 2:
             continue
         linked += 1
-        first_node = _node_name(0, values[0])
+        first_node = _node_name(compact[0][0], compact[0][1])
         first_totals[first_node] += 1
-        for depth, value in enumerate(values):
-            if not value:
-                continue
+        for depth, value in compact:
             node = _node_name(depth, value)
             node_totals[node] += 1
             node_depth.setdefault(node, depth)
             node_first_counts.setdefault(node, Counter())[first_node] += 1
-        for depth in range(len(values) - 1):
-            if not values[depth] or not values[depth + 1]:
-                continue
-            src = _node_name(depth, values[depth])
-            dst = _node_name(depth + 1, values[depth + 1])
+        for index in range(len(compact) - 1):
+            src_depth, src_value = compact[index]
+            dst_depth, dst_value = compact[index + 1]
+            src = _node_name(src_depth, src_value)
+            dst = _node_name(dst_depth, dst_value)
             if src == dst:
                 continue
             link_counts[(src, dst)] += 1
@@ -1212,7 +1356,14 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         graphic = []
         for depth in range(depth_count):
             label = stage_labels[depth] if depth < len(stage_labels) else f'Stage {depth + 1}'
-            header_text = 'Grade 8 / HS' if depth == middle_idx else _short_header(label)
+            if depth == middle_idx:
+                header_text = (
+                    'Grade 8'
+                    if _as_bool(work_cfg.get('sk_exclude_hs_from_grade8'), True)
+                    else 'Grade 8 / HS'
+                )
+            else:
+                header_text = _short_header(label)
             item = {
                 'type': 'text',
                 'top': 50,

@@ -257,6 +257,8 @@ function chartBuilderPreviewMethods(urls) {
         sk_path_col: isSankey ? this.skPathCol : '',
         sk_path_format: this.skPathFormat,
         sk_stages: this.skStagesParsed,
+        sk_stage_cols: isSankey ? this.skStageColsParsed : [],
+        sk_exclude_hs_from_grade8: !!this.skExcludeHsGrade8,
         sk_stage_labels: this.skStageLabelsParsed,
         sk_colleges_key: this.skCollegesKey,
         sk_college_name_key: this.skCollegeNameKey,

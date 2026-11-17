@@ -486,19 +486,29 @@ function chartBuilderUIMethods() {
     },
 
     suggestSankeyPath() {
-      if (this.chartType !== 'sankey' || this.skPathCol) return;
+      if (this.chartType !== 'sankey') return;
       const cols = Array.isArray(this.activeCols) ? this.activeCols : [];
       const norm = (c) => String(c).toLowerCase().replace(/[^a-z0-9]+/g, '_');
-      const preferred = ['school_and_college_history', 'post_hs_college_path', 'college_path', 'pathway', 'path'];
-      for (const p of preferred) {
-        const hit = cols.find((c) => norm(c) === p);
-        if (hit) { this.skPathCol = hit; return; }
+      if (!this.skPathCol) {
+        const preferred = ['school_and_college_history', 'post_hs_college_path', 'college_path', 'pathway', 'path'];
+        let pathHit = '';
+        for (const p of preferred) {
+          const hit = cols.find((c) => norm(c) === p);
+          if (hit) { pathHit = hit; break; }
+        }
+        if (!pathHit) {
+          pathHit = cols.find((c) => {
+            const n = norm(c);
+            return n.endsWith('_path') || n.includes('college_history') || n.includes('school_history');
+          }) || '';
+        }
+        if (pathHit) this.skPathCol = pathHit;
       }
-      const fuzzy = cols.find((c) => {
-        const n = norm(c);
-        return n.endsWith('_path') || n.includes('college_history') || n.includes('school_history');
-      });
-      if (fuzzy) this.skPathCol = fuzzy;
+      if (!this.skStageColsText) {
+        const wanted = ['grade_5_school', 'grade_8_school', 'high_school_name'];
+        const found = wanted.filter((w) => cols.some((c) => norm(c) === w));
+        if (found.length === wanted.length) this.skStageColsText = found.join(', ');
+      }
     },
 
     _schedulePreview(forData) {
