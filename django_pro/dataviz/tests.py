@@ -5433,3 +5433,42 @@ class ChartIndexListTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.chart.refresh_from_db()
         self.assertFalse(self.chart.is_user_menu)
+
+
+class ResultsDatasetApJoinMigrationTests(TestCase):
+    """Regression: shared results dataset must not INNER JOIN AP (under-counts CAASPP)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='ap_join_fix', password='password')
+
+    def test_migration_strips_ap_inner_join(self):
+        import importlib
+        from django.apps import apps
+        mod = importlib.import_module(
+            'dataviz.migrations.0025_remove_results_dataset_ap_inner_join'
+        )
+        remove_ap_inner_join_from_results_datasets = (
+            mod.remove_ap_inner_join_from_results_datasets
+        )
+
+        ds = Dataset.objects.create(
+            name='Results AP join mistake',
+            owner=self.user,
+            base_table='results',
+            joins=[
+                {'table': 'tests', 'join_type': 'inner', 'conditions': []},
+                {
+                    'table': 'analytics_ap_results',
+                    'join_type': 'inner',
+                    'conditions': [
+                        {'on_left': 'results.ssid', 'on_right': 'analytics_ap_results.ssid'},
+                    ],
+                },
+            ],
+            columns=['results.pl', 'analytics_ap_results.exam_name'],
+        )
+        remove_ap_inner_join_from_results_datasets(apps, None)
+        ds.refresh_from_db()
+        tables = {j.get('table') for j in (ds.joins or [])}
+        self.assertNotIn('analytics_ap_results', tables)
+        self.assertFalse(any(str(c).startswith('analytics_ap_results.') for c in (ds.columns or [])))

@@ -20,6 +20,15 @@ Optional: ``--owner you@example.com`` (default: first superuser).
 ``--discover`` prints ClickHouse ELPAC test names and ``other_info`` keys, then exits.
 ``--qa`` runs a read-only check of dataset counts, chart aggregation, filters and
 drill-through mappings, then exits (no database writes).
+``--verify`` compares the live DataViz page, chart configs, and datasets to this script
+(exits non-zero on drift).
+
+Live inventory (Desert Sands ``elpac-summative`` page, 22 charts, 3 SQL datasets):
+
+- Page: ``/dataviz/pages/elpac-summative/`` (menu: Assessments → ELPAC Summative)
+- Charts folder: ``Assessment_pages / elpac_summative / …``
+- Official state-reported ELPAC is separate: ``create_official_assessment_dataviz.py``
+- Legacy ``Assessments/ELPAC/*`` charts are not on this page (retired in UI)
 """
 import argparse
 import os
@@ -30,6 +39,39 @@ ELPAC_PREFIX = 'ELPAC Summative •'
 CHART_FOLDER = 'elpac_summative'
 CHART_ROOT_FOLDER = 'Assessment_pages'
 DATASET_FOLDER = 'Assessments / ELPAC Summative'
+PAGE_SLUG = 'elpac-summative'
+SITE_MENU_ORDER = 2  # under Assessments (CAST uses 1 on the same menu category)
+
+# Reference IDs from the production page (used by ``--verify`` only; not required on upsert).
+LIVE_DATASET_IDS = {
+    f'{ELPAC_PREFIX} Student Results': 19,
+    f'{ELPAC_PREFIX} Language Domain Results': 20,
+    f'{ELPAC_PREFIX} ELPI Results': 21,
+}
+LIVE_CHART_IDS = {
+    f'{ELPAC_PREFIX} Overall PL by Year': 298,
+    f'{ELPAC_PREFIX} Overall PL by School (A-M)': 299,
+    f'{ELPAC_PREFIX} Overall PL by School (N-Z)': 300,
+    f'{ELPAC_PREFIX} Elementary PL by Year': 301,
+    f'{ELPAC_PREFIX} Elementary PL by School (Part 1)': 302,
+    f'{ELPAC_PREFIX} Elementary PL by School (Part 2)': 303,
+    f'{ELPAC_PREFIX} Middle PL by Year': 304,
+    f'{ELPAC_PREFIX} Middle PL by School': 305,
+    f'{ELPAC_PREFIX} High PL by Year': 306,
+    f'{ELPAC_PREFIX} High PL by School': 307,
+    f'{ELPAC_PREFIX} Domain PL Mix': 308,
+    f'{ELPAC_PREFIX} Domain PL by Year': 309,
+    f'{ELPAC_PREFIX} Elementary All Domains PL': 310,
+    f'{ELPAC_PREFIX} Middle All Domains PL': 311,
+    f'{ELPAC_PREFIX} High All Domains PL': 312,
+    f'{ELPAC_PREFIX} ELPI by Year': 313,
+    f'{ELPAC_PREFIX} ELPI by School (A-M)': 314,
+    f'{ELPAC_PREFIX} ELPI by School (N-Z)': 315,
+    f'{ELPAC_PREFIX} ELPI by Grade Level': 316,
+    f'{ELPAC_PREFIX} Overall PL by School Table': 317,
+    f'{ELPAC_PREFIX} Language Domain PL by School Table': 318,
+    f'{ELPAC_PREFIX} Skill Domain PL by School Table': 319,
+}
 DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
 DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
 SOURCE_TABLE = 'results_with_tests'
@@ -829,9 +871,158 @@ CHART_SPECS = [
     },
 ]
 
+# Page filter widgets stored on DataVizPage (``source_distinct_sql`` is injected at upsert).
+PAGE_FILTER_WIDGETS = [
+    {
+        'id': 'test_year', 'label': 'Test Year', 'source_col': 'test_year',
+        'source_table': SOURCE_TABLE,
+        'widget': 'select', 'default_val': '__sy_prev1__', 'hidden': False,
+    },
+    {
+        'id': 'school', 'label': 'Tested School', 'source_col': 'school',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'enrolled_school', 'label': 'Enrolled School (current)',
+        'source_col': 'enrolled_school',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'grade', 'label': 'Grade (tested)', 'source_col': 'grade_label',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'gender', 'label': 'Gender', 'source_col': 'gender',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'race', 'label': 'Race', 'source_col': 'race',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'ell', 'label': 'ELL', 'source_col': 'ell',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'sed', 'label': 'SED', 'source_col': 'sed',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+    {
+        'id': 'sped', 'label': 'SPED', 'source_col': 'sped',
+        'source_table': SOURCE_TABLE,
+        'widget': 'multi', 'default_val': '', 'hidden': False,
+    },
+]
+
+# Layout on the live ``elpac-summative`` page (22 charts, 7 tabs).
+PAGE_LAYOUT_ROWS = [
+    {'tab': 'Overview', 'label': 'Performance levels', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Overall PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+    ]},
+    {'tab': 'Overview', 'label': 'By school — A–M', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Overall PL by School (A-M)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Overview', 'label': 'By school — N–Z', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Overall PL by School (N-Z)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Elementary', 'label': 'By year', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Elementary PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+    ]},
+    {'tab': 'Elementary', 'label': 'By school — Part 1', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Elementary PL by School (Part 1)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Elementary', 'label': 'By school — Part 2', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Elementary PL by School (Part 2)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Middle', 'label': 'By year', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Middle PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+    ]},
+    {'tab': 'Middle', 'label': 'By school', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Middle PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'High', 'label': 'By year', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} High PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
+    ]},
+    {'tab': 'High', 'label': 'By school', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} High PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Language Domains', 'label': 'Oral & written language', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Domain PL Mix', 'gs_x': 0, 'gs_w': 6, 'gs_h': 7},
+        {'chart': f'{ELPAC_PREFIX} Domain PL by Year', 'gs_x': 6, 'gs_w': 6, 'gs_h': 7},
+    ]},
+    {'tab': 'Language Domains', 'label': 'Elementary — all domains (multi-year)', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Elementary All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'Language Domains', 'label': 'Middle — all domains (multi-year)', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Middle All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'Language Domains', 'label': 'High — all domains (multi-year)', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} High All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'ELPI Results', 'label': 'ELPI by year', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} ELPI by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
+    ]},
+    {'tab': 'ELPI Results', 'label': 'ELPI by school — A–M', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} ELPI by School (A-M)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPI Results', 'label': 'ELPI by school — N–Z', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} ELPI by School (N-Z)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPI Results', 'label': 'ELPI by grade level', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} ELPI by Grade Level', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
+    ]},
+    {'tab': 'Detail Tables', 'label': 'Overall counts', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Overall PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+    ]},
+    {'tab': 'Detail Tables', 'label': 'Language domains', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Language Domain PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+    ]},
+    {'tab': 'Detail Tables', 'label': 'Skill domains', 'sections': [
+        {'chart': f'{ELPAC_PREFIX} Skill Domain PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
+    ]},
+]
+
+
+def _page_filter_sql_by_id():
+    return {
+        'test_year': _page_filter_test_year_sql(),
+        'school': _page_filter_school_sql(),
+        'enrolled_school': _page_filter_enrolled_school_sql(),
+        'grade': _page_filter_grade_sql(),
+        'gender': _page_filter_demographic_sql('gender'),
+        'race': _page_filter_demographic_sql('race'),
+        'ell': _page_filter_demographic_sql('ell'),
+        'sed': _page_filter_demographic_sql('sed'),
+        'sped': _page_filter_demographic_sql('sped'),
+    }
+
+
+def full_page_filters():
+    """Return page filters with live widget definitions plus ``source_distinct_sql``."""
+    sql_by_id = _page_filter_sql_by_id()
+    out = []
+    for entry in PAGE_FILTER_WIDGETS:
+        flt = dict(entry)
+        flt['source_distinct_sql'] = sql_by_id[flt['id']]
+        out.append(flt)
+    return out
+
+
+def chart_storage_name(short_name: str) -> str:
+    """SavedChart.name as stored in the database."""
+    return f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / {short_name}'
+
+
 PAGE_SPEC = {
     'title': 'ELPAC Summative',
-    'slug': 'elpac-summative',
+    'slug': PAGE_SLUG,
     'folder': CHART_FOLDER,
     'description': (
         'ELPAC Summative results. Test Year selects the assessment '
@@ -852,63 +1043,7 @@ PAGE_SPEC = {
         'students by their current school instead of the testing-year school. '
         'Click any chart to drill.'
     ),
-    'page_filters': [
-        {
-            'id': 'test_year', 'label': 'Test Year', 'source_col': 'test_year',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_test_year_sql(),
-            'widget': 'select', 'default_val': '__sy_prev1__', 'hidden': False,
-        },
-        {
-            'id': 'school', 'label': 'Tested School', 'source_col': 'school',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_school_sql(),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'enrolled_school', 'label': 'Enrolled School (current)',
-            'source_col': 'enrolled_school',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_enrolled_school_sql(),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'grade', 'label': 'Grade (tested)', 'source_col': 'grade_label',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_grade_sql(),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'gender', 'label': 'Gender', 'source_col': 'gender',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_demographic_sql('gender'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'race', 'label': 'Race', 'source_col': 'race',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_demographic_sql('race'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'ell', 'label': 'ELL', 'source_col': 'ell',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_demographic_sql('ell'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'sed', 'label': 'SED', 'source_col': 'sed',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_demographic_sql('sed'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-        {
-            'id': 'sped', 'label': 'SPED', 'source_col': 'sped',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_demographic_sql('sped'),
-            'widget': 'multi', 'default_val': '', 'hidden': False,
-        },
-    ],
+    'page_filters': full_page_filters(),
     'tabs': [
         'Overview',
         'Elementary',
@@ -918,72 +1053,7 @@ PAGE_SPEC = {
         'ELPI Results',
         'Detail Tables',
     ],
-    'rows': [
-        {'tab': 'Overview', 'label': 'Performance levels', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Overall PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
-        ]},
-        {'tab': 'Overview', 'label': 'By school — A–M', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Overall PL by School (A-M)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'Overview', 'label': 'By school — N–Z', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Overall PL by School (N-Z)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'Elementary', 'label': 'By year', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Elementary PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
-        ]},
-        {'tab': 'Elementary', 'label': 'By school — Part 1', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Elementary PL by School (Part 1)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'Elementary', 'label': 'By school — Part 2', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Elementary PL by School (Part 2)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'Middle', 'label': 'By year', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Middle PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
-        ]},
-        {'tab': 'Middle', 'label': 'By school', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Middle PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'High', 'label': 'By year', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} High PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 6},
-        ]},
-        {'tab': 'High', 'label': 'By school', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} High PL by School', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'Language Domains', 'label': 'Oral & written language', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Domain PL Mix', 'gs_x': 0, 'gs_w': 6, 'gs_h': 7},
-            {'chart': f'{ELPAC_PREFIX} Domain PL by Year', 'gs_x': 6, 'gs_w': 6, 'gs_h': 7},
-        ]},
-        {'tab': 'Language Domains', 'label': 'Elementary — all domains (multi-year)', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Elementary All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-        ]},
-        {'tab': 'Language Domains', 'label': 'Middle — all domains (multi-year)', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Middle All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-        ]},
-        {'tab': 'Language Domains', 'label': 'High — all domains (multi-year)', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} High All Domains PL', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-        ]},
-        {'tab': 'ELPI Results', 'label': 'ELPI by year', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} ELPI by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
-        ]},
-        {'tab': 'ELPI Results', 'label': 'ELPI by school — A–M', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} ELPI by School (A-M)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'ELPI Results', 'label': 'ELPI by school — N–Z', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} ELPI by School (N-Z)', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-        ]},
-        {'tab': 'ELPI Results', 'label': 'ELPI by grade level', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} ELPI by Grade Level', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
-        ]},
-        {'tab': 'Detail Tables', 'label': 'Overall counts', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Overall PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
-        ]},
-        {'tab': 'Detail Tables', 'label': 'Language domains', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Language Domain PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
-        ]},
-        {'tab': 'Detail Tables', 'label': 'Skill domains', 'sections': [
-            {'chart': f'{ELPAC_PREFIX} Skill Domain PL by School Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
-        ]},
-    ],
+    'rows': PAGE_LAYOUT_ROWS,
 }
 
 
@@ -1069,7 +1139,7 @@ def upsert_chart(spec, datasets, owner):
     allowed_prefixes = (ELPAC_PREFIX,)
     if not raw_name.startswith(allowed_prefixes):
         raise SystemExit(f'Refusing to write chart outside ELPAC set: {raw_name}')
-    folder_name = f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / {raw_name}'
+    folder_name = chart_storage_name(raw_name)
     old_folder_name = f'{CHART_FOLDER} / {raw_name}'
     dataset = datasets[spec['dataset']]
     chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
@@ -1196,7 +1266,7 @@ def attach_to_menu(page):
     if page.linked_site_page_id:
         site = Page.objects.get(pk=page.linked_site_page_id)
         site.parent_page = category
-        site.menu_order = 2
+        site.menu_order = SITE_MENU_ORDER
         site.show_in_menu = True
         site.save(update_fields=['parent_page', 'menu_order', 'show_in_menu'])
     print('  menu category "Assessments" updated.')
@@ -1639,6 +1709,119 @@ def _resolve_qa_default_year() -> str:
         return ''
 
 
+def verify_live_state() -> int:
+    """Compare live DB page/charts/datasets to this script (layout + configs + SQL)."""
+    import hashlib
+
+    from dataviz.models import (
+        DataVizPage, DataVizPageSection, Dataset, SavedChart,
+    )
+
+    failures: list[str] = []
+
+    def fail(msg: str):
+        failures.append(msg)
+        print(f'  FAIL {msg}')
+
+    page = DataVizPage.objects.filter(slug=PAGE_SLUG).first()
+    if not page:
+        fail(f'DataVizPage slug={PAGE_SLUG!r} not found')
+        return 1
+
+    expected_tabs = PAGE_SPEC['tabs']
+    live_tabs = list(page.tabs.order_by('position').values_list('name', flat=True))
+    if live_tabs != expected_tabs:
+        fail(f'tabs: live={live_tabs} expected={expected_tabs}')
+
+    # Page layout: tab, row label, chart short name, grid size.
+    live_rows = []
+    for row in page.rows.order_by('position'):
+        tab_name = row.tab.name if row.tab_id else ''
+        for sec in DataVizPageSection.objects.filter(row=row).select_related('chart'):
+            short = (sec.chart.name.rsplit(' / ', 1)[-1] if sec.chart else '')
+            live_rows.append({
+                'tab': tab_name,
+                'label': row.label,
+                'chart': short,
+                'gs_w': sec.gs_w,
+                'gs_h': sec.gs_h,
+                'gs_x': sec.gs_x,
+            })
+
+    expected_rows = []
+    for row_spec in PAGE_LAYOUT_ROWS:
+        for sec in row_spec['sections']:
+            expected_rows.append({
+                'tab': row_spec['tab'],
+                'label': row_spec['label'],
+                'chart': sec['chart'],
+                'gs_w': sec['gs_w'],
+                'gs_h': sec['gs_h'],
+                'gs_x': sec.get('gs_x', 0),
+            })
+    if len(live_rows) != len(expected_rows):
+        fail(f'layout row count: live={len(live_rows)} expected={len(expected_rows)}')
+    else:
+        for idx, (live, exp) in enumerate(zip(live_rows, expected_rows)):
+            if live != exp:
+                fail(f'layout row {idx}: live={live} expected={exp}')
+
+    for flt in PAGE_FILTER_WIDGETS:
+        fid = flt['id']
+        db_match = next((f for f in (page.page_filters or []) if f.get('id') == fid), None)
+        if not db_match:
+            fail(f'page filter missing in DB: {fid}')
+        elif {k: db_match.get(k) for k in flt} != flt:
+            fail(f'page filter {fid} widget fields differ from PAGE_FILTER_WIDGETS')
+
+    recent_years = _recent_test_years(5)
+    prepared = {s['name']: s for s in _prepare_chart_specs(recent_years)}
+    skip_cfg_keys = {'category_order', 'x_value_map'}
+
+    for short_name, expected_id in LIVE_CHART_IDS.items():
+        chart = SavedChart.objects.filter(pk=expected_id).first()
+        if not chart:
+            fail(f'chart id {expected_id} ({short_name}) missing')
+            continue
+        if chart.name != chart_storage_name(short_name):
+            fail(
+                f'chart {expected_id} name {chart.name!r} != '
+                f'{chart_storage_name(short_name)!r}'
+            )
+        spec = prepared.get(short_name)
+        if not spec:
+            fail(f'no script spec for {short_name}')
+            continue
+        db_cfg = {k: v for k, v in (chart.config or {}).items() if k not in skip_cfg_keys}
+        sp_cfg = {k: v for k, v in (spec['config'] or {}).items() if k not in skip_cfg_keys}
+        if db_cfg != sp_cfg:
+            fail(f'chart {short_name}: config drift (re-run script or update CHART_SPECS)')
+        if (chart.source_filters or {}) != (spec.get('source_filters') or {}):
+            fail(f'chart {short_name}: source_filters drift')
+
+    for ds_name, expected_id in LIVE_DATASET_IDS.items():
+        ds = Dataset.objects.filter(pk=expected_id).first()
+        if not ds:
+            fail(f'dataset id {expected_id} ({ds_name}) missing')
+            continue
+        if ds.name != ds_name:
+            fail(f'dataset {expected_id} name {ds.name!r} != {ds_name!r}')
+        spec = next((s for s in DATASET_SPECS if s['name'] == ds_name), None)
+        if not spec:
+            fail(f'no script DATASET_SPECS entry for {ds_name}')
+            continue
+        if hashlib.md5((ds.source_sql or '').encode()).hexdigest() != hashlib.md5(
+            (spec['sql'] or '').encode(),
+        ).hexdigest():
+            fail(f'dataset {ds_name}: source_sql drift')
+
+    if failures:
+        print(f'\nVERIFY FAILED ({len(failures)} issue(s)).')
+        return 1
+    print('VERIFY PASSED: page, 22 charts, and 3 datasets match this script.')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description='Create the ELPAC Summative DataViz page.')
     parser.add_argument('--owner', default='', help='Username or email of the owner.')
@@ -1650,12 +1833,18 @@ def main():
         '--qa', action='store_true',
         help='Run read-only data, chart, filter and drill QA, then exit.',
     )
+    parser.add_argument(
+        '--verify', action='store_true',
+        help='Compare live page/chart/dataset inventory to this script (no writes).',
+    )
     args = parser.parse_args()
 
     project_dir = bootstrap_django()
     if args.discover:
         discover_elpac_metadata()
         return
+    if args.verify:
+        raise SystemExit(verify_live_state())
     if args.qa:
         raise SystemExit(qa_elpac_dataviz())
 
