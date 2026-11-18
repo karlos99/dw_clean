@@ -5302,6 +5302,48 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         self.assertIn('toFixed(0)', opt['series'][0]['label']['__formatter_js__'])
         self.assertIn('toFixed(0)', opt['tooltip']['__formatter_js__'])
 
+    def test_stacked_percent_can_count_responses_not_unique_students(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'category': 'A', 'response_band': 'Favorable', 'ssid': '1'},
+            # Same student answered two questions in this category.
+            {'category': 'A', 'response_band': 'Favorable', 'ssid': '1'},
+            {'category': 'A', 'response_band': 'Unfavorable', 'ssid': '2'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'category',
+            'stack_col': 'response_band',
+            'agg': 'count',
+            'show_percent': True,
+            'percent_basis': 'responses',
+            'percent_decimals': 1,
+            'stack_order': ['Favorable', 'Unfavorable'],
+        }
+        opt = build_option(rows, {}, cfg)
+        fav = next(s for s in opt['series'] if s['name'] == 'Favorable')
+        # 2 of 3 answers, not 1 of 2 unique students.
+        self.assertAlmostEqual(fav['data'][0], 66.7, places=1)
+
+    def test_bar_data_label_suffix_formatter(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'category': 'A', 'pct': 67.4}]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'category',
+            'y_col': 'pct',
+            'agg': 'avg',
+            'data_labels': True,
+            'data_label_suffix': '%',
+            'data_label_decimals': 0,
+        }
+        opt = build_option(rows, {}, cfg)
+        fmt = opt['series'][0]['label']['__formatter_js__']
+        self.assertIn('toFixed(0)', fmt)
+        self.assertIn("+'%'", fmt)
+
     def test_bar_chart_keeps_students_after_test_pl_enrichment(self):
         from unittest.mock import patch
         from dataviz.utils.chart_builder import build_option

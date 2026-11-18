@@ -167,9 +167,9 @@
         <path d="M3 4a1 1 0 011-1h16a1 1 0 010 2H4a1 1 0 01-1-1zm3 6a1 1 0 011-1h10a1 1 0 010 2H7a1 1 0 01-1-1zm2 6a1 1 0 011-1h6a1 1 0 010 2H9a1 1 0 01-1-1z"/>
       </svg>
       <span x-text="treeOpen ? 'Hide Filters' : 'Filters'"></span>
-      <span x-show="tags.length > 0"
+      <span x-show="tags.some(t => !t.hidden)"
             class="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
-            x-text="tags.length"></span>
+            x-text="tags.filter(t => !t.hidden).length"></span>
     </button>
 
     <!-- Overlay dropdown panel -->
@@ -843,9 +843,13 @@
       },
 
       clearAll() {
-        // Track all affected columns before clearing
-        const affectedCols = [...new Set(this.tags.map(t => t.col))];
-        this.tags = [];
+        // Hidden filters are admin-configured page scope (e.g. which survey
+        // section a page covers) and must survive "Clear all".
+        const hiddenTags = this.tags.filter(t => _HIDDEN_FILTER_COLS.has(t.col));
+        const affectedCols = [
+          ...new Set(this.tags.filter(t => !_HIDDEN_FILTER_COLS.has(t.col)).map(t => t.col)),
+        ];
+        this.tags = hiddenTags;
         this._persist();
         this.refreshCharts(affectedCols);
       },

@@ -278,6 +278,9 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
     # have produced, so the series and value axis keep their real label.
     compact_cfg['y_col'] = '__dv_value'
     compact_cfg['agg'] = 'sum'
+    # Compact rows already carry response counts per (x, stack); summing them
+    # is correct. Do not switch the post-pushdown frame back to per-row counts.
+    compact_cfg.pop('percent_basis', None)
     compact_cfg['__measure_label__'] = _measure_display_label(
         y_col, aggregation, column_defs, column_mappings,
     )
@@ -589,6 +592,10 @@ def _clickhouse_aggregate_sql_dataset(ds, cfg, filters, column_mappings, *,
         compact_cfg['x_cols'] = [group_cols[0]]
     compact_cfg['y_col'] = '__dv_value'
     compact_cfg['agg'] = 'sum'
+    # The compact frame already holds response counts per (x, stack). Summing
+    # those counts is correct; a response-basis percent chart must not switch
+    # back to per-row counting after the pushdown.
+    compact_cfg.pop('percent_basis', None)
     compact_cfg['__measure_label__'] = _measure_display_label(
         y_col, aggregation, column_defs, column_mappings,
     )

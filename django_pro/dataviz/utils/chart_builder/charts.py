@@ -70,8 +70,15 @@ def _unique_student_share(df, x_col, cfg):
 
 
 def _student_share_measure(df, y_col, agg, show_percent, is_stacked, stack_col, cfg=None):
-    """For % of students, always count unique SSIDs — never row counts or rate sums."""
+    """For % of students, always count unique SSIDs — never row counts or rate sums.
+
+    Survey/response distributions are the exception: each row is one answer, so
+    ``percent_basis='responses'`` keeps 100% stacks based on response counts
+    instead of unique students (one student can answer many survey questions).
+    """
     cfg = cfg or {}
+    if (cfg.get('percent_basis') or '').lower() == 'responses':
+        return '', 'count'
     student_share = bool(cfg.get('student_share_percent', False))
     if not (show_percent or student_share):
         return y_col, agg
@@ -114,6 +121,12 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         if show_percent:
             label_cfg['__formatter_js__'] = (
                 f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
+        elif cfg.get('data_label_suffix'):
+            _suffix = str(cfg['data_label_suffix']).replace("\\", "\\\\").replace("'", "\\'")
+            _dec = int(cfg.get('data_label_decimals', 0) or 0)
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({_dec})+'{_suffix}';}}"
             )
         s = {
             'name': name, 'type': 'bar',
@@ -707,7 +720,16 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             'fontSize': int(cfg.get('label_font_size', 10) or 10),
         }
         _ad = cfg.get('agg_decimals')
-        if _ad is not None and cfg.get('data_labels', False):
+        if cfg.get('data_label_suffix') and cfg.get('data_labels', False):
+            _suffix = str(cfg['data_label_suffix']).replace("\\", "\\\\").replace("'", "\\'")
+            try:
+                _dec = int(cfg.get('data_label_decimals', _ad if _ad is not None else 0) or 0)
+            except (TypeError, ValueError):
+                _dec = 0
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({_dec})+'{_suffix}';}}"
+            )
+        elif _ad is not None and cfg.get('data_labels', False):
             try:
                 ad = int(_ad)
                 label_cfg['__formatter_js__'] = (
