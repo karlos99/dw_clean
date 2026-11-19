@@ -74,8 +74,14 @@ def bootstrap_django() -> str:
 
 PATHWAY_DATASET = 'Student Pathways'
 COLLEGES_DATASET = 'Student Pathway Colleges'
+OUTCOMES_DATASET = 'College Pathway Outcomes'
+AVID_OUTCOMES_DATASET = 'AVID Pathway Outcomes'
+CTE_LEVEL_OUTCOMES_DATASET = 'CTE Pathway Level Outcomes'
 SANKEY_CHART = 'Student Pathways — Elementary to College'
 COLLEGES_CHART = 'All Colleges — Student Pathway'
+OUTCOMES_CHART = 'High School to College Outcomes'
+AVID_OUTCOMES_CHART = 'AVID Student Outcomes'
+CTE_LEVEL_OUTCOMES_CHART = 'CTE Pathway Level Outcomes'
 PAGE_TITLE = 'College Pathway'
 PAGE_SLUG = 'college-pathway'
 PAGE_FOLDER = 'College & Career Readiness'
@@ -111,11 +117,15 @@ COLLEGES_COLUMNS = [
 ]
 
 PAGE_DESCRIPTION = (
-    'Student flow from elementary school through grade 8 and high school '
-    'into the college trajectory. Filter by elementary, grade 8, or high '
-    'school and cohort year at the top. Click any college node to trace the '
-    'elementary, grade 8, and high schools that feed it. Click an Other node '
-    'to expand its grouped colleges directly in the chart.'
+    'The top chart summarizes each high school\'s graduates → first college '
+    'enrollment → completion outcome. Below it, one chart follows CTE '
+    'participants through their highest pathway level (Intro, Concentrator, '
+    'Capstone, Completer), and a separate chart follows students who took an '
+    'AVID course in high school. The detailed Sankey then shows the full '
+    'elementary → grade 8 → high school → college pathway. Filter by '
+    'elementary, grade 8, high school, and cohort year at the top. Click any '
+    'college node to trace its upstream schools; click an Other node to expand '
+    'its grouped colleges in the chart.'
 )
 
 PAGE_FILTERS = [
@@ -163,6 +173,24 @@ PAGE_SPEC = {
         {
             'label': '',
             'sections': [
+                {'chart': OUTCOMES_CHART, 'gs_w': 12, 'gs_h': 12},
+            ],
+        },
+        {
+            'label': '',
+            'sections': [
+                {'chart': CTE_LEVEL_OUTCOMES_CHART, 'gs_w': 12, 'gs_h': 10},
+            ],
+        },
+        {
+            'label': '',
+            'sections': [
+                {'chart': AVID_OUTCOMES_CHART, 'gs_w': 12, 'gs_h': 10},
+            ],
+        },
+        {
+            'label': '',
+            'sections': [
                 {'chart': SANKEY_CHART, 'gs_w': 12, 'gs_h': 12},
             ],
         },
@@ -178,7 +206,12 @@ PAGE_SPEC = {
 
 def dataset_specs():
     """Dataset definitions, importing the shared SQL from the seed command."""
-    from dataviz.management.commands.seed_student_pathways import ALL_COLLEGES_SQL
+    from dataviz.management.commands.seed_student_pathways import (
+        ALL_COLLEGES_SQL,
+        AVID_OUTCOMES_COLUMNS, AVID_OUTCOMES_SQL,
+        CTE_LEVEL_OUTCOMES_COLUMNS, CTE_LEVEL_OUTCOMES_SQL,
+        OUTCOMES_COLUMNS, OUTCOMES_SQL,
+    )
 
     return [
         {
@@ -205,16 +238,90 @@ def dataset_specs():
                 'for page filters.'
             ),
         },
+        {
+            'name': OUTCOMES_DATASET,
+            'source_type': 'sql',
+            'base_table': 'student_pathways',
+            'columns': OUTCOMES_COLUMNS,
+            'sql': OUTCOMES_SQL,
+            'description': (
+                'One row per student with first-enrollment and completion-'
+                'outcome stages, plus school/cohort columns for page filters.'
+            ),
+        },
+        {
+            'name': AVID_OUTCOMES_DATASET,
+            'source_type': 'sql',
+            'base_table': 'student_pathways',
+            'columns': AVID_OUTCOMES_COLUMNS,
+            'sql': AVID_OUTCOMES_SQL,
+            'description': (
+                'Students with at least one AVID course in their high-school '
+                'schedule, joined to student_pathways outcomes.'
+            ),
+        },
+        {
+            'name': CTE_LEVEL_OUTCOMES_DATASET,
+            'source_type': 'sql',
+            'base_table': 'student_pathways',
+            'columns': CTE_LEVEL_OUTCOMES_COLUMNS,
+            'sql': CTE_LEVEL_OUTCOMES_SQL,
+            'description': (
+                'Each CTE participant\'s highest pathway level, joined to '
+                'student_pathways outcomes.'
+            ),
+        },
     ]
 
 
 def chart_specs():
     """Chart definitions, reusing the shared seed configs."""
     from dataviz.management.commands.seed_student_pathways import (
-        ALL_COLLEGES_CONFIG, SANKEY_CONFIG,
+        ALL_COLLEGES_CONFIG,
+        AVID_OUTCOMES_CONFIG, CTE_LEVEL_OUTCOMES_CONFIG,
+        OUTCOMES_CONFIG, SANKEY_CONFIG,
     )
 
     return [
+        {
+            'name': OUTCOMES_CHART,
+            'chart_type': 'sankey',
+            'dataset': OUTCOMES_DATASET,
+            'config': dict(OUTCOMES_CONFIG),
+            'column_defs': {},
+            'drill_through_columns': [],
+            'drill_through_filter_map': {},
+            'description': (
+                'High school graduates → first enrollment (2-year / 4-year / '
+                'never) → completion outcome.'
+            ),
+        },
+        {
+            'name': CTE_LEVEL_OUTCOMES_CHART,
+            'chart_type': 'sankey',
+            'dataset': CTE_LEVEL_OUTCOMES_DATASET,
+            'config': dict(CTE_LEVEL_OUTCOMES_CONFIG),
+            'column_defs': {},
+            'drill_through_columns': [],
+            'drill_through_filter_map': {},
+            'description': (
+                'CTE participants → highest CTE level (Intro / Concentrator / '
+                'Capstone / Completer) → first enrollment → completion outcome.'
+            ),
+        },
+        {
+            'name': AVID_OUTCOMES_CHART,
+            'chart_type': 'sankey',
+            'dataset': AVID_OUTCOMES_DATASET,
+            'config': dict(AVID_OUTCOMES_CONFIG),
+            'column_defs': {},
+            'drill_through_columns': [],
+            'drill_through_filter_map': {},
+            'description': (
+                'Students with an AVID course in high school → first enrollment '
+                '→ completion outcome, with school and cohort filters.'
+            ),
+        },
         {
             'name': SANKEY_CHART,
             'chart_type': 'sankey',

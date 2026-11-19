@@ -81,6 +81,324 @@ ALL_COLLEGES_CONFIG = {
     'container_height': 900,
 }
 
+OUTCOMES_DATASET_NAME = 'College Pathway Outcomes'
+OUTCOMES_CHART_NAME = 'High School to College Outcomes'
+OUTCOMES_COLUMNS = [
+    'hs_stage',
+    'first_stage',
+    'outcome_stage',
+    'grade_5_school',
+    'grade_8_school',
+    'high_school_name',
+    'cohort',
+]
+OUTCOMES_SQL = """
+SELECT
+    COALESCE(NULLIF(BTRIM(high_school_name), ''), 'Unknown High School') AS hs_stage,
+    CASE
+        WHEN upper(btrim(coalesce(enrolled_post_hs, ''))) = 'Y' THEN
+            CASE
+                WHEN btrim(coalesce(first_post_hs_college_type, ''))
+                     IN ('2-Year', 'Less Than 2 Years') THEN '2-Year College'
+                WHEN btrim(coalesce(first_post_hs_college_type, '')) = '4-Year'
+                    THEN '4-Year College'
+                ELSE 'Other College'
+            END
+        ELSE 'Never Enrolled'
+    END AS first_stage,
+    CASE
+        WHEN upper(btrim(coalesce(enrolled_post_hs, ''))) <> 'Y' THEN ''
+        WHEN position('bachelor' IN lower(btrim(coalesce(highest_degree_level, '')))) > 0
+            THEN 'Bachelor''s Degree'
+        WHEN position('associate' IN lower(btrim(coalesce(highest_degree_level, '')))) > 0
+            THEN 'Associate Degree'
+        WHEN position('certificate' IN lower(btrim(coalesce(highest_degree_level, '')))) > 0
+            THEN 'Certificate'
+        ELSE 'Attended, Not Completed'
+    END AS outcome_stage,
+    grade_5_school,
+    grade_8_school,
+    high_school_name,
+    cohort
+FROM student_pathways
+"""
+
+OUTCOMES_CONFIG = {
+    'chart_type': 'sankey',
+    'x_col': '',
+    'sk_path_col': '',
+    'sk_stage_cols': ['hs_stage', 'first_stage', 'outcome_stage'],
+    'sk_stage_labels': {
+        'hs_stage': 'High Schools',
+        'first_stage': 'First Enrollment',
+        'outcome_stage': 'Completion Outcome',
+    },
+    'sk_exclude_hs_from_grade8': False,
+    'sk_blank_label': '',
+    'sk_label_mode': 'percent',
+    'sk_label_width': 190,
+    'sk_label_box': True,
+    'sk_label_position': 'auto',
+    'sk_right_padding': 18,
+    'sk_label_min_value': 0,
+    'sk_color_mode': 'stage',
+    'palette': 'blue',
+    'sk_order_mode': 'value',
+    'sk_link_color_mode': 'source',
+    'sk_top_per_stage': 0,
+    'sk_max_nodes': 0,
+    'sk_min_link_value': 1,
+    'sk_node_align': 'justify',
+    'sk_orient': 'horizontal',
+    'sk_layout_iterations': 0,
+    'sk_node_width': 18,
+    'sk_node_gap': 24,
+    'sk_show_labels': True,
+    'sk_show_stage_flow': True,
+    'sk_curveness': 0.5,
+    'sk_line_opacity': 0.32,
+    'label_font_size': 11,
+    'container_height': 900,
+    'chart_title': 'High School to College Outcomes',
+    'chart_subtitle': 'Each high school → first enrollment → completion outcome.',
+    'show_title': True,
+    'show_subtitle': True,
+    'show_tooltip': True,
+    'sk_series_name': 'High School to College Outcomes',
+}
+
+AVID_OUTCOMES_DATASET_NAME = 'AVID Pathway Outcomes'
+AVID_OUTCOMES_CHART_NAME = 'AVID Student Outcomes'
+AVID_OUTCOMES_COLUMNS = [
+    'hs_stage',
+    'first_stage',
+    'outcome_stage',
+    'grade_5_school',
+    'grade_8_school',
+    'high_school_name',
+    'cohort',
+]
+
+# AVID is a high-school course in schedule_table_alt.  Keep every student with
+# at least one AVID course in their high-school schedule (tutor sections do not
+# count as the AVID class), then join to student_pathways for outcomes.
+AVID_OUTCOMES_SQL = """
+WITH avid_students AS (
+    SELECT DISTINCT ssid
+    FROM schedule_table_alt
+    WHERE school_type = 'High School'
+      AND school_year IN ('2023-2024', '2024-2025', '2025-2026')
+      AND upper(left(btrim(course_name), 4)) = 'AVID'
+      AND position('tutor' in lower(course_name)) = 0
+)
+SELECT
+    COALESCE(NULLIF(BTRIM(sp.high_school_name), ''), 'Unknown High School') AS hs_stage,
+    CASE
+        WHEN upper(btrim(coalesce(sp.enrolled_post_hs, ''))) = 'Y' THEN
+            CASE
+                WHEN btrim(coalesce(sp.first_post_hs_college_type, ''))
+                     IN ('2-Year', 'Less Than 2 Years') THEN '2-Year College'
+                WHEN btrim(coalesce(sp.first_post_hs_college_type, '')) = '4-Year'
+                    THEN '4-Year College'
+                ELSE 'Other College'
+            END
+        ELSE 'Never Enrolled'
+    END AS first_stage,
+    CASE
+        WHEN upper(btrim(coalesce(sp.enrolled_post_hs, ''))) <> 'Y' THEN ''
+        WHEN position('bachelor' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Bachelor''s Degree'
+        WHEN position('associate' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Associate Degree'
+        WHEN position('certificate' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Certificate'
+        ELSE 'Attended, Not Completed'
+    END AS outcome_stage,
+    sp.grade_5_school,
+    sp.grade_8_school,
+    sp.high_school_name,
+    sp.cohort
+FROM student_pathways sp
+JOIN avid_students avid ON avid.ssid = sp.state_student_id
+"""
+
+AVID_OUTCOMES_CONFIG = {
+    'chart_type': 'sankey',
+    'x_col': '',
+    'sk_path_col': '',
+    'sk_stage_cols': ['hs_stage', 'first_stage', 'outcome_stage'],
+    'sk_stage_labels': {
+        'hs_stage': 'High Schools',
+        'first_stage': 'First Enrollment',
+        'outcome_stage': 'Completion Outcome',
+    },
+    'sk_exclude_hs_from_grade8': False,
+    'sk_blank_label': '',
+    'sk_label_mode': 'percent',
+    'sk_label_width': 190,
+    'sk_label_box': True,
+    'sk_label_position': 'auto',
+    'sk_right_padding': 18,
+    'sk_label_min_value': 0,
+    'sk_color_mode': 'stage',
+    'palette': 'blue',
+    'sk_order_mode': 'value',
+    'sk_link_color_mode': 'source',
+    'sk_top_per_stage': 0,
+    'sk_max_nodes': 0,
+    'sk_min_link_value': 1,
+    'sk_node_align': 'justify',
+    'sk_orient': 'horizontal',
+    'sk_layout_iterations': 0,
+    'sk_node_width': 18,
+    'sk_node_gap': 24,
+    'sk_show_labels': True,
+    'sk_show_stage_flow': True,
+    'sk_curveness': 0.5,
+    'sk_line_opacity': 0.32,
+    'label_font_size': 11,
+    'container_height': 900,
+    'chart_title': 'AVID Student Outcomes',
+    'chart_subtitle': (
+        'Students with an AVID course in their high-school schedule → first '
+        'college enrollment → completion outcome.'
+    ),
+    'show_title': True,
+    'show_subtitle': True,
+    'show_tooltip': True,
+    'sk_series_name': 'AVID Student Outcomes',
+}
+
+CTE_LEVEL_OUTCOMES_DATASET_NAME = 'CTE Pathway Level Outcomes'
+CTE_LEVEL_OUTCOMES_CHART_NAME = 'CTE Pathway Level Outcomes'
+CTE_LEVEL_OUTCOMES_COLUMNS = [
+    'hs_stage',
+    'cte_level_stage',
+    'first_stage',
+    'outcome_stage',
+    'grade_5_school',
+    'grade_8_school',
+    'high_school_name',
+    'cohort',
+]
+
+# Each student's highest CTE level across all their pathway records.  A
+# completer record wins; otherwise a met capstone, then a met concentration,
+# then introductory participation.  CTE details are PostgreSQL-only, so this
+# dataset intentionally joins there and keeps only tracked student_pathways
+# students (the 2024-25 cohort has the CTE records).
+CTE_LEVEL_OUTCOMES_SQL = """
+WITH cte_levels AS (
+    SELECT
+        state_student_id,
+        MAX(
+            CASE
+                WHEN pathway_status = 'CTE Completer' THEN 4
+                WHEN btrim(coalesce(cap_status, '')) = 'Met' THEN 3
+                WHEN btrim(coalesce(con_status, '')) = 'Met' THEN 2
+                ELSE 1
+            END
+        ) AS level
+    FROM coursecatalog_cte_details
+    WHERE school_year IN ('2024', '2025', '2026')
+    GROUP BY state_student_id
+)
+SELECT
+    COALESCE(NULLIF(BTRIM(sp.high_school_name), ''), 'Unknown High School') AS hs_stage,
+    CASE cte.level
+        WHEN 4 THEN 'Completer'
+        WHEN 3 THEN 'Capstone'
+        WHEN 2 THEN 'Concentrator'
+        ELSE 'Intro'
+    END AS cte_level_stage,
+    CASE
+        WHEN upper(btrim(coalesce(sp.enrolled_post_hs, ''))) = 'Y' THEN
+            CASE
+                WHEN btrim(coalesce(sp.first_post_hs_college_type, ''))
+                     IN ('2-Year', 'Less Than 2 Years') THEN '2-Year College'
+                WHEN btrim(coalesce(sp.first_post_hs_college_type, '')) = '4-Year'
+                    THEN '4-Year College'
+                ELSE 'Other College'
+            END
+        ELSE 'Never Enrolled'
+    END AS first_stage,
+    CASE
+        WHEN upper(btrim(coalesce(sp.enrolled_post_hs, ''))) <> 'Y' THEN ''
+        WHEN position('bachelor' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Bachelor''s Degree'
+        WHEN position('associate' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Associate Degree'
+        WHEN position('certificate' IN lower(btrim(coalesce(sp.highest_degree_level, '')))) > 0
+            THEN 'Certificate'
+        ELSE 'Attended, Not Completed'
+    END AS outcome_stage,
+    sp.grade_5_school,
+    sp.grade_8_school,
+    sp.high_school_name,
+    sp.cohort
+FROM student_pathways sp
+JOIN cte_levels cte ON cte.state_student_id = sp.state_student_id
+"""
+
+CTE_LEVEL_OUTCOMES_CONFIG = {
+    'chart_type': 'sankey',
+    'x_col': '',
+    'sk_path_col': '',
+    'sk_stage_cols': [
+        'hs_stage',
+        'cte_level_stage',
+        'first_stage',
+        'outcome_stage',
+    ],
+    'sk_stage_labels': {
+        'hs_stage': 'High Schools',
+        'cte_level_stage': 'Highest CTE Level',
+        'first_stage': 'First Enrollment',
+        'outcome_stage': 'Completion Outcome',
+    },
+    'sk_exclude_hs_from_grade8': False,
+    'sk_blank_label': '',
+    'sk_label_mode': 'percent',
+    'sk_label_width': 190,
+    'sk_label_box': True,
+    'sk_label_position': 'auto',
+    'sk_right_padding': 18,
+    'sk_label_min_value': 0,
+    'sk_color_mode': 'stage',
+    'palette': 'green',
+    'color_map': {
+        'Intro': '#94a3b8',
+        'Concentrator': '#5b9bd5',
+        'Capstone': '#0d9488',
+        'Completer': '#16a34a',
+    },
+    'sk_order_mode': 'value',
+    'sk_link_color_mode': 'source',
+    'sk_top_per_stage': 0,
+    'sk_max_nodes': 0,
+    'sk_min_link_value': 1,
+    'sk_node_align': 'justify',
+    'sk_orient': 'horizontal',
+    'sk_layout_iterations': 0,
+    'sk_node_width': 18,
+    'sk_node_gap': 24,
+    'sk_show_labels': True,
+    'sk_show_stage_flow': True,
+    'sk_curveness': 0.5,
+    'sk_line_opacity': 0.32,
+    'label_font_size': 11,
+    'container_height': 900,
+    'chart_title': 'CTE Pathway Level Outcomes',
+    'chart_subtitle': (
+        'Highest CTE level achieved → first college enrollment → completion '
+        'outcome, 2024-25 cohort.'
+    ),
+    'show_title': True,
+    'show_subtitle': True,
+    'show_tooltip': True,
+    'sk_series_name': 'CTE Pathway Level Outcomes',
+}
+
 SANKEY_CONFIG = {
     'chart_type': 'sankey',
     'x_col': 'school_and_college_history',
@@ -115,6 +433,7 @@ SANKEY_CONFIG = {
     'sk_link_color_mode': 'source',
     'sk_top_per_stage': 12,
     'sk_group_after_stage': 3,
+    'sk_other_split_systems': True,
     'sk_label_min_value': 5,
     'sk_show_stage_flow': True,
     'sk_node_align': 'justify',
@@ -190,6 +509,9 @@ class Command(BaseCommand):
 
         chart = None
         colleges_chart = None
+        outcomes_chart = None
+        avid_outcomes_chart = None
+        cte_level_chart = None
         if options.get('chart') or options.get('page'):
             chart, chart_created = SavedChart.objects.update_or_create(
                 name=CHART_NAME,
@@ -265,9 +587,143 @@ class Command(BaseCommand):
                 f"#{colleges_chart.pk} '{colleges_chart.name}'."
             ))
 
+            # High-level outcome Sankey: HS graduates → first enrollment →
+            # completion outcome (the summary version of the pathway).
+            outcomes_dataset, outcomes_ds_created = Dataset.objects.update_or_create(
+                name=OUTCOMES_DATASET_NAME,
+                owner=owner,
+                defaults={
+                    'source_type': Dataset.SOURCE_SQL,
+                    'source_sql': OUTCOMES_SQL,
+                    'base_table': 'student_pathways',
+                    'distinct': False,
+                    'columns': OUTCOMES_COLUMNS,
+                    'column_mappings': {c: c for c in OUTCOMES_COLUMNS},
+                    'description': (
+                        'One row per student with first-enrollment and completion-'
+                        'outcome stages, plus school/cohort columns for page filters.'
+                    ),
+                },
+            )
+            outcomes_chart, outcomes_chart_created = SavedChart.objects.update_or_create(
+                name=OUTCOMES_CHART_NAME,
+                owner=owner,
+                defaults={
+                    'chart_type': 'sankey',
+                    'config': dict(OUTCOMES_CONFIG),
+                    'source_type': SavedChart.SOURCE_DATASET,
+                    'source_id': outcomes_dataset.pk,
+                    'source_filters': {},
+                    'column_defs': {},
+                    'description': (
+                        'High school graduates → first enrollment (2-year / 4-year / '
+                        'never) → completion outcome.'
+                    ),
+                },
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if outcomes_ds_created else 'Updated'} dataset "
+                f"#{outcomes_dataset.pk} '{outcomes_dataset.name}'."
+            ))
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if outcomes_chart_created else 'Updated'} chart "
+                f"#{outcomes_chart.pk} '{outcomes_chart.name}'."
+            ))
+
+            # AVID-only outcome chart: high schools → first enrollment →
+            # completion outcome for students with an AVID course in high school.
+            avid_dataset, avid_ds_created = Dataset.objects.update_or_create(
+                name=AVID_OUTCOMES_DATASET_NAME,
+                owner=owner,
+                defaults={
+                    'source_type': Dataset.SOURCE_SQL,
+                    'source_sql': AVID_OUTCOMES_SQL,
+                    'base_table': 'student_pathways',
+                    'distinct': False,
+                    'columns': AVID_OUTCOMES_COLUMNS,
+                    'column_mappings': {c: c for c in AVID_OUTCOMES_COLUMNS},
+                    'description': (
+                        'Students with at least one AVID course in their high-'
+                        'school schedule, joined to student_pathways outcomes.'
+                    ),
+                },
+            )
+            avid_outcomes_chart, avid_chart_created = SavedChart.objects.update_or_create(
+                name=AVID_OUTCOMES_CHART_NAME,
+                owner=owner,
+                defaults={
+                    'chart_type': 'sankey',
+                    'config': dict(AVID_OUTCOMES_CONFIG),
+                    'source_type': SavedChart.SOURCE_DATASET,
+                    'source_id': avid_dataset.pk,
+                    'source_filters': {},
+                    'column_defs': {},
+                    'description': (
+                        'AVID students by high school → first enrollment → '
+                        'completion outcome.'
+                    ),
+                },
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if avid_ds_created else 'Updated'} dataset "
+                f"#{avid_dataset.pk} '{avid_dataset.name}'."
+            ))
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if avid_chart_created else 'Updated'} chart "
+                f"#{avid_outcomes_chart.pk} '{avid_outcomes_chart.name}'."
+            ))
+
+            # CTE-only outcome chart: high schools → highest CTE level
+            # (Intro / Concentrator / Capstone / Completer) → enrollment →
+            # completion outcome.
+            cte_dataset, cte_ds_created = Dataset.objects.update_or_create(
+                name=CTE_LEVEL_OUTCOMES_DATASET_NAME,
+                owner=owner,
+                defaults={
+                    'source_type': Dataset.SOURCE_SQL,
+                    'source_sql': CTE_LEVEL_OUTCOMES_SQL,
+                    'base_table': 'student_pathways',
+                    'distinct': False,
+                    'columns': CTE_LEVEL_OUTCOMES_COLUMNS,
+                    'column_mappings': {c: c for c in CTE_LEVEL_OUTCOMES_COLUMNS},
+                    'description': (
+                        'Each CTE participant\'s highest pathway level, joined to '
+                        'student_pathways outcomes.'
+                    ),
+                },
+            )
+            cte_level_chart, cte_chart_created = SavedChart.objects.update_or_create(
+                name=CTE_LEVEL_OUTCOMES_CHART_NAME,
+                owner=owner,
+                defaults={
+                    'chart_type': 'sankey',
+                    'config': dict(CTE_LEVEL_OUTCOMES_CONFIG),
+                    'source_type': SavedChart.SOURCE_DATASET,
+                    'source_id': cte_dataset.pk,
+                    'source_filters': {},
+                    'column_defs': {},
+                    'description': (
+                        'CTE participants → highest CTE level → first enrollment '
+                        '→ completion outcome, with school and cohort filters.'
+                    ),
+                },
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if cte_ds_created else 'Updated'} dataset "
+                f"#{cte_dataset.pk} '{cte_dataset.name}'."
+            ))
+            self.stdout.write(self.style.SUCCESS(
+                f"{'Created' if cte_chart_created else 'Updated'} chart "
+                f"#{cte_level_chart.pk} '{cte_level_chart.name}'."
+            ))
+
         if options.get('page'):
-            if chart is None or colleges_chart is None:
-                raise CommandError('The page needs both charts; pass --chart as well.')
+            if (
+                chart is None or colleges_chart is None
+                or outcomes_chart is None or avid_outcomes_chart is None
+                or cte_level_chart is None
+            ):
+                raise CommandError('The page needs all five charts; pass --chart as well.')
 
             page = DataVizPage.objects.filter(slug='college-pathway').first()
             if page is not None and page.owner_id != owner.pk:
@@ -285,11 +741,16 @@ class Command(BaseCommand):
             page.title = PAGE_TITLE
             page.owner = owner
             page.description = (
-                'Student flow from elementary school through grade 8 and high school '
-                'into the college trajectory. Filter by elementary, grade 8, or high '
-                'school and cohort year at the top. Click any college node to trace '
-                'the elementary, grade 8, and high schools that feed it. Click an '
-                'Other node to expand its grouped colleges directly in the chart.'
+                'The top chart summarizes each high school\'s graduates → first '
+                'college enrollment → completion outcome. Below it, one chart '
+                'follows CTE participants through their highest pathway level '
+                '(Intro, Concentrator, Capstone, Completer), and a separate chart '
+                'follows students who took an AVID course in high school. The '
+                'detailed Sankey then shows the full elementary → grade 8 → high '
+                'school → college pathway. Filter by elementary, grade 8, high '
+                'school, and cohort year at the top. Click any college node to '
+                'trace its upstream schools; click an Other node to expand its '
+                'grouped colleges in the chart.'
             )
             page.container_width = DataVizPage.CONTAINER_FULL
             page.show_header = True
@@ -358,13 +819,22 @@ class Command(BaseCommand):
                 section.save()
                 return created_section
 
-            sankey_row = _page_row(0)
+            outcomes_row = _page_row(0)
+            _page_section(outcomes_row, outcomes_chart, 12)
+            cte_row = _page_row(1)
+            _page_section(cte_row, cte_level_chart, 10)
+            avid_row = _page_row(2)
+            _page_section(avid_row, avid_outcomes_chart, 10)
+            sankey_row = _page_row(3)
             _page_section(sankey_row, chart, 12)
-            colleges_row = _page_row(1, 'All Colleges')
+            colleges_row = _page_row(4, 'All Colleges')
             _page_section(colleges_row, colleges_chart, 10)
+
+            # Remove any stale rows left below the current five-section layout.
+            DataVizPageRow.objects.filter(page=page, position__gt=4).delete()
 
             self.stdout.write(self.style.SUCCESS(
                 f"{'Created' if page_created else 'Updated'} page #{page.pk} "
                 f"'{page.title}' (slug: {page.slug}, status: {page.status}) "
-                f"with the Sankey + all-colleges table."
+                f"with outcomes + CTE levels + AVID + Sankey + all-colleges table."
             ))

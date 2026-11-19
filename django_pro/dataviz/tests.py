@@ -5948,3 +5948,310 @@ class SankeyStageColumnTests(SimpleTestCase):
             for link in opt['series'][0]['links']
         ]
         self.assertIn(('Elementary · Johnson', 'High School · Summit'), links)
+
+
+class SankeyOutcomeChartTests(SimpleTestCase):
+    def test_high_school_to_college_outcome_chart(self):
+        from dataviz.management.commands.seed_student_pathways import OUTCOMES_CONFIG
+        from dataviz.utils.chart_builder import build_option
+
+        rows = []
+        rows += [
+            {
+                'hs_stage': 'Summit',
+                'first_stage': '2-Year College',
+                'outcome_stage': 'Attended, Not Completed',
+            }
+            for _ in range(3)
+        ]
+        rows += [
+            {
+                'hs_stage': 'Summit',
+                'first_stage': '4-Year College',
+                'outcome_stage': "Bachelor's Degree",
+            }
+            for _ in range(2)
+        ]
+        rows.append({
+            'hs_stage': 'Summit',
+            'first_stage': 'Never Enrolled',
+            'outcome_stage': '',
+        })
+
+        opt = build_option(rows, {}, OUTCOMES_CONFIG)
+        series = opt['series'][0]
+        nodes = {node['name']: node['value'] for node in series['data']}
+        links = [(link['source'], link['target']) for link in series['links']]
+
+        self.assertEqual(nodes['High Schools · Summit'], 6)
+        self.assertEqual(nodes['First Enrollment · 2-Year College'], 3)
+        self.assertEqual(nodes['First Enrollment · Never Enrolled'], 1)
+        self.assertEqual(nodes['Completion Outcome · Attended, Not Completed'], 3)
+        self.assertIn(
+            ('High Schools · Summit',
+             'First Enrollment · Never Enrolled'),
+            links,
+        )
+        self.assertNotIn(
+            ('First Enrollment · Never Enrolled',
+             'Completion Outcome · Attended, Not Completed'),
+            links,
+        )
+        self.assertEqual(
+            [g['style']['text'] for g in opt.get('graphic', [])],
+            ['High Schools', 'First Enrollment', 'Completion Outcome'],
+        )
+        self.assertIn('toFixed(1)', series['label']['__formatter_js__'])
+        self.assertEqual(series['label'].get('backgroundColor'), '#ffffff')
+        self.assertEqual(series['right'], 18)
+
+    def test_outcome_sql_uses_the_high_school_name(self):
+        from dataviz.management.commands.seed_student_pathways import OUTCOMES_SQL
+
+        self.assertIn('NULLIF(BTRIM(high_school_name)', OUTCOMES_SQL)
+        self.assertNotIn("'All Graduates' AS hs_stage", OUTCOMES_SQL)
+
+
+
+class AVIDOutcomeChartTests(SimpleTestCase):
+    def test_avid_chart_is_a_school_outcome_flow(self):
+        from dataviz.management.commands.seed_student_pathways import (
+            AVID_OUTCOMES_CONFIG,
+        )
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {
+                'hs_stage': 'Summit',
+                'first_stage': '4-Year College',
+                'outcome_stage': 'Attended, Not Completed',
+            }
+            for _ in range(2)
+        ]
+        rows += [
+            {
+                'hs_stage': 'Indio HS',
+                'first_stage': '2-Year College',
+                'outcome_stage': 'Associate Degree',
+            }
+            for _ in range(3)
+        ]
+        rows.append({
+            'hs_stage': 'Indio HS',
+            'first_stage': 'Never Enrolled',
+            'outcome_stage': '',
+        })
+
+        opt = build_option(rows, {}, AVID_OUTCOMES_CONFIG)
+        series = opt['series'][0]
+        nodes = {node['name']: node['value'] for node in series['data']}
+        links = [(link['source'], link['target']) for link in series['links']]
+
+        self.assertEqual(nodes['High Schools · Summit'], 2)
+        self.assertEqual(nodes['High Schools · Indio HS'], 4)
+        self.assertEqual(nodes['First Enrollment · 2-Year College'], 3)
+        self.assertEqual(nodes['First Enrollment · Never Enrolled'], 1)
+        self.assertIn(
+            ('High Schools · Summit', 'First Enrollment · 4-Year College'),
+            links,
+        )
+        self.assertNotIn(
+            ('First Enrollment · Never Enrolled',
+             'Completion Outcome · Attended, Not Completed'),
+            links,
+        )
+        self.assertEqual(
+            [g['style']['text'] for g in opt.get('graphic', [])],
+            ['High Schools', 'First Enrollment', 'Completion Outcome'],
+        )
+        self.assertIn('toFixed(1)', series['label']['__formatter_js__'])
+        self.assertEqual(series['label'].get('backgroundColor'), '#ffffff')
+        self.assertEqual(series['label'].get('width'), 190)
+
+    def test_avid_sql_requires_high_school_avid_course(self):
+        from dataviz.management.commands.seed_student_pathways import (
+            AVID_OUTCOMES_SQL,
+        )
+
+        self.assertIn('schedule_table_alt', AVID_OUTCOMES_SQL)
+        self.assertIn("school_type = 'High School'", AVID_OUTCOMES_SQL)
+        self.assertIn("upper(left(btrim(course_name), 4)) = 'AVID'", AVID_OUTCOMES_SQL)
+        self.assertIn("position('tutor' in lower(course_name)) = 0", AVID_OUTCOMES_SQL)
+        self.assertIn('student_pathways sp', AVID_OUTCOMES_SQL)
+        self.assertNotIn('coursecatalog_cte_details', AVID_OUTCOMES_SQL)
+
+
+class CTELevelOutcomeChartTests(SimpleTestCase):
+    def test_cte_chart_has_a_highest_level_stage(self):
+        from dataviz.management.commands.seed_student_pathways import (
+            CTE_LEVEL_OUTCOMES_CONFIG,
+        )
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {
+                'hs_stage': 'Summit',
+                'cte_level_stage': 'Completer',
+                'first_stage': '2-Year College',
+                'outcome_stage': 'Attended, Not Completed',
+            }
+            for _ in range(3)
+        ]
+        rows += [
+            {
+                'hs_stage': 'Summit',
+                'cte_level_stage': 'Concentrator',
+                'first_stage': '4-Year College',
+                'outcome_stage': 'Attended, Not Completed',
+            }
+            for _ in range(2)
+        ]
+        rows.append({
+            'hs_stage': 'Indio HS',
+            'cte_level_stage': 'Intro',
+            'first_stage': 'Never Enrolled',
+            'outcome_stage': '',
+        })
+
+        opt = build_option(rows, {}, CTE_LEVEL_OUTCOMES_CONFIG)
+        series = opt['series'][0]
+        nodes = {node['name']: node for node in series['data']}
+        links = [(link['source'], link['target']) for link in series['links']]
+
+        self.assertEqual(nodes['High Schools · Summit']['value'], 5)
+        self.assertEqual(nodes['Highest CTE Level · Completer']['value'], 3)
+        self.assertEqual(nodes['Highest CTE Level · Concentrator']['value'], 2)
+        self.assertEqual(nodes['Highest CTE Level · Intro']['value'], 1)
+        self.assertEqual(
+            nodes['Highest CTE Level · Completer']['itemStyle']['color'],
+            '#16a34a',
+        )
+        self.assertEqual(
+            nodes['Highest CTE Level · Intro']['itemStyle']['color'],
+            '#94a3b8',
+        )
+        self.assertIn(
+            ('High Schools · Summit', 'Highest CTE Level · Completer'),
+            links,
+        )
+        self.assertIn(
+            ('Highest CTE Level · Concentrator',
+             'First Enrollment · 4-Year College'),
+            links,
+        )
+        self.assertEqual(
+            [g['style']['text'] for g in opt.get('graphic', [])],
+            [
+                'High Schools',
+                'Highest CTE Level',
+                'First Enrollment',
+                'Completion Outcome',
+            ],
+        )
+        self.assertIn('toFixed(1)', series['label']['__formatter_js__'])
+        self.assertEqual(series['label'].get('backgroundColor'), '#ffffff')
+        self.assertEqual(series['label'].get('width'), 190)
+
+    def test_cte_sql_maps_pathway_flags_to_levels(self):
+        from dataviz.management.commands.seed_student_pathways import (
+            CTE_LEVEL_OUTCOMES_SQL,
+        )
+
+        self.assertIn('coursecatalog_cte_details', CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("pathway_status = 'CTE Completer'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("btrim(coalesce(cap_status, '')) = 'Met'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("btrim(coalesce(con_status, '')) = 'Met'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("THEN 'Completer'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("THEN 'Capstone'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("THEN 'Concentrator'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn("ELSE 'Intro'", CTE_LEVEL_OUTCOMES_SQL)
+        self.assertIn('student_pathways sp', CTE_LEVEL_OUTCOMES_SQL)
+        self.assertNotIn('schedule_table_alt', CTE_LEVEL_OUTCOMES_SQL)
+
+
+class SankeyOtherSystemSplitTests(SimpleTestCase):
+    def test_college_tail_splits_into_uc_csu_and_other(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = []
+        rows += [
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})}
+            for _ in range(2)
+        ]
+        rows += [
+            {'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Bravo College'}]})}
+            for _ in range(2)
+        ]
+        for college in (
+            'CSU Chico', 'CSU Fresno', 'UC Merced', 'UC Davis', 'Private College',
+        ):
+            rows.append({
+                'path': json.dumps({
+                    'grade_5': 'Truman',
+                    'colleges': [{'college': college}],
+                }),
+            })
+
+        opt = build_option(rows, {}, {
+            'chart_type': 'sankey',
+            'sk_path_col': 'path',
+            'sk_stages': ['grade_5'],
+            'sk_top_per_stage': 2,
+            'sk_group_after_stage': 1,
+            'sk_other_split_systems': True,
+        })
+        nodes = {n['name']: n for n in opt['series'][0]['data']}
+
+        self.assertIn('College 1 · Other UC', nodes)
+        self.assertIn('College 1 · Other CSU', nodes)
+        self.assertIn('College 1 · Other', nodes)
+        self.assertEqual(nodes['College 1 · Other UC']['value'], 2)
+        self.assertEqual(nodes['College 1 · Other CSU']['value'], 2)
+        self.assertEqual(nodes['College 1 · Other']['value'], 1)
+        self.assertEqual(
+            nodes['College 1 · Other UC']['itemStyle']['color'], '#2563eb',
+        )
+        self.assertEqual(
+            nodes['College 1 · Other CSU']['itemStyle']['color'], '#dc2626',
+        )
+        self.assertEqual(
+            nodes['College 1 · Other']['itemStyle']['color'], '#94a3b8',
+        )
+
+        uc_children = {
+            child['name'] for child in
+            opt['__sk_other_expand__']['College 1 · Other UC']['children']
+        }
+        csu_children = {
+            child['name'] for child in
+            opt['__sk_other_expand__']['College 1 · Other CSU']['children']
+        }
+        other_children = {
+            child['name'] for child in
+            opt['__sk_other_expand__']['College 1 · Other']['children']
+        }
+        self.assertEqual(
+            uc_children,
+            {'College 1 · UC Merced', 'College 1 · UC Davis'},
+        )
+        self.assertEqual(
+            csu_children,
+            {'College 1 · CSU Chico', 'College 1 · CSU Fresno'},
+        )
+        self.assertIn('College 1 · Private College', other_children)
+
+    def test_label_formatter_can_force_small_expanded_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(
+            [{'path': json.dumps({'grade_5': 'Johnson', 'colleges': [{'college': 'Alpha College'}]})}],
+            {},
+            {
+                'chart_type': 'sankey',
+                'sk_path_col': 'path',
+                'sk_stages': ['grade_5'],
+                'sk_label_min_value': 5,
+            },
+        )
+        formatter = opt['series'][0]['label']['__formatter_js__']
+        self.assertIn('__force_label__', formatter)

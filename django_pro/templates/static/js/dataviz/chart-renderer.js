@@ -272,6 +272,9 @@
           name: c.name,
           depth: group.depth,
           value: c.value,
+          // Expanded children are often below the chart's label threshold;
+          // force their labels on so the expanded schools/colleges are named.
+          __force_label__: true,
           itemStyle: {
             color: c.color || '#94a3b8',
             borderColor: '#ffffff',
@@ -603,6 +606,14 @@
           } catch (e) { /* ignore */ }
           delete s.label.__formatter_js__;
         }
+        (s && s.levels || []).forEach(function(level) {
+          if (level && level.label && level.label.__formatter_js__) {
+            try {
+              level.label.formatter = new Function('return ' + level.label.__formatter_js__)();
+            } catch (e) { /* ignore */ }
+            delete level.label.__formatter_js__;
+          }
+        });
       });
     }
 

@@ -384,7 +384,7 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_stagecols"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_boxes"></script>
 <script>
 (function () {
   // School scope toggle: "All Students" (default) vs the active school.
@@ -499,7 +499,7 @@
 
     // SWR Instant Client Cache: Check sessionStorage for instant rendering
     try {
-      const cacheKey = `dv_chart_v12_${cid}_${filterKey}`;
+      const cacheKey = `dv_chart_v16_${cid}_${filterKey}`;
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
         const item = JSON.parse(cached);
@@ -547,7 +547,7 @@
           slot.innerHTML = payload.html;
           needsInit = true;
           try {
-            const cacheKey = `dv_chart_v12_${cid}_${filterKey}`;
+            const cacheKey = `dv_chart_v16_${cid}_${filterKey}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
           } catch (e) {}
         } else {

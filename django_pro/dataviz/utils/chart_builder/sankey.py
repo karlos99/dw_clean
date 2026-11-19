@@ -79,6 +79,12 @@ _SK_NODE_COLORS = (
     '#d6616b', '#ce6dbd', '#6baed6', '#fd8d3c', '#74c476', '#9e9ac8',
 )
 _SK_OTHER_COLOR = '#94a3b8'
+# Distinct colours for the split college-system groups so "Other UC" and
+# "Other CSU" read differently from the generic "Other" tail.
+_SK_OTHER_SYSTEM_COLORS = {
+    'Other UC': '#2563eb',
+    'Other CSU': '#dc2626',
+}
 
 # ── College system classification ────────────────────────────────────────────
 
@@ -935,6 +941,11 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     if group_after is None:
         group_after = 3
     group_after = max(0, group_after)
+    split_other_systems = _as_bool(work_cfg.get('sk_other_split_systems'), False)
+
+    def _is_college_stage(depth: int) -> bool:
+        label = stage_labels[depth] if depth < len(stage_labels) else ''
+        return 'college' in str(label).lower()
 
     link_counts: Counter = Counter()
     node_totals: Counter = Counter()
@@ -1004,49 +1015,73 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
             pruned = ordered[top_per_stage:]
             if not pruned:
                 continue
-            other = f'{stage_labels[depth]} · Other'
-            suffix = 2
-            while other in node_totals and other not in pruned:
-                other = f'{stage_labels[depth]} · Other {suffix}'
-                suffix += 1
-            remap.update({n: other for n in pruned})
-            node_totals[other] = sum(node_totals[n] for n in pruned)
-            node_depth[other] = depth
-            merged: Counter = Counter()
-            detail_rows = []
-            child_rows = []
-            for n in pruned:
-                merged.update(node_first_counts.get(n, Counter()))
-                detail_rows.append((
-                    n.split(' · ', 1)[1] if ' · ' in n else n,
-                    int(node_totals[n]),
-                ))
-                incoming = [
-                    [src, int(count)]
-                    for (src, dst), count in link_counts.items()
-                    if dst == n and count >= min_link
-                ]
-                outgoing = [
-                    [dst, int(count)]
-                    for (src, dst), count in link_counts.items()
-                    if src == n and count >= min_link
-                ]
-                if incoming or outgoing:
-                    child_rows.append({
-                        'name': n,
-                        'value': int(node_totals[n]),
-                        'incoming': incoming,
-                        'outgoing': outgoing,
-                    })
-                node_first_counts.pop(n, None)
-                node_totals.pop(n, None)
-                node_depth.pop(n, None)
-            detail_rows.sort(key=lambda pair: (-pair[1], pair[0]))
-            child_rows.sort(key=lambda child: (-child['value'], child['name']))
-            other_details[other] = detail_rows
-            if child_rows:
-                other_expand[other] = {'depth': depth, 'children': child_rows}
-            node_first_counts[other] = merged
+
+            # Split the grouped tail into college-system buckets when asked.
+            # This keeps UC and CSU destinations distinct from community
+            # colleges, private schools, and out-of-state destinations.
+            buckets: dict[str, list[str]] = {}
+            if split_other_systems and _is_college_stage(depth):
+                for node in pruned:
+                    value = node.split(' · ', 1)[1] if ' · ' in node else node
+                    system = classify_college_system(value)
+                    bucket = (
+                        'Other UC' if system == 'UC'
+                        else 'Other CSU' if system == 'CSU'
+                        else 'Other'
+                    )
+                    buckets.setdefault(bucket, []).append(node)
+            else:
+                buckets = {'Other': pruned}
+
+            for bucket_label, bucket_nodes in buckets.items():
+                if not bucket_nodes:
+                    continue
+                base = f'{stage_labels[depth]} · {bucket_label}'
+                other = base
+                suffix = 2
+                while other in node_totals and (
+                    other not in pruned or other in bucket_nodes
+                ):
+                    other = f'{base} {suffix}'
+                    suffix += 1
+                remap.update({n: other for n in bucket_nodes})
+                node_totals[other] = sum(node_totals[n] for n in bucket_nodes)
+                node_depth[other] = depth
+                merged: Counter = Counter()
+                detail_rows = []
+                child_rows = []
+                for n in bucket_nodes:
+                    merged.update(node_first_counts.get(n, Counter()))
+                    detail_rows.append((
+                        n.split(' · ', 1)[1] if ' · ' in n else n,
+                        int(node_totals[n]),
+                    ))
+                    incoming = [
+                        [src, int(count)]
+                        for (src, dst), count in link_counts.items()
+                        if dst == n and count >= min_link
+                    ]
+                    outgoing = [
+                        [dst, int(count)]
+                        for (src, dst), count in link_counts.items()
+                        if src == n and count >= min_link
+                    ]
+                    if incoming or outgoing:
+                        child_rows.append({
+                            'name': n,
+                            'value': int(node_totals[n]),
+                            'incoming': incoming,
+                            'outgoing': outgoing,
+                        })
+                    node_first_counts.pop(n, None)
+                    node_totals.pop(n, None)
+                    node_depth.pop(n, None)
+                detail_rows.sort(key=lambda pair: (-pair[1], pair[0]))
+                child_rows.sort(key=lambda child: (-child['value'], child['name']))
+                other_details[other] = detail_rows
+                if child_rows:
+                    other_expand[other] = {'depth': depth, 'children': child_rows}
+                node_first_counts[other] = merged
 
         # Endpoint nodes may themselves have been grouped at an earlier/later
         # depth; point those links at the final "Other" node names.
@@ -1217,6 +1252,8 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     def _node_color(node: str, depth: int) -> str:
         value = _node_value(node)
         stage_label = stage_labels[depth] if depth < len(stage_labels) else ''
+        if value in _SK_OTHER_SYSTEM_COLORS:
+            return user_cmap.get(value) or _SK_OTHER_SYSTEM_COLORS[value]
         if value in neutral_values:
             return user_cmap.get(value) or _SK_OTHER_COLOR
         if color_mode == 'stage':
@@ -1243,7 +1280,7 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     if node_align not in ('left', 'right', 'justify'):
         node_align = 'justify'
     label_mode = str(work_cfg.get('sk_label_mode') or 'value').strip().lower()
-    if label_mode not in ('value', 'full', 'stage'):
+    if label_mode not in ('value', 'full', 'stage', 'percent'):
         label_mode = 'value'
     show_labels = _as_bool(work_cfg.get('sk_show_labels'), True)
     label_font = _as_int(work_cfg.get('label_font_size'), 10) or 10
@@ -1251,16 +1288,28 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     if label_min is None:
         label_min = 5
     label_min = max(0, label_min)
+    label_width = _as_int(work_cfg.get('sk_label_width'), 0) or 0
+    label_box = _as_bool(work_cfg.get('sk_label_box'), False)
+    label_position = str(work_cfg.get('sk_label_position') or 'auto').strip().lower()
+    if label_position not in ('auto', 'right', 'left'):
+        label_position = 'auto'
+    total_students = max(linked, 1)
 
     levels = []
     first_pos = 'right' if orient == 'horizontal' else 'bottom'
     last_pos = 'left' if orient == 'horizontal' else 'top'
     for depth in range(depth_count):
+        if label_position == 'right':
+            position = 'right'
+        elif label_position == 'left':
+            position = 'left'
+        else:
+            position = last_pos if depth == depth_count - 1 else first_pos
         level = {
             'depth': depth,
             'label': {
-                'position': last_pos if depth == depth_count - 1 else first_pos,
-                'width': 120 if depth == 0 else 88,
+                'position': position,
+                'width': label_width if label_width > 0 else (120 if depth == 0 else 88),
                 'fontSize': 10 if depth == 0 else 9,
             },
         }
@@ -1297,25 +1346,56 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         'color': theme['text'],
         'position': first_pos,
         'overflow': 'truncate',
-        'width': 130,
+        'width': label_width if label_width > 0 else 130,
     }
+    if label_box:
+        label_cfg.update({
+            'backgroundColor': '#ffffff',
+            'borderColor': '#0f172a',
+            'borderWidth': 1,
+            'borderRadius': 0,
+            'padding': [4, 6],
+        })
     if show_labels:
         js = [
             "function(p){var v=Number(p.value)||0;",
             "var d=(p.data&&p.data.depth!=null)?p.data.depth:0;",
         ]
         if label_min > 0:
-            js.append(f"if(d>0&&v<{label_min})return '';")
+            js.append(
+                f"if(!(p.data&&p.data.__force_label__)&&d>0&&v<{label_min})return '';"
+            )
         if label_mode == 'value':
             js.append("var s=String(p.name);var i=s.indexOf(' · ');return i>=0?s.slice(i+3):s;")
         elif label_mode == 'stage':
             js.append("var s=String(p.name);var i=s.indexOf(' · ');return i>=0?s.slice(0,i):s;")
+        elif label_mode == 'percent':
+            js.append(
+                f"var pc=({total_students}>0?(v/{total_students}*100).toFixed(1):'0');"
+            )
+            js.append(
+                "var s=String(p.name);var i=s.indexOf(' · ');"
+                "return (i>=0?s.slice(i+3):s)+' ('+pc+'%)';"
+            )
         else:
             js.append("return String(p.name);")
         js.append('}')
         label_cfg['__formatter_js__'] = ''.join(js)
 
-    total_students = max(linked, 1)
+    # Sankey levels override the series label model, so carry the formatter and
+    # box styling into each level as well.
+    for level in levels:
+        level_label = dict(level.get('label') or {})
+        for key in (
+            'backgroundColor', 'borderColor', 'borderWidth',
+            'borderRadius', 'padding',
+        ):
+            if key in label_cfg:
+                level_label[key] = label_cfg[key]
+        if '__formatter_js__' in label_cfg:
+            level_label['__formatter_js__'] = label_cfg['__formatter_js__']
+        level['label'] = level_label
+
     tooltip_js = (
         "function(p){"
         "var esc=function(s){return String(s).replace(/[&<>\"']/g,function(c){"
@@ -1327,7 +1407,7 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         "Students: <b>'+v+'</b> ('+(v/" + str(total_students) + "*100).toFixed(1)+'% of flow)';}"
         "var q=String(p.name||'').split(' · ');var n=Number(p.value)||0;"
         "return '<b>'+esc(q.slice(1).join(' · '))+'</b><br/>'+esc(q[0])+'<br/>Students: <b>'+n+'</b>"
-        "<br/><span style=\"color:#64748b\">Click to trace upstream; click Other to expand</span>';}"
+        "<br/><span style=\"color:#64748b\">Click to trace upstream; click a grouped node to expand</span>';}"
     )
 
     option = _base_option(cfg, axis_trigger=False)
@@ -1344,12 +1424,12 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     # without a long, wrapping subtitle.
     if orient == 'horizontal' and _as_bool(work_cfg.get('sk_show_stage_flow'), True):
         def _short_header(label: str) -> str:
-            low = str(label).lower()
-            if 'elementary' in low:
+            low = str(label).lower().strip()
+            if low == 'elementary':
                 return 'Elementary'
-            if 'middle' in low:
+            if low in ('middle school', 'middle'):
                 return 'Middle'
-            if 'high' in low:
+            if low in ('high school', 'high', 'hs'):
                 return 'High'
             return str(label)
 
@@ -1391,6 +1471,7 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
     sankey_top = 74 if (title_shown or option.get('graphic')) else 18
     sankey_bottom = 18
     sankey_side = 18
+    sankey_right = max(18, _as_int(work_cfg.get('sk_right_padding'), 18) or 18)
 
     option['series'] = [{
         'type': 'sankey',
@@ -1402,7 +1483,7 @@ def _sankey_option(df: pl.DataFrame, x_col: str, x_cols: list[str], cfg: dict, l
         'top': sankey_top,
         'bottom': sankey_bottom,
         'left': sankey_side,
-        'right': sankey_side,
+        'right': sankey_right,
         'nodeWidth': max(4, _as_int(work_cfg.get('sk_node_width'), 14) or 14),
         'nodeGap': max(2, _as_int(work_cfg.get('sk_node_gap'), 14) or 14),
         'layoutIterations': iterations,

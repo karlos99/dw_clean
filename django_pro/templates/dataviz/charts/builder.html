@@ -2270,6 +2270,7 @@
                 <option value="value">Value only</option>
                 <option value="stage">Stage only</option>
                 <option value="full">Stage + value</option>
+                <option value="percent">Value + %</option>
               </select>
             </div>
             <div>
@@ -2306,6 +2307,17 @@
               <p class="text-[9px] text-slate-400 mt-0.5">First-stage labels always show; later nodes below this hide their labels.</p>
             </div>
             <div>
+              <label class="text-[10px] font-semibold text-slate-500 block mb-1">Label Width (px)</label>
+              <input type="number" min="0" step="10" x-model.number="skLabelWidth" @change="_schedulePreview()"
+                     placeholder="auto"
+                     class="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+            </div>
+            <label class="col-span-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" x-model="skLabelBox" @change="_schedulePreview()"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Boxed labels
+            </label>
+            <div>
               <label class="text-[10px] font-semibold text-slate-500 block mb-1">Top Per College Stage</label>
               <input type="number" min="1" step="1" x-model.number="skTopPerStage" @change="_schedulePreview()"
                      :disabled="!skGroupSmall"
@@ -2327,6 +2339,13 @@
               <input type="checkbox" x-model="skGroupSmall" @change="_schedulePreview()"
                      class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
               Group small values into “Other” per stage
+            </label>
+            <label class="col-span-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer"
+                   :class="!skGroupSmall ? 'opacity-50' : ''">
+              <input type="checkbox" x-model="skOtherSplitSystems" @change="_schedulePreview()"
+                     :disabled="!skGroupSmall"
+                     class="rounded text-indigo-600 w-3.5 h-3.5 border-slate-300 focus:ring-indigo-200">
+              Split college “Other” into Other UC / Other CSU / Other
             </label>
             <label class="col-span-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
               <input type="checkbox" x-model="skShowStageFlow" @change="_schedulePreview()"
@@ -4295,13 +4314,13 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_stagecols"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_boxes"></script>
 <script src="{% static 'js/dataviz/chart-editor.js' %}?v=20261027_preview"></script>
-<script src="{% static 'js/dataviz/chart-builder-ui.js' %}?v=20261117_stagecols"></script>
-<script src="{% static 'js/dataviz/chart-builder-data.js' %}?v=20261117_stagecols"></script>
+<script src="{% static 'js/dataviz/chart-builder-ui.js' %}?v=20261117_boxes"></script>
+<script src="{% static 'js/dataviz/chart-builder-data.js' %}?v=20261117_boxes"></script>
 <script src="{% static 'js/dataviz/chart-builder-explorer.js' %}?v=20261027_preview"></script>
 <script src="{% static 'js/dataviz/chart-builder-filters.js' %}?v=20261027_preview"></script>
-<script src="{% static 'js/dataviz/chart-builder-preview.js' %}?v=20261117_stagecols"></script>
+<script src="{% static 'js/dataviz/chart-builder-preview.js' %}?v=20261117_boxes"></script>
 <script>
 function chartBuilder() {
   const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
@@ -4499,12 +4518,17 @@ function chartBuilder() {
     skOrient:             existing?.config?.sk_orient ?? 'horizontal',
     skLabelMode:          existing?.config?.sk_label_mode ?? 'value',
     skShowLabels:         existing ? (existing.config?.sk_show_labels !== false) : true,
+    skLabelWidth:         existing?.config?.sk_label_width ?? null,
+    skLabelBox:           existing ? existing.config?.sk_label_box === true : false,
+    skLabelPosition:      existing?.config?.sk_label_position ?? 'auto',
+    skRightPadding:       existing?.config?.sk_right_padding ?? 18,
     skCurveness:          existing?.config?.sk_curveness ?? 0.35,
     skColorMode:          existing?.config?.sk_color_mode ?? 'node',
     skOrderMode:          existing?.config?.sk_order_mode ?? 'value',
     skLinkColorMode:      existing?.config?.sk_link_color_mode ?? 'source',
     skTopPerStage:        existing?.config?.sk_top_per_stage ?? 12,
     skGroupAfterStage:    existing?.config?.sk_group_after_stage ?? 3,
+    skOtherSplitSystems:  existing ? existing.config?.sk_other_split_systems === true : false,
     skGroupSmall:         existing ? (existing.config?.sk_top_per_stage !== 0) : true,
     skLabelMinValue:      existing?.config?.sk_label_min_value ?? 5,
     skShowStageFlow:      existing ? (existing.config?.sk_show_stage_flow !== false) : true,
