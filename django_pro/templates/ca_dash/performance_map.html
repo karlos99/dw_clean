@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}CA Dashboard Performance Map{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/ca_dash_dashboard.css' %}">
+<link rel="stylesheet" href="{% static 'css/ca_dash_shell.css' %}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="ca-dash-page">
+  <header class="ca-dash-page-header">
+    <div>
+      <h1 class="ca-dash-page-title" id="content-title">School Performance Map</h1>
+      <p class="ca-dash-page-subtitle" id="content-subtitle"></p>
+    </div>
+    <span id="reporting-year-badge" class="year-badge"></span>
+  </header>
+
+  <section class="ca-dash-toolbar" aria-label="Map filters">
+    <div class="ca-dash-toolbar-row">
+      <div class="ca-dash-filter">
+        <label class="ca-dash-filter-label" for="indicator">Indicator</label>
+        <select id="indicator" class="ca-dash-select"></select>
+      </div>
+
+      <div class="ca-dash-filter">
+        <label class="ca-dash-filter-label" for="school-select">School</label>
+        <select id="school-select" class="ca-dash-select"></select>
+      </div>
+
+      <div class="ca-dash-filter" id="subgroup-section">
+        <span class="ca-dash-filter-label" id="subgroup-label">Student group</span>
+        <select id="subgroup-select" class="ca-dash-select"></select>
+        <div id="subgroup-multi" class="multi-filter hidden">
+          <div class="multi-filter-toolbar">
+            <span id="subgroup-count" class="multi-filter-count"></span>
+            <div class="multi-filter-actions">
+              <button type="button" id="subgroup-select-all" class="multi-filter-action">All</button>
+              <button type="button" id="subgroup-select-none" class="multi-filter-action">None</button>
+            </div>
+          </div>
+          <div id="subgroup-chips" class="multi-filter-chips" role="group" aria-label="Student groups"></div>
+        </div>
+      </div>
+
+      <div class="ca-dash-filter ca-dash-year-dropdown-wrap" id="year-section">
+        <span class="ca-dash-filter-label" id="year-dropdown-label">Reporting years</span>
+        <div class="year-dropdown" id="year-dropdown">
+          <button type="button" id="year-dropdown-btn" class="year-dropdown-btn" aria-expanded="false"
+                  aria-haspopup="listbox" aria-labelledby="year-dropdown-label year-dropdown-summary">
+            <span id="year-dropdown-summary">Select years</span>
+            <span class="year-dropdown-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div id="year-checkbox-panel" class="year-checkbox-panel is-hidden" role="listbox"
+               aria-multiselectable="true" aria-labelledby="year-dropdown-label">
+            <div id="year-checkboxes" class="year-checkboxes"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="current-view" class="ca-dash-view-bar">
+      <span class="view-type" id="view-type-badge">District Map</span>
+      <span class="view-name" id="view-name"></span>
+    </div>
+  </section>
+
+  <div class="app-layout ca-dash-main">
+    <div class="main-content">
+      <div id="school-grids-container" class="grids-stack"></div>
+
+      <article class="grid-panel grid-panel-district" id="district-grid-panel">
+        <header class="grid-panel-header">
+          <button type="button" id="district-toggle" class="district-toggle" aria-expanded="true">
+            <span class="toggle-icon">▼</span>
+            <h2 id="district-grid-title">{{ district_short }}</h2>
+            <span class="grid-panel-meta">District · expand full width</span>
+          </button>
+          <div class="grid-panel-header-actions">
+            <button type="button" id="district-save-jpg" class="btn-ghost grid-save-jpg-btn" title="Download this chart as JPEG">Save JPG</button>
+            <label class="toggle-switch" id="subgroup-toggle-container">
+              <input type="checkbox" id="district-subgroup-toggle">
+              <span class="toggle-label">Show subgroups</span>
+            </label>
+          </div>
+        </header>
+        <div id="district-grid-body" class="district-grid-body">
+          <div class="grid-panel-export-target" id="district-export-target">
+            <p id="district-export-subtitle" class="grid-export-subtitle"></p>
+            <div id="district-logic" class="grid-logic"></div>
+            <div id="district-grid" class="grid-wrapper"></div>
+            <p id="district-no-color" class="no-color-msg hidden"></p>
+          </div>
+        </div>
+      </article>
+    </div>
+  </div>
+</div>
+
+<div id="overlay-backdrop" class="overlay-backdrop hidden" aria-hidden="true"></div>
+<div id="school-overlay" class="school-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
+  <header class="overlay-header">
+    <div>
+      <h2 id="overlay-title">School Details</h2>
+      <p id="overlay-subtitle" class="overlay-subtitle"></p>
+    </div>
+    <button type="button" id="overlay-close" class="btn-close" aria-label="Close">✕</button>
+  </header>
+  <div id="overlay-body" class="overlay-body"></div>
+</div>
+
+<aside id="drill-panel" class="drill-panel hidden">
+  <header class="drill-header">
+    <h2 id="drill-title">In this cell</h2>
+    <button type="button" id="drill-close" class="btn-ghost" aria-label="Close">✕</button>
+  </header>
+  <p id="drill-context" class="drill-context"></p>
+  <ul id="entity-list" class="entity-list"></ul>
+</aside>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>window.CA_DASH_API_BASE = "/ca_dash/api";</script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" crossorigin="anonymous"></script>
+<script src="{% static 'js/ca_dash/dashboard.js' %}"></script>
+{% endblock %}

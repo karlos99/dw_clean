@@ -82,6 +82,7 @@ _PG_ONLY_TABLE_MARKERS = (
     'schedule_table_alt',
     'courses_catalog',
     'official_data_db',
+    'dash_indi_',
 )
 
 

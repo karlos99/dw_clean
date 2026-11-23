@@ -1,0 +1,278 @@
+/**
+ * DS Data shell integration: keep project navbar/footer working and lay out
+ * filters in a top toolbar (no left sidebar).
+ */
+
+/* ca_dash_dashboard.css sets global body/main rules — undo for site chrome */
+body.min-h-screen.bg-slate-50.text-slate-900 {
+  font-family: inherit;
+  background-color: rgb(248 250 252);
+  color: inherit;
+  line-height: inherit;
+  font-size: inherit;
+}
+
+main.flex-grow {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+
+.ca-dash-page {
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  color: #1e293b;
+}
+
+.ca-dash-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ca-dash-page-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.ca-dash-page-subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+/* Top toolbar (below site navbar) */
+.ca-dash-toolbar {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.85rem 1rem 0.65rem;
+  margin-bottom: 1.25rem;
+}
+
+.ca-dash-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.25rem;
+}
+
+.ca-dash-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 10rem;
+}
+
+.ca-dash-filter-grow {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+
+.ca-dash-filter-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.ca-dash-select,
+.ca-dash-page .sidebar-select {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #1e293b;
+  background: #fff;
+  width: 100%;
+  min-width: 9rem;
+  box-shadow: none;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ca-dash-select:hover,
+.ca-dash-page .sidebar-select:hover {
+  border-color: #cbd5e1;
+  box-shadow: none;
+}
+
+.ca-dash-select:focus,
+.ca-dash-page .sidebar-select:focus {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+}
+
+.ca-dash-view-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.8125rem;
+  color: #475569;
+}
+
+.ca-dash-view-bar .view-type {
+  font-weight: 600;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.ca-dash-page .is-hidden {
+  display: none !important;
+}
+
+.year-dropdown {
+  position: relative;
+  min-width: 11rem;
+}
+
+.year-dropdown-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  background: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #1e293b;
+  cursor: pointer;
+  text-align: left;
+}
+
+.year-dropdown-btn:hover {
+  border-color: #cbd5e1;
+}
+
+.year-dropdown-chevron {
+  font-size: 0.65rem;
+  color: #64748b;
+}
+
+.year-checkbox-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 0.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.year-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.year-check-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: #334155;
+  cursor: pointer;
+  padding: 0.2rem 0.15rem;
+  border-radius: 0.25rem;
+}
+
+.year-check-item:hover {
+  background: #f8fafc;
+}
+
+.year-check-item input {
+  accent-color: #475569;
+}
+
+/* School tags must sit above trajectory SVG */
+.ca-dash-page .grid-cell .cell-tags {
+  position: relative;
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.ca-dash-page .grid-cell .cell-tag {
+  position: relative;
+  z-index: 7;
+  pointer-events: auto;
+}
+
+#overlay-backdrop,
+#school-overlay,
+#drill-panel {
+  z-index: 200;
+}
+
+#school-overlay {
+  z-index: 201;
+}
+
+/* Single-column map area (no sidebar) */
+.ca-dash-page .app-layout,
+.ca-dash-page .app-layout.ca-dash-main {
+  display: block;
+  min-height: 0;
+  grid-template-columns: unset;
+}
+
+.ca-dash-page .main-content {
+  padding: 0;
+  max-width: none;
+}
+
+/* Softer panels — no heavy colored borders on chrome */
+.ca-dash-page .grid-panel {
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.ca-dash-page .grid-panel:hover {
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+.ca-dash-page .multi-filter-action,
+.ca-dash-page .btn-ghost {
+  border-color: #e2e8f0;
+}
+
+.ca-dash-page .sidebar-section,
+.ca-dash-page .current-view {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+@media (max-width: 768px) {
+  .ca-dash-page {
+    padding: 0.75rem 0.75rem 1.5rem;
+  }
+
+  .ca-dash-filter {
+    flex: 1 1 100%;
+  }
+}

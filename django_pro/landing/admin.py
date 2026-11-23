@@ -62,6 +62,14 @@ class ProjectConfigAdmin(admin.ModelAdmin):
                 'home_forced_charts', 'home_max_charts',
             ),
         }),
+        ('CA Dashboard — Performance Map', {
+            'fields': (
+                'ca_dash_district_cds',
+                'ca_dash_district_short_name',
+                'ca_dash_district_full_name',
+                'ca_dash_enabled_reporting_years',
+            ),
+        }),
         ('Student Summary — Content tabs', {
             'fields': (
                 'summary_show_tests', 'summary_show_grades',

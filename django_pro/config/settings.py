@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     'desi.apps.DesiConfig',
     'dataviz.apps.DatavizConfig',
     'ccgi.apps.CcgiConfig',
+    'ca_dash.apps.CaDashConfig',
     'dataLoader.apps.DataloaderConfig',
     'clickhouse_utils',
     # Allauth

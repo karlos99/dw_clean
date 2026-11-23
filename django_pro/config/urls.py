@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/cards/status/', update_card_status, name='update_card_status_root'),
     path('dataviz/', include('dataviz.urls')),
     path('ccgi/', include('ccgi.urls')),
+    path('ca_dash/', include('ca_dash.urls')),
     path('placementcards/', include('placementcards.urls')),
     path('mathr/', include('mathr.urls')),
     path('dataloader/', include('dataLoader.urls')),

@@ -96,6 +96,37 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    # ── CA Dashboard Performance Map ─────────────────────────────────────────
+    ca_dash_district_cds = models.CharField(
+        max_length=14,
+        blank=True,
+        default='',
+        help_text=(
+            "14-digit district CDS code for the Performance Map. "
+            "Leave blank to derive from school state IDs."
+        ),
+    )
+    ca_dash_district_short_name = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text="Short district label in the map UI (e.g. DSUSD).",
+    )
+    ca_dash_district_full_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Full district name shown in map subtitles.",
+    )
+    ca_dash_enabled_reporting_years = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Reporting years to expose in the CA Dashboard year toggles "
+            "(e.g. [2022, 2023, 2024]). Empty means all years in dash_indi_* tables."
+        ),
+    )
+
     # ── Available school years ──────────────────────────────────────────────
     disabled_school_years = models.JSONField(
         default=list,
