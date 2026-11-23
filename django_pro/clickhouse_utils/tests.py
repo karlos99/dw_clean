@@ -624,7 +624,7 @@ class StudentIncidentsAnalyticsTests(SimpleTestCase):
         from unittest.mock import patch
         from clickhouse_utils.student_incidents_analytics import build_analytics_student_incidents_rows
 
-        sample_payload = '{"Major": {"count": 1, "incidents": [{"date": "2026-03-05", "incident_id": 1, "violations": [{"violation": "Major Defiance", "ed_code": "48900(k)"}], "dispositions": [{"disposition": "Out-of-School Suspension", "duration_days": 3}]}]}, "Minor": {"count": 0, "incidents": []}}'
+        sample_payload = '{"Major": {"count": 1, "incidents": [{"date": "2026-03-05", "school": "School B", "location": "Classroom", "incident_id": 1, "violations": [{"violation": "Major Defiance", "ed_code": "48900(k)"}], "dispositions": [{"disposition": "Out-of-School Suspension", "duration_days": 3}]}]}, "Minor": {"count": 0, "incidents": []}}'
         fake_row = (
             '111', 'key1', '9001', 'Student A', '10', 'School A', 'SCH1', 'Active',
             '2026-2027', sample_payload,
@@ -652,3 +652,5 @@ class StudentIncidentsAnalyticsTests(SimpleTestCase):
         self.assertEqual(rows[0][16], 3)
         self.assertEqual(rows[0][17], 1)
         self.assertEqual(rows[0][18], 28)
+        self.assertEqual(rows[0][22], 'School B')
+        self.assertEqual(rows[0][23], 'Classroom')

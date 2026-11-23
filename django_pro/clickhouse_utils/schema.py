@@ -838,7 +838,9 @@ CREATE TABLE IF NOT EXISTS analytics_student_incidents (
     school_week Nullable(Int32),
     week_start_date Nullable(String),
     week_end_date Nullable(String),
-    week_label Nullable(String)
+    week_label Nullable(String),
+    incident_school Nullable(String),
+    incident_location Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY (school_year, ssid, severity, incident_id)
@@ -916,5 +918,9 @@ COLUMN_MIGRATION_DDL = (
     "ADD COLUMN IF NOT EXISTS absents_percent Nullable(String)",
     "ALTER TABLE student_attendance "
     "ADD COLUMN IF NOT EXISTS tardy_dates Nullable(String)",
+    "ALTER TABLE analytics_student_incidents "
+    "ADD COLUMN IF NOT EXISTS incident_school Nullable(String)",
+    "ALTER TABLE analytics_student_incidents "
+    "ADD COLUMN IF NOT EXISTS incident_location Nullable(String)",
 )
 

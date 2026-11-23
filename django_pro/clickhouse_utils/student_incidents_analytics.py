@@ -40,6 +40,8 @@ ANALYTICS_STUDENT_INCIDENTS_COLUMNS = [
     'week_start_date',
     'week_end_date',
     'week_label',
+    'incident_school',
+    'incident_location',
 ]
 
 
@@ -237,6 +239,8 @@ def build_analytics_student_incidents_rows(
                         week_meta['week_start_date'],
                         week_meta['week_end_date'],
                         week_meta['week_label'],
+                        (item.get('school') or '').strip() or None,
+                        (item.get('location') or '').strip() or None,
                     ))
     return out
 

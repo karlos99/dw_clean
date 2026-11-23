@@ -709,9 +709,20 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     smooth = smooth or bool(cfg.get('smooth', False))
     show_pts = bool(cfg.get('show_points', False))
+    sparse_series = bool(cfg.get('sparse_series', False))
+    zero_as_gap = bool(cfg.get('zero_as_gap', False))
+    connect_nulls = bool(cfg.get('connect_nulls', False)) or zero_as_gap or sparse_series
     valid_y = [c for c in (y_cols or []) if c in df.columns]
     if len(valid_y) == 1 and not y_col:
         y_col = valid_y[0]
+
+    def _line_value(value_map, category):
+        if category not in value_map:
+            return None if sparse_series else 0.0
+        val = float(value_map.get(category, 0) or 0)
+        if zero_as_gap and val == 0:
+            return None
+        return val
 
     def make_series(name, data, stk=None):
         label_cfg = {
@@ -742,6 +753,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             'stack': 'total' if stk else None,
             'areaStyle': {} if fill else None,
             'showSymbol': show_pts, 'symbolSize': 6 if show_pts else 0,
+            'connectNulls': connect_nulls,
             'lineStyle': {'opacity': opacity}, 'itemStyle': {'opacity': opacity},
             'label': label_cfg,
             'data': data,
@@ -760,12 +772,12 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             vm = agg_to_dict(adf, x_col)
             series_name = _label(mc, col_defs or {})
             series_value_maps[series_name] = vm
-            series.append(make_series(series_name, [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
+            series.append(make_series(series_name, [_line_value(vm, xv) for xv in categories], stacked))
         total_value_map = {cat: sum(float(vm.get(cat, 0) or 0) for vm in series_value_maps.values()) for cat in categories}
         categories = _ordered_categories(categories, cfg, total_value_map)
         for s in series:
             vm = series_value_maps.get(s['name'], {})
-            s['data'] = [float(vm.get(cat, 0) or 0) for cat in categories]
+            s['data'] = [_line_value(vm, cat) for cat in categories]
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         raw_lookup = {sn: {cat: float(vm.get(cat, 0) or 0) for cat in categories} for sn, vm in series_value_maps.items()}
         _update_chart_axes(option, categories, series, 'Value', labels, cfg, ax, x_lbl)
@@ -792,7 +804,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             vm = agg_to_dict(sub, x_col)
             raw_lookup[sv] = {xv: float(vm.get(xv, 0) or 0) for xv in categories}
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
-        series = [make_series(sv, [raw_lookup[sv][xv] for xv in categories], stacked)
+        series = [make_series(sv, [_line_value(raw_lookup[sv], xv) for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
         _update_chart_axes(option, categories, series, labels['y'] or 'Count', labels, cfg, ax, x_lbl)
         axis_cats = option.get('__category_names__', categories)
@@ -805,8 +817,8 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         adf = _agg(df, x_col, y_col, agg, cfg=cfg)
         value_map = agg_to_dict(adf, x_col)
         categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
-        ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
-        grand_total = sum(ordered_vals)
+        ordered_vals = [_line_value(value_map, cat) for cat in categories]
+        grand_total = sum(v for v in ordered_vals if isinstance(v, (int, float)))
         _update_chart_axes(option, categories, [make_series(labels['y'] or 'Value', ordered_vals)], labels['y'] or 'Count', labels, cfg, ax, x_lbl)
         axis_cats = option.get('__category_names__', categories)
         _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
