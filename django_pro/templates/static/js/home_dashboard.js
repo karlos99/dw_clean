@@ -277,6 +277,118 @@
         });
         updateEmpty();
         if (window.initAllCharts) window.initAllCharts();
+        loadPendingHomeCharts();
+    }
+
+    function renderHomeSlotError(bodyEl, chartId, message) {
+        if (!bodyEl) return;
+        bodyEl.innerHTML =
+            '<div class="flex flex-col items-center justify-center gap-2 h-full w-full p-4 text-center">' +
+            '  <span class="text-xs text-red-600">' + esc(message || 'Could not load chart.') + '</span>' +
+            '  <button type="button" class="home-chart-retry px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition">Retry</button>' +
+            '</div>';
+        var btn = bodyEl.querySelector('.home-chart-retry');
+        if (btn) {
+            btn.addEventListener('click', function () {
+                bodyEl.innerHTML = '<div class="flex items-center justify-center h-full text-xs text-slate-400">Loading chart…</div>';
+                fetch(renderUrl(chartId), { credentials: 'same-origin' })
+                    .then(function (r) {
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.text();
+                    })
+                    .then(function (html) {
+                        bodyEl.innerHTML = html;
+                        var c = bodyEl.querySelector('.chart-container');
+                        if (c && window.initChart) window.initChart(c);
+                        else if (window.initAllCharts) window.initAllCharts();
+                    })
+                    .catch(function () {
+                        renderHomeSlotError(bodyEl, chartId, 'Chart timed out or failed to load.');
+                    });
+            });
+        }
+    }
+
+    function fetchBatchHomeCharts(chartIds, attempt) {
+        attempt = attempt || 0;
+        return fetch('/dataviz/api/charts/batch-render/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                chart_ids: chartIds,
+                source: 'dashboard',
+                source_id: 'home',
+                source_name: 'My Charts',
+                school_id: (schoolId && schoolId !== 'all') ? schoolId : '',
+                filters: {},
+            }),
+        }).then(function (r) {
+            if (!r.ok) {
+                if (attempt < 1 && (r.status === 502 || r.status === 503 || r.status === 504)) {
+                    return new Promise(function (resolve) {
+                        setTimeout(resolve, 400 + Math.floor(Math.random() * 400));
+                    }).then(function () {
+                        return fetchBatchHomeCharts(chartIds, attempt + 1);
+                    });
+                }
+                throw new Error('HTTP ' + r.status);
+            }
+            return r.json();
+        }).catch(function (err) {
+            if (attempt < 1) {
+                return new Promise(function (resolve) {
+                    setTimeout(resolve, 400 + Math.floor(Math.random() * 400));
+                }).then(function () {
+                    return fetchBatchHomeCharts(chartIds, attempt + 1);
+                });
+            }
+            throw err;
+        });
+    }
+
+    function loadPendingHomeCharts() {
+        if (!gridEl) return;
+        var placeholders = Array.prototype.slice.call(gridEl.querySelectorAll('[data-home-lazy-chart]'));
+        if (!placeholders.length) return;
+
+        var slotsByChartId = {};
+        var chartIds = [];
+        placeholders.forEach(function (ph) {
+            var cid = ph.getAttribute('data-home-lazy-chart');
+            if (!cid) return;
+            if (!slotsByChartId[cid]) {
+                slotsByChartId[cid] = [];
+                chartIds.push(parseInt(cid, 10) || cid);
+            }
+            slotsByChartId[cid].push(ph.closest('.home-slot-body') || ph.parentNode);
+        });
+        if (!chartIds.length) return;
+
+        fetchBatchHomeCharts(chartIds, 0)
+            .then(function (data) {
+                var charts = (data && data.charts) || {};
+                Object.keys(slotsByChartId).forEach(function (cid) {
+                    var item = charts[cid];
+                    slotsByChartId[cid].forEach(function (bodyEl) {
+                        if (item && item.html) {
+                            bodyEl.innerHTML = item.html;
+                            var c = bodyEl.querySelector('.chart-container');
+                            if (c && window.initChart) window.initChart(c);
+                        } else {
+                            renderHomeSlotError(bodyEl, cid, (item && item.error) || 'Could not load chart.');
+                        }
+                    });
+                });
+                if (window.initAllCharts) window.initAllCharts();
+            })
+            .catch(function () {
+                Object.keys(slotsByChartId).forEach(function (cid) {
+                    slotsByChartId[cid].forEach(function (bodyEl) {
+                        renderHomeSlotError(bodyEl, cid, 'Could not load chart.');
+                    });
+                });
+            });
     }
 
     /* ── Direct Add Chart (One-Click or from Drag) ─────────────── */

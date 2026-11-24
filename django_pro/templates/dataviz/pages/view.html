@@ -115,7 +115,7 @@
   {% if tabs %}
   <nav class="mb-6 flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" data-page-tabs>
     {% for tab in tabs %}
-    <button type="button" data-tab-target="{{ tab.id }}" class="dv-page-tab rounded-lg px-4 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-800">
+    <button type="button" data-tab-target="{{ tab.id }}" class="dv-page-tab rounded-lg px-4 py-2 text-sm font-medium transition {% if forloop.first %}bg-blue-600 text-white shadow-sm{% else %}text-slate-500 hover:bg-slate-50 hover:text-slate-800{% endif %}">
       {{ tab.name }}
     </button>
     {% endfor %}
@@ -247,7 +247,7 @@
   <!-- Rows (layout sections) -->
   <div class="space-y-6">
     {% for row in rows %}
-    <section data-tab-content="{% if row.tab_id %}{{ row.tab_id }}{% else %}unassigned{% endif %}" class="dv-tab-content {% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
+    <section data-tab-content="{% if row.tab_id %}{{ row.tab_id }}{% else %}unassigned{% endif %}" {% if tabs and row.tab_id != first_tab_id %}hidden{% endif %} class="dv-tab-content {% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
       {% if row.label %}
       <h2 class="text-lg font-semibold text-slate-700 mb-3">{{ row.label }}</h2>
       {% endif %}
@@ -384,184 +384,7 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_boxes"></script>
-<script>
-(function () {
-  // School scope toggle: "All Students" (default) vs the active school.
-  // Runs synchronously so the eager batch + htmx below already carry the
-  // persisted school_id in their chart URLs.
-  var SCOPE_KEY = 'page_chart_school_scope';
-  var toggle = document.getElementById('scope-toggle');
-  if (!toggle) return;
-  var schoolId = toggle.dataset.schoolId || '';
-
-  var saved = 'all';
-  try { saved = sessionStorage.getItem(SCOPE_KEY) || 'all'; } catch (_) {}
-  if (saved !== 'school') saved = 'all';
-  var activeId = (saved === 'school' && schoolId) ? schoolId : '';
-
-  function withSchool(url, id) {
-    var u = new URL(url, window.location.origin);
-    if (id) u.searchParams.set('school_id', id);
-    else u.searchParams.delete('school_id');
-    return u.pathname + u.search + u.hash;
-  }
-
-  function applyToSlots(id) {
-    document.querySelectorAll('.page-chart-slot').forEach(function (el) {
-      var base = el.getAttribute('data-chart-base-url');
-      if (!base) return;
-      var current = el.getAttribute('hx-get') || base;
-      el.setAttribute('data-chart-base-url', withSchool(base, id));
-      el.setAttribute('hx-get', withSchool(current, id));
-    });
-  }
-
-  function setButtons(active) {
-    toggle.querySelectorAll('.scope-btn').forEach(function (b) {
-      var on = b.dataset.scope === active;
-      b.className = 'scope-btn px-3 py-1.5 text-xs font-medium rounded-md transition ' +
-        (on ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50');
-    });
-  }
-
-  applyToSlots(activeId);
-  setButtons(saved);
-
-  toggle.querySelectorAll('.scope-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var scope = btn.dataset.scope === 'school' ? 'school' : 'all';
-      try { sessionStorage.setItem(SCOPE_KEY, scope); } catch (_) {}
-      var id = (scope === 'school' && schoolId) ? schoolId : '';
-      setButtons(scope);
-      applyToSlots(id);
-      document.querySelectorAll('.page-chart-slot').forEach(function (el) {
-        if (!window.htmx) return;
-        el.innerHTML = '<div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading\u2026</div>';
-        htmx.process(el);
-        htmx.trigger(el, 'reload');
-      });
-    });
-  });
-})();
-</script>
-<script>
-(function() {
-  // Render the initial (likely above-the-fold) burst of charts concurrently
-  // via one batch request instead of each tile firing its own sequential /
-  // connection-limited fetch. Runs synchronously during page parse — before
-  // htmx's own DOMContentLoaded-based init reads hx-trigger — so we can
-  // safely neutralize the automatic "intersect once" fetch for slots this
-  // batch call is about to fill (keeping the "reload" trigger used
-  // elsewhere to force-refresh a section on filter change). Anything that
-  // fails, or isn't in the eager batch, falls back to the normal lazy path.
-  // Keep the first request focused on what a visitor can actually see. Eight
-  // simultaneous full-data renders can saturate ClickHouse and make the
-  // entire page wait for the slowest chart. Remaining charts retain the
-  // existing intersection-triggered lazy path below.
-  const EAGER_BATCH_LIMIT = 4;
-  const slots = Array.from(document.querySelectorAll('.page-chart-slot')).filter(el => el.dataset.chartBaseUrl);
-  if (!slots.length) return;
-  const viewportBottom = window.innerHeight + Math.max(window.innerHeight, 600);
-  const eager = slots.filter(el => {
-    const rect = el.getBoundingClientRect();
-    return rect.bottom >= -600 && rect.top <= viewportBottom;
-  }).slice(0, EAGER_BATCH_LIMIT);
-
-  const firstUrl = new URL(eager[0].dataset.chartBaseUrl, window.location.origin);
-  const source = firstUrl.searchParams.get('source') || '';
-  const sourceId = firstUrl.searchParams.get('source_id') || '';
-  const sourceName = firstUrl.searchParams.get('source_name') || '';
-  const schoolId = firstUrl.searchParams.get('school_id') || '';
-  const filters = {};
-  for (const [key, val] of firstUrl.searchParams.entries()) {
-    if (key.startsWith('pf_') && val) {
-      const col = key.slice(3);
-      if (filters[col] === undefined) filters[col] = val;
-      else if (Array.isArray(filters[col])) filters[col].push(val);
-      else filters[col] = [filters[col], val];
-    }
-  }
-
-  const chartIds = [];
-  const slotByChartId = {};
-  const etags = {};
-  const filterKey = JSON.stringify({ filters, school_id: schoolId });
-  let hasClientCacheHit = false;
-
-  eager.forEach(el => {
-    const m = el.dataset.chartBaseUrl.match(/\/charts\/(\d+)\/render\//);
-    if (!m) return;
-    const cid = m[1];
-    chartIds.push(cid);
-    slotByChartId[cid] = el;
-    el.setAttribute('hx-trigger', 'reload');
-
-    // SWR Instant Client Cache: Check sessionStorage for instant rendering
-    try {
-      const cacheKey = `dv_chart_v16_${cid}_${filterKey}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        const item = JSON.parse(cached);
-        if (item && item.html) {
-          el.innerHTML = item.html;
-          if (item.etag) etags[cid] = item.etag;
-          hasClientCacheHit = true;
-        }
-      }
-    } catch (e) {}
-  });
-  if (!chartIds.length) return;
-
-  // Immediately initialize charts if restored from client cache (0ms perceived render)
-  if (hasClientCacheHit && window.initAllCharts) {
-    try { window.initAllCharts(); } catch (e) {}
-  }
-
-  function restore(el) {
-    // Batch call didn't fill this slot — fall back to the normal lazy-load
-    // path. htmx already processed the page with the neutralized attribute,
-    // so re-add "intersect once" and re-process the element.
-    el.setAttribute('hx-trigger', 'intersect once, reload');
-    if (window.htmx) window.htmx.process(el);
-  }
-
-  const csrf = "{{ csrf_token }}";
-  fetch('/dataviz/api/charts/batch-render/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters, school_id: schoolId, etags }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      const charts = data.charts || {};
-      let needsInit = false;
-      chartIds.forEach(cid => {
-        const slot = slotByChartId[cid];
-        const payload = charts[cid];
-        if (payload && payload.not_modified) {
-          // Content unchanged, keep existing instance
-          return;
-        }
-        if (payload && payload.html) {
-          slot.innerHTML = payload.html;
-          needsInit = true;
-          try {
-            const cacheKey = `dv_chart_v16_${cid}_${filterKey}`;
-            sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
-          } catch (e) {}
-        } else {
-          restore(slot);
-        }
-      });
-      if (needsInit && window.initAllCharts) window.initAllCharts();
-    })
-    .catch(e => {
-      console.error('Batch chart render failed, falling back to individual lazy loads:', e);
-      chartIds.forEach(cid => restore(slotByChartId[cid]));
-    });
-})();
-</script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261124_perf"></script>
 <script>
   const _PAGE_SLUG = "{{ page.slug|escapejs }}";
   const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
@@ -569,16 +392,148 @@
   const _PAGE_FILTER_COLS = {{ page_filter_cols_json|safe }};  // columns that exist on this page
   const _DEFAULT_FILTER_TAGS = {{ default_filter_tags_json|safe }};  // admin-configured defaults from the page builder
   const _HIDDEN_FILTER_COLS = new Set({{ hidden_filter_cols_json|safe }});
+  const _CSRF_TOKEN = "{{ csrf_token }}";
+  const _SWR_PREFIX = 'dv_chart_v17_';
+  const _EAGER_BATCH_LIMIT = 6;
 
-  // Filter changes use one bounded batch for charts near the viewport. Older
-  // requests are aborted and their responses cannot replace a newer filter
-  // generation. Offscreen slots only receive the new URL and remain lazy.
-  let _pageChartRefreshTimer = null;
-  let _pageChartRefreshController = null;
-  let _pageChartRefreshGeneration = 0;
+  // Unified top progress bar for both batch fetch() and lazy HTMX chart loads
+  const _dvProgress = (function () {
+    let activeRequests = 0;
+    let progressTimer = null;
+    let progressVal = 0;
+
+    function startProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (!bar || !progress) return;
+      bar.classList.remove('hidden');
+      bar.setAttribute('aria-hidden', 'false');
+      progressVal = 0;
+      progress.style.width = '0%';
+      if (progressTimer) clearInterval(progressTimer);
+      progressTimer = setInterval(() => {
+        if (progressVal < 90) {
+          progressVal += (90 - progressVal) * 0.12;
+          progress.style.width = Math.round(progressVal) + '%';
+        }
+      }, 150);
+    }
+
+    function completeProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progress) progress.style.width = '100%';
+      setTimeout(() => {
+        if (bar) {
+          bar.classList.add('hidden');
+          bar.setAttribute('aria-hidden', 'true');
+        }
+        if (progress) progress.style.width = '0%';
+      }, 250);
+    }
+
+    return {
+      begin() {
+        if (activeRequests === 0) startProgress();
+        activeRequests++;
+      },
+      end() {
+        activeRequests = Math.max(0, activeRequests - 1);
+        if (activeRequests === 0) completeProgress();
+      },
+    };
+  })();
+
+  function _getCachedChartSWR(key) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _setCachedChartSWR(key, valueObj) {
+    const serialized = JSON.stringify(valueObj);
+    try {
+      sessionStorage.setItem(key, serialized);
+    } catch (_) {
+      // QuotaExceededError: evict older dv_chart_* entries and retry once
+      try {
+        const keysToRemove = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.indexOf('dv_chart_') === 0) keysToRemove.push(k);
+        }
+        keysToRemove.slice(0, Math.max(8, Math.ceil(keysToRemove.length / 2))).forEach(k => {
+          sessionStorage.removeItem(k);
+        });
+        sessionStorage.setItem(key, serialized);
+      } catch (__) {}
+    }
+  }
+
+  function _dvEscHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 
   function _pageChartSkeleton() {
     return '<div class="flex flex-col gap-2 p-3 h-full w-full"><div class="chart-skeleton h-3 rounded w-2/5"></div><div class="flex-1 flex items-end gap-1.5 pt-2"><div class="chart-skeleton rounded-t flex-1" style="height:55%"></div><div class="chart-skeleton rounded-t flex-1" style="height:80%"></div><div class="chart-skeleton rounded-t flex-1" style="height:40%"></div><div class="chart-skeleton rounded-t flex-1" style="height:70%"></div><div class="chart-skeleton rounded-t flex-1" style="height:60%"></div><div class="chart-skeleton rounded-t flex-1" style="height:90%"></div></div><div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div></div>';
+  }
+
+  function _renderSlotError(slot, msg) {
+    if (!slot) return;
+    slot.innerHTML =
+      '<div class="flex flex-col items-center justify-center gap-2 h-full w-full p-4 text-center">' +
+      '  <span class="text-xs text-red-600">' + _dvEscHtml(msg || 'Could not load chart.') + '</span>' +
+      '  <button type="button" data-dv-slot-retry class="px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition">Retry</button>' +
+      '</div>';
+    const btn = slot.querySelector('[data-dv-slot-retry]');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        slot.innerHTML = _pageChartSkeleton();
+        if (window.htmx) {
+          slot.setAttribute('hx-trigger', 'reload');
+          window.htmx.process(slot);
+          window.htmx.trigger(slot, 'reload');
+        }
+      });
+    }
+  }
+
+  function _fetchBatchWithRetry(payloadObj, signal, attempt) {
+    attempt = attempt || 0;
+    return fetch('/dataviz/api/charts/batch-render/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _CSRF_TOKEN },
+      credentials: 'same-origin',
+      signal: signal,
+      body: JSON.stringify(payloadObj),
+    }).then(response => {
+      if (!response.ok) {
+        if (attempt < 1 && (response.status === 502 || response.status === 503 || response.status === 504)) {
+          return new Promise(resolve => setTimeout(resolve, 400 + Math.floor(Math.random() * 400)))
+            .then(() => _fetchBatchWithRetry(payloadObj, signal, attempt + 1));
+        }
+        throw new Error('Chart batch failed: HTTP ' + response.status);
+      }
+      return response.json();
+    }).catch(err => {
+      if (err && err.name === 'AbortError') throw err;
+      if (attempt < 1 && (!signal || !signal.aborted)) {
+        return new Promise(resolve => setTimeout(resolve, 400 + Math.floor(Math.random() * 400)))
+          .then(() => _fetchBatchWithRetry(payloadObj, signal, attempt + 1));
+      }
+      throw err;
+    });
   }
 
   function _pageChartFiltersFromQS(qs) {
@@ -594,10 +549,64 @@
     return filters;
   }
 
+  function _buildQSFromTags(tags) {
+    const params = new URLSearchParams();
+    for (const t of (tags || [])) {
+      params.append('pf_' + t.col, t.value);
+    }
+    return params.toString();
+  }
+
+  function _persistPageTags(tags) {
+    let allTags = [];
+    try {
+      const saved = sessionStorage.getItem(_STORAGE_KEY);
+      if (saved) allTags = JSON.parse(saved);
+    } catch (_) {}
+    const updatedCols = new Set(_PAGE_FILTER_COLS.length ? _PAGE_FILTER_COLS : tags.map(t => t.col));
+    allTags = allTags.filter(t => !updatedCols.has(t.col)).concat(tags);
+    try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(allTags)); } catch (_) {}
+  }
+
+  function _resolveInitialPageTags() {
+    let tags = [];
+    try {
+      const saved = sessionStorage.getItem(_STORAGE_KEY);
+      if (saved) {
+        const allTags = JSON.parse(saved);
+        if (_PAGE_FILTER_COLS.length) {
+          const pageCols = new Set(_PAGE_FILTER_COLS);
+          tags = allTags.filter(t => pageCols.has(t.col)).map(t => {
+            if (_HIDDEN_FILTER_COLS.has(t.col)) t.hidden = true;
+            return t;
+          });
+        } else {
+          tags = allTags.map(t => {
+            if (_HIDDEN_FILTER_COLS.has(t.col)) t.hidden = true;
+            return t;
+          });
+        }
+      }
+    } catch (_) {}
+
+    const existingCols = new Set(tags.map(t => t.col));
+    for (const dt of _DEFAULT_FILTER_TAGS) {
+      if (!existingCols.has(dt.col)) {
+        tags.push(Object.assign({}, dt));
+      }
+    }
+    if (_DEFAULT_FILTER_TAGS.length) _persistPageTags(tags);
+    return tags;
+  }
+
+  function _withSchoolUrl(url, id) {
+    const u = new URL(url, window.location.origin);
+    if (id) u.searchParams.set('school_id', id);
+    else u.searchParams.delete('school_id');
+    return u.pathname + u.search + u.hash;
+  }
+
   function _pageChartFilteredUrl(base, qs) {
-    // Base URLs already carry the server-rendered default pf_* values.
-    // Strip those first so a new filter replaces them instead of appending
-    // duplicate params (e.g. two different pf_test_year values).
     const url = new URL(base, window.location.origin);
     for (const key of [...url.searchParams.keys()]) {
       if (key.startsWith('pf_')) url.searchParams.delete(key);
@@ -611,7 +620,7 @@
 
   function _pageChartNearViewport(el) {
     const rect = el.getBoundingClientRect();
-    return rect.bottom >= -600 && rect.top <= window.innerHeight + 600;
+    return rect.bottom >= -600 && rect.top <= window.innerHeight + Math.max(window.innerHeight, 600);
   }
 
   function _activeTabTargetId() {
@@ -624,10 +633,12 @@
   }
 
   function _pageChartInActiveTab(el) {
+    const panel = el.closest('[data-tab-content]');
+    if (!panel) return true;
+    if (panel.hidden) return false;
     const tabId = _activeTabTargetId();
     if (!tabId) return true;
-    const panel = el.closest('[data-tab-content]');
-    return panel && panel.dataset.tabContent === tabId;
+    return panel.dataset.tabContent === tabId;
   }
 
   function _isPageLevelFilterChange(affectedCols) {
@@ -639,12 +650,14 @@
     if (!Array.isArray(affectedCols) || !affectedCols.length) return true;
     const declared = String(el.dataset.filterCols || '')
       .split(',').map(value => value.trim()).filter(Boolean);
-    // An empty declaration means the server could not infer dependencies;
-    // refresh conservatively rather than risk stale chart data.
     if (!declared.length) return true;
     const normalized = new Set(declared.map(value => value.split('.').pop()));
     return affectedCols.some(col => normalized.has(String(col).split('.').pop()));
   }
+
+  let _pageChartRefreshTimer = null;
+  let _pageChartRefreshController = null;
+  let _pageChartRefreshGeneration = 0;
 
   function _refreshPageChartsBatch(qs, affectedCols) {
     const generation = ++_pageChartRefreshGeneration;
@@ -656,18 +669,29 @@
     const filters = _pageChartFiltersFromQS(qs);
     const visible = [];
     const slotByChartId = {};
+    const etags = {};
 
     const pageLevel = _isPageLevelFilterChange(affectedCols);
     slots.forEach(el => {
       const base = el.dataset.chartBaseUrl;
       const url = _pageChartFilteredUrl(base, qs);
       el.setAttribute('hx-get', url);
-      // Ensure later tab activation can reload this slot with the current
-      // filters, even if it was previously loaded from a hidden tab.
-      el.setAttribute('hx-trigger', 'reload');
+      const panel = el.closest('[data-tab-content]');
+      const inHiddenTab = !!(panel && panel.hidden);
       const match = base.match(/\/charts\/(\d+)\/render\//);
-      const inScope = pageLevel ? _pageChartInActiveTab(el) : _pageChartNearViewport(el);
-      if (!match || !inScope || !_pageChartUsesChangedFilter(el, affectedCols)) return;
+      const inScope = !inHiddenTab && (
+        affectedCols === null
+          ? _pageChartNearViewport(el)
+          : (pageLevel ? _pageChartInActiveTab(el) : _pageChartNearViewport(el))
+      );
+      if (!match || !inScope || !_pageChartUsesChangedFilter(el, affectedCols)) {
+        // Off-screen slots in the active tab remain lazy; hidden-tab slots wait for tab switch
+        el.setAttribute('hx-trigger', inHiddenTab ? 'reload' : 'intersect once, reload');
+        if (window.htmx) window.htmx.process(el);
+        return;
+      }
+      el.setAttribute('hx-trigger', 'reload');
+      if (window.htmx) window.htmx.process(el);
       const cid = match[1];
       if (!slotByChartId[cid]) visible.push(cid);
       (slotByChartId[cid] ||= []).push(el);
@@ -676,48 +700,327 @@
 
     if (!visible.length) return;
     const firstUrl = new URL(slotByChartId[visible[0]][0].getAttribute('hx-get'), window.location.origin);
-    const csrf = "{{ csrf_token }}";
+    const schoolId = firstUrl.searchParams.get('school_id') || '';
+    const filterKey = JSON.stringify({ filters, school_id: schoolId });
 
-    fetch('/dataviz/api/charts/batch-render/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-      credentials: 'same-origin',
-      signal: _pageChartRefreshController.signal,
-      body: JSON.stringify({
-        chart_ids: visible,
-        source: firstUrl.searchParams.get('source') || '',
-        source_id: firstUrl.searchParams.get('source_id') || '',
-        source_name: firstUrl.searchParams.get('source_name') || '',
-        school_id: firstUrl.searchParams.get('school_id') || '',
-        filters,
-      }),
-    })
-      .then(response => {
-        if (!response.ok) throw new Error('Chart batch failed: HTTP ' + response.status);
-        return response.json();
-      })
+    // Restore instant SWR hits from sessionStorage if available
+    let hasSwrHit = false;
+    visible.forEach(cid => {
+      const cached = _getCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`);
+      if (cached && cached.html) {
+        slotByChartId[cid].forEach(slot => { slot.innerHTML = cached.html; });
+        if (cached.etag) etags[cid] = cached.etag;
+        hasSwrHit = true;
+      }
+    });
+    if (hasSwrHit && window.initAllCharts) {
+      try { window.initAllCharts(); } catch (_) {}
+    }
+
+    _dvProgress.begin();
+    _fetchBatchWithRetry({
+      chart_ids: visible,
+      source: firstUrl.searchParams.get('source') || '',
+      source_id: firstUrl.searchParams.get('source_id') || '',
+      source_name: firstUrl.searchParams.get('source_name') || '',
+      school_id: schoolId,
+      filters,
+      etags,
+    }, _pageChartRefreshController.signal)
       .then(payload => {
         if (generation !== _pageChartRefreshGeneration) return;
         let needsInit = false;
         const charts = payload.charts || {};
         visible.forEach(cid => {
           const item = charts[cid];
-          if (!item || !item.html) return;
-          slotByChartId[cid].forEach(slot => { slot.innerHTML = item.html; });
-          needsInit = true;
+          if (item && item.not_modified) return;
+          if (item && item.html) {
+            slotByChartId[cid].forEach(slot => { slot.innerHTML = item.html; });
+            needsInit = true;
+            _setCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`, {
+              html: item.html,
+              etag: item.etag,
+            });
+          } else {
+            const errMsg = (item && item.error) || 'Could not load chart.';
+            slotByChartId[cid].forEach(slot => _renderSlotError(slot, errMsg));
+          }
         });
         if (needsInit && window.initAllCharts) window.initAllCharts();
       })
       .catch(error => {
-        if (error.name === 'AbortError' || generation !== _pageChartRefreshGeneration) return;
-        console.error('Chart filter refresh failed:', error);
+        if ((error && error.name === 'AbortError') || generation !== _pageChartRefreshGeneration) return;
+        console.error('Chart batch refresh failed:', error);
         visible.forEach(cid => {
-          if (window.htmx) {
-            slotByChartId[cid].forEach(slot => htmx.trigger(slot, 'reload'));
-          }
+          slotByChartId[cid].forEach(slot => _renderSlotError(slot, 'Could not load chart.'));
         });
+      })
+      .finally(() => {
+        _dvProgress.end();
       });
   }
+
+  // Expose tab batch loader for tab switches
+  window._activateTabCharts = function (tabId) {
+    const qs = window._pageFilterQS || '';
+    const filters = _pageChartFiltersFromQS(qs);
+    const panelSlots = Array.from(
+      document.querySelectorAll('[data-tab-content="' + tabId + '"] .page-chart-slot')
+    ).filter(el => el.dataset.chartBaseUrl);
+    if (!panelSlots.length) return;
+
+    const eagerIds = [];
+    const slotByChartId = {};
+    const etags = {};
+
+    panelSlots.forEach(el => {
+      const base = el.dataset.chartBaseUrl;
+      const url = _pageChartFilteredUrl(base, qs);
+      const prevLoadedUrl = el.dataset.loadedUrl || '';
+      el.setAttribute('hx-get', url);
+      // Skip re-fetching if this slot already rendered the exact same URL
+      if (prevLoadedUrl === url && el.querySelector('.chart-container')) {
+        el.setAttribute('hx-trigger', 'reload');
+        if (window.htmx) window.htmx.process(el);
+        return;
+      }
+      const match = base.match(/\/charts\/(\d+)\/render\//);
+      if (match && _pageChartNearViewport(el) && eagerIds.length < _EAGER_BATCH_LIMIT) {
+        const cid = match[1];
+        el.setAttribute('hx-trigger', 'reload');
+        if (window.htmx) window.htmx.process(el);
+        if (!slotByChartId[cid]) eagerIds.push(cid);
+        (slotByChartId[cid] ||= []).push(el);
+        el.innerHTML = _pageChartSkeleton();
+      } else {
+        el.setAttribute('hx-trigger', 'intersect once, reload');
+        if (window.htmx) window.htmx.process(el);
+      }
+    });
+
+    if (!eagerIds.length) {
+      if (window.initAllCharts) window.initAllCharts();
+      return;
+    }
+
+    const firstUrl = new URL(slotByChartId[eagerIds[0]][0].getAttribute('hx-get'), window.location.origin);
+    const schoolId = firstUrl.searchParams.get('school_id') || '';
+    const filterKey = JSON.stringify({ filters, school_id: schoolId });
+
+    let hasSwr = false;
+    eagerIds.forEach(cid => {
+      const cached = _getCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`);
+      if (cached && cached.html) {
+        slotByChartId[cid].forEach(slot => {
+          slot.innerHTML = cached.html;
+          slot.dataset.loadedUrl = slot.getAttribute('hx-get') || '';
+        });
+        if (cached.etag) etags[cid] = cached.etag;
+        hasSwr = true;
+      }
+    });
+    if (hasSwr && window.initAllCharts) {
+      try { window.initAllCharts(); } catch (_) {}
+    }
+
+    _dvProgress.begin();
+    _fetchBatchWithRetry({
+      chart_ids: eagerIds,
+      source: firstUrl.searchParams.get('source') || '',
+      source_id: firstUrl.searchParams.get('source_id') || '',
+      source_name: firstUrl.searchParams.get('source_name') || '',
+      school_id: schoolId,
+      filters,
+      etags,
+    })
+      .then(data => {
+        const charts = (data && data.charts) || {};
+        let needsInit = false;
+        eagerIds.forEach(cid => {
+          const item = charts[cid];
+          if (item && item.not_modified) return;
+          if (item && item.html) {
+            slotByChartId[cid].forEach(slot => {
+              slot.innerHTML = item.html;
+              slot.dataset.loadedUrl = slot.getAttribute('hx-get') || '';
+            });
+            needsInit = true;
+            _setCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`, {
+              html: item.html,
+              etag: item.etag,
+            });
+          } else {
+            const errMsg = (item && item.error) || 'Could not load chart.';
+            slotByChartId[cid].forEach(slot => _renderSlotError(slot, errMsg));
+          }
+        });
+        if (needsInit && window.initAllCharts) window.initAllCharts();
+      })
+      .catch(() => {
+        eagerIds.forEach(cid => {
+          slotByChartId[cid].forEach(slot => _renderSlotError(slot, 'Could not load chart.'));
+        });
+      })
+      .finally(() => {
+        _dvProgress.end();
+      });
+  };
+
+  // Single-pass synchronous bootstrap: reconcile school scope + persisted filters
+  // BEFORE stamping slot URLs and firing ONE eager batch request.
+  (function () {
+    const SCOPE_KEY = 'page_chart_school_scope';
+    const toggle = document.getElementById('scope-toggle');
+    let activeSchoolId = '';
+    if (toggle) {
+      const schoolId = toggle.dataset.schoolId || '';
+      let savedScope = 'all';
+      try { savedScope = sessionStorage.getItem(SCOPE_KEY) || 'all'; } catch (_) {}
+      if (savedScope !== 'school') savedScope = 'all';
+      activeSchoolId = (savedScope === 'school' && schoolId) ? schoolId : '';
+
+      function setScopeButtons(active) {
+        toggle.querySelectorAll('.scope-btn').forEach(b => {
+          const on = b.dataset.scope === active;
+          b.className = 'scope-btn px-3 py-1.5 text-xs font-medium rounded-md transition ' +
+            (on ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50');
+        });
+      }
+      setScopeButtons(savedScope);
+
+      toggle.querySelectorAll('.scope-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+          const scope = btn.dataset.scope === 'school' ? 'school' : 'all';
+          try { sessionStorage.setItem(SCOPE_KEY, scope); } catch (_) {}
+          const id = (scope === 'school' && schoolId) ? schoolId : '';
+          setScopeButtons(scope);
+          document.querySelectorAll('.page-chart-slot').forEach(el => {
+            const base = el.getAttribute('data-chart-base-url');
+            if (!base) return;
+            el.setAttribute('data-chart-base-url', _withSchoolUrl(base, id));
+            el.dataset.loadedUrl = '';
+          });
+          _refreshPageChartsBatch(window._pageFilterQS || '', null);
+        });
+      });
+    }
+
+    const initialTags = _resolveInitialPageTags();
+    const initialQS = _buildQSFromTags(initialTags);
+    window._initialPageTags = initialTags;
+    window._pageFilterQS = initialQS;
+
+    const allSlots = Array.from(document.querySelectorAll('.page-chart-slot'))
+      .filter(el => el.dataset.chartBaseUrl);
+    if (!allSlots.length) return;
+
+    const activeTabVisibleSlots = [];
+    allSlots.forEach(el => {
+      const baseWithSchool = _withSchoolUrl(el.dataset.chartBaseUrl, activeSchoolId);
+      const finalUrl = _pageChartFilteredUrl(baseWithSchool, initialQS);
+      el.setAttribute('data-chart-base-url', baseWithSchool);
+      el.setAttribute('hx-get', finalUrl);
+
+      const panel = el.closest('[data-tab-content]');
+      if (panel && panel.hidden) {
+        // Inactive tabs are server-hidden; prevent HTMX intersect from firing early
+        el.setAttribute('hx-trigger', 'reload');
+      } else {
+        activeTabVisibleSlots.push(el);
+      }
+    });
+
+    const eager = activeTabVisibleSlots
+      .filter(el => _pageChartNearViewport(el))
+      .slice(0, _EAGER_BATCH_LIMIT);
+    if (!eager.length) return;
+
+    const firstUrl = new URL(eager[0].getAttribute('hx-get'), window.location.origin);
+    const source = firstUrl.searchParams.get('source') || '';
+    const sourceId = firstUrl.searchParams.get('source_id') || '';
+    const sourceName = firstUrl.searchParams.get('source_name') || '';
+    const schoolId = firstUrl.searchParams.get('school_id') || '';
+    const filters = _pageChartFiltersFromQS(initialQS);
+    const filterKey = JSON.stringify({ filters, school_id: schoolId });
+
+    const chartIds = [];
+    const slotByChartId = {};
+    const etags = {};
+    let hasClientCacheHit = false;
+
+    eager.forEach(el => {
+      const m = el.dataset.chartBaseUrl.match(/\/charts\/(\d+)\/render\//);
+      if (!m) return;
+      const cid = m[1];
+      if (!slotByChartId[cid]) chartIds.push(cid);
+      (slotByChartId[cid] ||= []).push(el);
+      el.setAttribute('hx-trigger', 'reload');
+
+      const cached = _getCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`);
+      if (cached && cached.html) {
+        el.innerHTML = cached.html;
+        el.dataset.loadedUrl = el.getAttribute('hx-get') || '';
+        if (cached.etag) etags[cid] = cached.etag;
+        hasClientCacheHit = true;
+      }
+    });
+
+    if (!chartIds.length) return;
+
+    if (hasClientCacheHit && window.initAllCharts) {
+      try { window.initAllCharts(); } catch (_) {}
+    }
+
+    function fallbackLazy(el) {
+      el.setAttribute('hx-trigger', 'intersect once, reload');
+      if (window.htmx) window.htmx.process(el);
+    }
+
+    _dvProgress.begin();
+    _fetchBatchWithRetry({
+      chart_ids: chartIds,
+      source,
+      source_id: sourceId,
+      source_name: sourceName,
+      filters,
+      school_id: schoolId,
+      etags,
+    })
+      .then(data => {
+        const charts = (data && data.charts) || {};
+        let needsInit = false;
+        chartIds.forEach(cid => {
+          const slotsForId = slotByChartId[cid] || [];
+          const payload = charts[cid];
+          if (payload && payload.not_modified) return;
+          if (payload && payload.html) {
+            slotsForId.forEach(slot => {
+              slot.innerHTML = payload.html;
+              slot.dataset.loadedUrl = slot.getAttribute('hx-get') || '';
+            });
+            needsInit = true;
+            _setCachedChartSWR(`${_SWR_PREFIX}${cid}_${filterKey}`, {
+              html: payload.html,
+              etag: payload.etag,
+            });
+          } else if (payload && payload.error) {
+            slotsForId.forEach(slot => _renderSlotError(slot, payload.error));
+          } else {
+            slotsForId.forEach(slot => fallbackLazy(slot));
+          }
+        });
+        if (needsInit && window.initAllCharts) window.initAllCharts();
+      })
+      .catch(err => {
+        console.error('Initial batch chart render failed, falling back to lazy loads:', err);
+        chartIds.forEach(cid => {
+          (slotByChartId[cid] || []).forEach(slot => fallbackLazy(slot));
+        });
+      })
+      .finally(() => {
+        _dvProgress.end();
+      });
+  })();
 
   function pageFilters() {
     return {
@@ -725,63 +1028,12 @@
       treeOpen: false,
 
       init() {
-        // Restore global tags from sessionStorage, then filter to columns
-        // that exist on this page. Irrelevant tags are silently discarded.
-        try {
-          const saved = sessionStorage.getItem(_STORAGE_KEY);
-          if (saved) {
-            const allTags = JSON.parse(saved);
-            if (_PAGE_FILTER_COLS.length) {
-              const pageCols = new Set(_PAGE_FILTER_COLS);
-              this.tags = allTags.filter(t => pageCols.has(t.col)).map(t => {
-                if (_HIDDEN_FILTER_COLS.has(t.col)) t.hidden = true;
-                return t;
-              });
-            } else {
-              this.tags = allTags.map(t => {
-                if (_HIDDEN_FILTER_COLS.has(t.col)) t.hidden = true;
-                return t;
-              });
-            }
-          }
-        } catch (_) {}
-
-        // Seed admin-configured defaults for any filter the visitor hasn't
-        // already picked a value for this session — explicit past choices
-        // (restored above) always win over the page's defaults. Snapshot
-        // the restored columns *before* looping so multiple default tags
-        // for the same multi-select column (e.g. grade=03 and grade=04)
-        // don't shadow each other.
-        const existingCols = new Set(this.tags.map(t => t.col));
-        for (const dt of _DEFAULT_FILTER_TAGS) {
-          if (!existingCols.has(dt.col)) {
-            this.tags.push(dt);
-          }
-        }
-        if (_DEFAULT_FILTER_TAGS.length) this._persist();
-
-        // Set global QS immediately so initial chart loads include persisted filters
-        window._pageFilterQS = this.buildFilterQS();
-
-        // If we have persisted tags, update chart URLs before they fire
-        if (this.tags.length > 0) {
-          this.$nextTick(() => this._applyUrlsToSlots());
-        }
+        // Adopt the already-reconciled initial tags without triggering a duplicate refresh
+        this.tags = (window._initialPageTags || []).map(t => Object.assign({}, t));
       },
 
       _persist() {
-        // Merge current page tags into global storage (preserve tags from other pages)
-        let allTags = [];
-        try {
-          const saved = sessionStorage.getItem(_STORAGE_KEY);
-          if (saved) allTags = JSON.parse(saved);
-        } catch (_) {}
-        // Remove existing tags for cols we're about to update
-        const updatedCols = new Set(_PAGE_FILTER_COLS.length ? _PAGE_FILTER_COLS : this.tags.map(t => t.col));
-        allTags = allTags.filter(t => !updatedCols.has(t.col));
-        // Add current page's tags
-        allTags = allTags.concat(this.tags);
-        try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(allTags)); } catch (_) {}
+        _persistPageTags(this.tags);
       },
 
       /* ── Loading values for a tree node ── */
@@ -843,8 +1095,6 @@
       },
 
       clearAll() {
-        // Hidden filters are admin-configured page scope (e.g. which survey
-        // section a page covers) and must survive "Clear all".
         const hiddenTags = this.tags.filter(t => _HIDDEN_FILTER_COLS.has(t.col));
         const affectedCols = [
           ...new Set(this.tags.filter(t => !_HIDDEN_FILTER_COLS.has(t.col)).map(t => t.col)),
@@ -855,18 +1105,7 @@
       },
 
       buildFilterQS() {
-        const params = new URLSearchParams();
-        for (const t of this.tags) {
-          params.append('pf_' + t.col, t.value);
-        }
-        return params.toString();
-      },
-
-      _applyUrlsToSlots() {
-        const qs = this.buildFilterQS();
-        if (!qs) return;
-        window._pageFilterQS = qs;
-        _refreshPageChartsBatch(qs, _PAGE_FILTER_COLS);
+        return _buildQSFromTags(this.tags);
       },
 
       refreshCharts(affectedCols) {
@@ -881,72 +1120,38 @@
     };
   }
 
-  // Loading progress bar logic for chart slots
-  (function() {
-    let activeRequests = 0;
-    let progressTimer = null;
-    let progressVal = 0;
-
-    function startProgress() {
-      const bar = document.getElementById('loading-bar');
-      const progress = document.getElementById('loading-bar-progress');
-      if (!bar || !progress) return;
-
-      bar.classList.remove('hidden');
-      bar.setAttribute('aria-hidden', 'false');
-      
-      progressVal = 0;
-      progress.style.width = '0%';
-      
-      if (progressTimer) clearInterval(progressTimer);
-      
-      progressTimer = setInterval(() => {
-        if (progressVal < 90) {
-          progressVal += (90 - progressVal) * 0.1;
-          progress.style.width = Math.round(progressVal) + '%';
-        }
-      }, 150);
-    }
-
-    function completeProgress() {
-      const bar = document.getElementById('loading-bar');
-      const progress = document.getElementById('loading-bar-progress');
-      if (progressTimer) {
-        clearInterval(progressTimer);
-        progressTimer = null;
-      }
-      if (progress) {
-        progress.style.width = '100%';
-      }
-      setTimeout(() => {
-        if (bar) {
-          bar.classList.add('hidden');
-          bar.setAttribute('aria-hidden', 'true');
-        }
-        if (progress) {
-          progress.style.width = '0%';
-        }
-      }, 300);
-    }
-
+  // HTMX progress & error recovery for off-screen lazy chart slots
+  (function () {
     document.addEventListener('htmx:beforeRequest', (evt) => {
-      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
-        if (activeRequests === 0) {
-          startProgress();
-        }
-        activeRequests++;
+      const elt = evt.detail && evt.detail.elt;
+      if (elt && elt.classList && elt.classList.contains('page-chart-slot')) {
+        _dvProgress.begin();
+      }
+    });
+
+    document.addEventListener('htmx:afterSwap', (evt) => {
+      const elt = evt.detail && evt.detail.target;
+      if (elt && elt.classList && elt.classList.contains('page-chart-slot')) {
+        elt.dataset.loadedUrl = elt.getAttribute('hx-get') || '';
       }
     });
 
     document.addEventListener('htmx:afterRequest', (evt) => {
-      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
-        activeRequests--;
-        if (activeRequests <= 0) {
-          activeRequests = 0;
-          completeProgress();
-        }
+      const elt = evt.detail && evt.detail.elt;
+      if (elt && elt.classList && elt.classList.contains('page-chart-slot')) {
+        _dvProgress.end();
       }
     });
+
+    function onHtmxSlotError(evt) {
+      const elt = evt.detail && evt.detail.elt;
+      if (elt && elt.classList && elt.classList.contains('page-chart-slot')) {
+        _renderSlotError(elt, 'Chart request failed or timed out.');
+      }
+    }
+    document.addEventListener('htmx:responseError', onHtmxSlotError);
+    document.addEventListener('htmx:sendError', onHtmxSlotError);
+    document.addEventListener('htmx:timeout', onHtmxSlotError);
   })();
 </script>
 {% endblock %}
@@ -958,7 +1163,8 @@ document.addEventListener('DOMContentLoaded', function () {
   if (!nav) return;
   const buttons = [...nav.querySelectorAll('[data-tab-target]')];
   const panels = [...document.querySelectorAll('[data-tab-content]')];
-  function activate(id) {
+  function activate(id, isInitial) {
+    if (!id) return;
     buttons.forEach(btn => {
       const active = btn.dataset.tabTarget === id;
       btn.classList.toggle('bg-blue-600', active);
@@ -971,23 +1177,13 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!show && window.disposeChartsIn) window.disposeChartsIn(panel);
       panel.hidden = !show;
     });
-    const qs = window._pageFilterQS || '';
-    document.querySelectorAll('[data-tab-content="' + id + '"] .page-chart-slot').forEach(slot => {
-      if (!window.htmx) return;
-      const base = slot.dataset.chartBaseUrl;
-      if (!base) return;
-      // Rebuild the request from the current filter query and re-process the
-      // element so HTMX does not reuse an old cached path/trigger configuration.
-      const url = _pageChartFilteredUrl(base, qs);
-      slot.setAttribute('hx-get', url);
-      slot.setAttribute('hx-trigger', 'reload');
-      htmx.process(slot);
-      htmx.trigger(slot, 'reload');
-    });
-    if (window.initAllCharts) window.initAllCharts();
+    if (isInitial) return;
+    if (window._activateTabCharts) {
+      window._activateTabCharts(id);
+    }
   }
-  buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tabTarget)));
-  activate(buttons[0]?.dataset.tabTarget);
+  buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tabTarget, false)));
+  activate(buttons[0]?.dataset.tabTarget, true);
 });
 </script>
 {% endblock %}

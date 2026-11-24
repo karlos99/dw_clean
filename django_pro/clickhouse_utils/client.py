@@ -57,3 +57,31 @@ def get_clickhouse_client():
         _local.client = None
         _local.last_ping = 0.0
         return None
+
+
+def get_analytics_sync_version() -> str:
+    """Return composite analytics cache version (ClickHouse sync + DataLoader imports)."""
+    try:
+        from django.core.cache import cache
+
+        vals = cache.get_many([
+            'analytics:clickhouse_sync_version',
+            'analytics:dataloader_version',
+        ])
+        ch_v = vals.get('analytics:clickhouse_sync_version') or 'legacy'
+        dl_v = vals.get('analytics:dataloader_version')
+        return f'{ch_v}:dl{dl_v}' if dl_v else ch_v
+    except Exception:
+        return 'legacy'
+
+
+def bump_dataloader_sync_version() -> str:
+    """Advance DataLoader cache version so long-lived chart/filter caches invalidate on publish."""
+    version = str(time.time_ns())
+    try:
+        from django.core.cache import cache
+
+        cache.set('analytics:dataloader_version', version, None)
+    except Exception:
+        logger.debug("Could not bump analytics:dataloader_version in Redis", exc_info=True)
+    return version

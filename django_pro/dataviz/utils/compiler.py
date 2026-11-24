@@ -932,6 +932,7 @@ def compile_dataset_to_sql(
     status_filter=_UNSET,
     order_by=None,
     one_row_per_stu_annual_key=False,
+    projected_columns=None,
 ):
     """
     Compiles a Dataset definition object into parameterized SQL.
@@ -940,6 +941,8 @@ def compile_dataset_to_sql(
     When ``one_row_per_stu_annual_key`` is True, emit
     ``SELECT DISTINCT ON (stu_annual_key)`` so join fan-out collapses to one
     enrollment-year record (mirrors chart / drill counts).
+    When ``projected_columns`` is provided, narrows the SELECT projection to
+    the requested subset of ``dataset.columns`` (preserving dataset column order).
     """
     # Cache compiled SQL keyed on dataset content + user context + interactive filters
     user_part = ""
@@ -953,21 +956,28 @@ def compile_dataset_to_sql(
                 json.dumps(list(keys), sort_keys=True).encode()
             ).hexdigest()[:12]
             user_part += f":c{caseload_hash}"
+    effective_select_cols = list(dataset.columns or [])
+    if projected_columns:
+        wanted = set(projected_columns)
+        narrowed = [c for c in effective_select_cols if c in wanted]
+        if narrowed:
+            effective_select_cols = narrowed
+    hash_payload = {
+        'base_table': dataset.base_table,
+        'distinct': dataset.distinct,
+        'joins': dataset.joins or [],
+        'filters': dataset.filters or [],
+        'columns': effective_select_cols,
+        'limit': limit,
+        'offset': offset,
+        'updated': str(getattr(dataset, 'updated_at', '')),
+        'interactive_filters': interactive_filters or {},
+        'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
+        'order_by': order_by or getattr(dataset, 'order_by', None) or [],
+        'one_row_per_stu_annual_key': bool(one_row_per_stu_annual_key),
+    }
     ds_hash = hashlib.md5(
-        json.dumps({
-            'base_table': dataset.base_table,
-            'distinct': dataset.distinct,
-            'joins': dataset.joins or [],
-            'filters': dataset.filters or [],
-            'columns': dataset.columns or [],
-            'limit': limit,
-            'offset': offset,
-            'updated': str(getattr(dataset, 'updated_at', '')),
-            'interactive_filters': interactive_filters or {},
-            'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
-            'order_by': order_by or getattr(dataset, 'order_by', None) or [],
-            'one_row_per_stu_annual_key': bool(one_row_per_stu_annual_key),
-        }, sort_keys=True, default=str).encode()
+        json.dumps(hash_payload, sort_keys=True, default=str).encode()
     ).hexdigest()
     cache_key = f"dv:compiled_sql:{ds_hash}{user_part}"
     try:
@@ -987,7 +997,7 @@ def compile_dataset_to_sql(
         active_tables,
     ) = _prepare_dataset_join_context(dataset, interactive_filters)
 
-    columns_list = list(dataset.columns or [])
+    columns_list = list(effective_select_cols)
     if not columns_list:
         raise SQLCompilationError("Dataset has no select columns specified.")
 

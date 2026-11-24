@@ -192,7 +192,20 @@
                             {% endif %}
                         </div>
                         <div class="home-slot-body flex-1 min-h-0 p-2">
-                            {% if slot.rendered_html %}{{ slot.rendered_html|safe }}{% else %}
+                            {% if slot.rendered_html %}{{ slot.rendered_html|safe }}{% elif slot.needs_async_load and slot.chart_id %}
+                            <div class="flex flex-col gap-2 p-3 h-full w-full" data-home-lazy-chart="{{ slot.chart_id }}" data-home-slot-id="{{ slot.pk }}">
+                                <div class="h-3 rounded w-2/5 bg-slate-200/80 animate-pulse"></div>
+                                <div class="flex-1 flex items-end gap-1.5 pt-2">
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:55%"></div>
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:80%"></div>
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:40%"></div>
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:70%"></div>
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:60%"></div>
+                                    <div class="rounded-t flex-1 bg-slate-200/70 animate-pulse" style="height:90%"></div>
+                                </div>
+                                <div class="h-2 rounded w-3/4 mx-auto bg-slate-200/80 animate-pulse"></div>
+                            </div>
+                            {% else %}
                             <div class="text-xs text-red-500 p-2">{{ slot.render_error|default:'Could not load chart' }}</div>
                             {% endif %}
                         </div>
@@ -383,6 +396,6 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_boxes"></script>
-<script src="{% static 'js/home_dashboard.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261124_perf"></script>
+<script src="{% static 'js/home_dashboard.js' %}?v=20261124_perf"></script>
 {% endblock %}

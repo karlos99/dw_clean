@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from datetime import date, datetime, timedelta
+import json
 
 from django.db import connection
 
@@ -110,6 +111,28 @@ def _school_year_for_date(day: date) -> str:
     return f'{start_year}-{start_year + 1}'
 
 
+def _student_enroll_attrs_map() -> dict[tuple[str, str], tuple]:
+    """Migrant + FEP per (ssid, school_year) — one grouped scan, not per-row LATERAL."""
+    out: dict[tuple[str, str], tuple] = {}
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ssid, school_year,
+                   max(migrant) AS migrant,
+                   max(fep_date) AS fep_date
+            FROM student_enroll
+            WHERE ssid IS NOT NULL AND trim(ssid) != ''
+              AND school_year IS NOT NULL AND trim(school_year) != ''
+            GROUP BY ssid, school_year
+            """
+        )
+        for ssid, sy, migrant, fep in cur.fetchall():
+            key = (str(ssid or '').strip(), str(sy or '').strip())
+            if key[0] and key[1]:
+                out[key] = (migrant, fep)
+    return out
+
+
 def _school_group_by_state_id() -> dict[str, str]:
     out: dict[str, str] = {}
     with connection.cursor() as cur:
@@ -136,8 +159,26 @@ def _student_display_name(first, last, middle, fallback) -> str:
     return str(fallback or '').strip()
 
 
+def _coerce_enrollment_json(payload) -> dict:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, (bytes, bytearray)):
+        payload = payload.decode('utf-8', errors='replace')
+    if isinstance(payload, str):
+        text = payload.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _segments_from_json(payload, sy: str) -> list[dict]:
-    if not isinstance(payload, dict):
+    payload = _coerce_enrollment_json(payload)
+    if not payload:
         return []
     segments = payload.get('enrollment_segments') or []
     out: list[dict] = []
@@ -162,10 +203,12 @@ def _segments_from_json(payload, sy: str) -> list[dict]:
 
 def fetch_enroll_history_records() -> list[dict]:
     """One dict per student/school-year with parsed enrollment segments."""
+    group_lookup = _school_group_by_state_id()
+    enroll_attrs = _student_enroll_attrs_map()
     sql = """
         SELECT
-            trim(eh.school_year) AS school_year,
-            trim(eh.ssid) AS ssid,
+            eh.school_year AS school_year,
+            eh.ssid AS ssid,
             eh.first_name,
             eh.middle_name,
             eh.last_name,
@@ -181,69 +224,65 @@ def fetch_enroll_history_records() -> list[dict]:
             cs.homeless,
             cs.gate,
             cs.in_504,
-            cs.dli,
-            se.migrant,
-            se.fep_date
+            cs.dli
         FROM enroll_history eh
         LEFT JOIN current_student cs
-            ON trim(cs.ssid) = trim(eh.ssid)
-           AND trim(cs.school_year) = trim(eh.school_year)
-        LEFT JOIN LATERAL (
-            SELECT max(se.migrant) AS migrant, max(se.fep_date) AS fep_date
-            FROM student_enroll se
-            WHERE trim(se.ssid) = trim(eh.ssid)
-              AND trim(se.school_year) = trim(eh.school_year)
-        ) se ON true
-        WHERE trim(coalesce(eh.ssid, '')) != ''
-          AND trim(coalesce(eh.school_year, '')) != ''
+            ON cs.ssid = eh.ssid
+           AND cs.school_year = eh.school_year
+        WHERE eh.ssid IS NOT NULL AND trim(eh.ssid) != ''
+          AND eh.school_year IS NOT NULL AND trim(eh.school_year) != ''
           AND lower(trim(coalesce(eh.active_in_year, ''))) IN ('true', 't', '1', 'yes')
           AND coalesce(nullif(trim(eh.days_attended), '')::int, 0) >= 1
         ORDER BY eh.school_year, eh.ssid
     """
-    group_lookup = _school_group_by_state_id()
     records: list[dict] = []
     with connection.cursor() as cur:
         cur.execute(sql)
         cols = [c[0] for c in cur.description]
-        for row in cur.fetchall():
-            data = dict(zip(cols, row))
-            sy = str(data.get('school_year') or '').strip()
-            ssid_s = str(data.get('ssid') or '').strip()
-            if not ssid_s or not sy:
-                continue
-            payload = data.get('enrollment_status_json') or {}
-            segments = _segments_from_json(payload, sy)
-            if not segments:
-                continue
-            records.append({
-                'school_year': sy,
-                'ssid': ssid_s,
-                'stu_annual_key': (
-                    str(data.get('stu_annual_key') or '').strip() or f'{ssid_s}|{sy}'
-                ),
-                'student_name': _student_display_name(
-                    data.get('first_name'),
-                    data.get('last_name'),
-                    data.get('middle_name'),
-                    data.get('student_name'),
-                ) or None,
-                'status': str(data.get('status') or payload.get('current_status') or ''),
-                'is_currently_active': bool(payload.get('is_currently_active')),
-                'ell': data.get('ell'),
-                'ltel': data.get('ltel'),
-                'sed': data.get('sed'),
-                'sped': data.get('sped'),
-                'foster': data.get('foster'),
-                'homeless': data.get('homeless'),
-                'migrant': data.get('migrant'),
-                'gate': data.get('gate'),
-                'in_504': data.get('in_504'),
-                'dli': data.get('dli'),
-                'fep_date': data.get('fep_date'),
-                'segments': segments,
-                'payload': payload,
-                'group_lookup': group_lookup,
-            })
+        while True:
+            chunk = cur.fetchmany(2000)
+            if not chunk:
+                break
+            for row in chunk:
+                data = dict(zip(cols, row))
+                sy = str(data.get('school_year') or '').strip()
+                ssid_s = str(data.get('ssid') or '').strip()
+                if not ssid_s or not sy:
+                    continue
+                payload = _coerce_enrollment_json(data.get('enrollment_status_json'))
+                segments = _segments_from_json(payload, sy)
+                if not segments:
+                    continue
+                migrant, fep_date = enroll_attrs.get((ssid_s, sy), (None, None))
+                records.append({
+                    'school_year': sy,
+                    'ssid': ssid_s,
+                    'stu_annual_key': (
+                        str(data.get('stu_annual_key') or '').strip() or f'{ssid_s}|{sy}'
+                    ),
+                    'student_name': _student_display_name(
+                        data.get('first_name'),
+                        data.get('last_name'),
+                        data.get('middle_name'),
+                        data.get('student_name'),
+                    ) or None,
+                    'status': str(data.get('status') or payload.get('current_status') or ''),
+                    'is_currently_active': bool(payload.get('is_currently_active')),
+                    'ell': data.get('ell'),
+                    'ltel': data.get('ltel'),
+                    'sed': data.get('sed'),
+                    'sped': data.get('sped'),
+                    'foster': data.get('foster'),
+                    'homeless': data.get('homeless'),
+                    'migrant': migrant,
+                    'gate': data.get('gate'),
+                    'in_504': data.get('in_504'),
+                    'dli': data.get('dli'),
+                    'fep_date': fep_date,
+                    'segments': segments,
+                    'payload': payload,
+                    'group_lookup': group_lookup,
+                })
     return records
 
 

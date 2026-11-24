@@ -83,6 +83,7 @@ _PG_ONLY_TABLE_MARKERS = (
     'courses_catalog',
     'official_data_db',
     'dash_indi_',
+    'enroll_history',
 )
 
 

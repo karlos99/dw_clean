@@ -236,6 +236,11 @@ def page_publish_api(request, slug):
     page.save(update_fields=['status'])
     publish_page(page, request.user)
     page.refresh_from_db()
+    try:
+        from .chart_api import schedule_page_charts_warm
+        schedule_page_charts_warm(page.pk)
+    except Exception:
+        pass
     return JsonResponse({'page': page.to_dict(), 'success': True})
 
 
@@ -525,10 +530,14 @@ def page_filter_options_api(request, slug, filter_id):
         if placeholder_err:
             return JsonResponse({'error': placeholder_err}, status=500)
 
-    cache_key = (
-        f"dv_page_filter:{slug}:{filter_id}:"
-        f"{hash((table, col, source_where, source_distinct_sql))}"
-    )
+    import hashlib
+    from clickhouse_utils.client import get_analytics_sync_version
+
+    sync_version = get_analytics_sync_version()
+    spec_hash = hashlib.md5(
+        json.dumps([table, col, source_where, source_distinct_sql], ensure_ascii=True).encode()
+    ).hexdigest()[:12]
+    cache_key = f"dv_page_filter:{slug}:{filter_id}:{spec_hash}:{sync_version}"
     cached = cache.get(cache_key)
     if cached is not None:
         values = cached
@@ -559,7 +568,7 @@ def page_filter_options_api(request, slug, filter_id):
                         f'ORDER BY "{col}"'
                     )
                 values = [row[0] for row in cursor.fetchall()]
-            cache.set(cache_key, values, 300)
+            cache.set(cache_key, values, 14400)
         except Exception as exc:
             return JsonResponse({'error': str(exc)}, status=500)
 

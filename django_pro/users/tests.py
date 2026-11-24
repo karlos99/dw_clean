@@ -652,6 +652,33 @@ class NavbarConfigSplitPanelTests(TestCase):
         self.child_page.accessible_children = [grandchild]
         self.assertTrue(self.top_page.has_accessible_subpages)
 
+    def test_usage_tracking_ignores_chart_api_and_htmx_partials(self):
+        from users.models import PageVisit
+        PageVisit.objects.all().delete()
+
+        # Full page visit creates a PageVisit
+        resp_page = self.client.get('/users/pages/')
+        self.assertEqual(resp_page.status_code, 200)
+        visits = list(PageVisit.objects.all())
+        self.assertEqual(len(visits), 1)
+        page_visit = visits[0]
+        self.assertEqual(page_visit.path, '/users/pages/')
+        self.assertIsNone(page_visit.ended_at)
+
+        # Chart API requests and non-boosted HTMX partials must NOT close the
+        # active PageVisit or insert new PageVisit records.
+        self.client.post(
+            '/dataviz/api/charts/batch-render/',
+            data='{"chart_ids": []}',
+            content_type='application/json',
+        )
+        self.client.get('/users/pages/', HTTP_HX_REQUEST='true')
+
+        page_visit.refresh_from_db()
+        self.assertIsNone(page_visit.ended_at)
+        self.assertEqual(PageVisit.objects.count(), 1)
+
+
 
 
 

@@ -29,9 +29,10 @@
 
   <!-- Chart -->
   <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden p-4">
-    <div class="min-h-[500px]"
+    <div id="standalone-chart-slot"
+         class="min-h-[500px]"
          hx-get="{% url 'dataviz:chart_render' chart.id %}?source=chart_view&source_id={{ chart.id }}&source_name={{ chart.name|urlencode }}"
-         hx-trigger="load"
+         hx-trigger="load, reload"
          hx-swap="innerHTML">
       <div class="flex items-center justify-center h-[500px] text-slate-300 text-sm">Loading chart…</div>
     </div>
@@ -41,5 +42,28 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261117_boxes"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261124_perf"></script>
+<script>
+  (function () {
+    var slot = document.getElementById('standalone-chart-slot');
+    if (!slot) return;
+    function onErr() {
+      slot.innerHTML =
+        '<div class="flex flex-col items-center justify-center gap-3 h-[500px] text-center p-6">' +
+        '  <p class="text-sm text-red-600">Could not load chart. Please try again.</p>' +
+        '  <button type="button" id="standalone-chart-retry" class="px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition">Retry</button>' +
+        '</div>';
+      var btn = document.getElementById('standalone-chart-retry');
+      if (btn && window.htmx) {
+        btn.addEventListener('click', function () {
+          slot.innerHTML = '<div class="flex items-center justify-center h-[500px] text-slate-300 text-sm">Loading chart…</div>';
+          window.htmx.trigger(slot, 'reload');
+        });
+      }
+    }
+    slot.addEventListener('htmx:responseError', onErr);
+    slot.addEventListener('htmx:sendError', onErr);
+    slot.addEventListener('htmx:timeout', onErr);
+  })();
+</script>
 {% endblock %}

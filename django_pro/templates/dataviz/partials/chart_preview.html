@@ -1,11 +1,10 @@
-{% load static %}
+{% load static dataviz_tags %}
 {% if error %}
 <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{{ error }}</div>
 {% else %}
 {# In embed context (page/dashboard) the outer slot provides height via flex. #}
 {# In standalone context (chart builder preview), enforce a min-height so ECharts has room. #}
 <div class="chart-container w-full{% if not embed %} min-h-[460px]{% endif %}"
-     data-chart-option="{{ option_json|default:'{}' }}"
      data-col-header-wrap="{% if table_col_header_wrap %}1{% else %}0{% endif %}"
      {% if table_col_header_width %}data-col-header-width="{{ table_col_header_width }}"{% endif %}
      data-chart-id="{{ chart_id }}"
@@ -22,5 +21,6 @@
      data-query-columns="{{ query_columns_json|default:'[]' }}"
      data-preview-rows="{{ preview_rows_json|default:'[]' }}"
      data-preview-row-count="{{ preview_row_count|default:'0' }}">
+  <script type="application/json" class="dv-chart-option">{{ option_json|default:'{}'|safe_script_json }}</script>
 </div>
 {% endif %}

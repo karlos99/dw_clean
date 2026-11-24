@@ -1293,30 +1293,36 @@ def _enrich_rows_test_mark(
                 award_infos, _ = _build_ap_award_columns_from_db(cursor, award_cols)
 
             from clickhouse_utils.executor import QueryExecutor
-            from clickhouse_utils.thread_pool import get_io_pool
+            from clickhouse_utils.thread_pool import (
+                get_io_pool, is_in_io_pool, close_thread_db_connection,
+            )
 
             if need_test and need_mark:
-                from clickhouse_utils.thread_pool import close_thread_db_connection
+                if is_in_io_pool():
+                    _fetch_test_data(
+                        QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
+                        tested_school_codes=tested_school_filter,
+                    )
+                    _fetch_mark_data(
+                        QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows,
+                    )
+                else:
+                    def _fetch_marks():
+                        try:
+                            _fetch_mark_data(
+                                QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows,
+                            )
+                        finally:
+                            close_thread_db_connection()
 
-                def _fetch_tests():
+                    mark_future = get_io_pool().submit(_fetch_marks)
                     try:
                         _fetch_test_data(
                             QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
                             tested_school_codes=tested_school_filter,
                         )
                     finally:
-                        close_thread_db_connection()
-
-                def _fetch_marks():
-                    try:
-                        _fetch_mark_data(
-                            QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
-                    finally:
-                        close_thread_db_connection()
-
-                pool = get_io_pool()
-                for f in [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]:
-                    f.result()
+                        mark_future.result()
             elif need_test:
                 _fetch_test_data(
                     QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
@@ -1612,6 +1618,8 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             ).hexdigest()[:12]
             user_part += f":c{caseload_hash}"
 
+    from clickhouse_utils.client import get_analytics_sync_version
+
     config_hash = hashlib.md5(json.dumps({
         **config,
         'limit': limit,
@@ -1619,10 +1627,10 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         'order_by': order_by,
         'cursor': cursor or '',
         'count_only': count_only,
-        # A successful ClickHouse sync advances this version and naturally
-        # invalidates cached analytics results without clearing unrelated app
-        # caches.
-        'clickhouse_sync_version': cache.get('analytics:clickhouse_sync_version', 'legacy'),
+        # A successful ClickHouse sync or DataLoader publish advances this
+        # version and naturally invalidates cached analytics results without
+        # clearing unrelated app caches.
+        'clickhouse_sync_version': get_analytics_sync_version(),
     }, sort_keys=True).encode()).hexdigest()
     cache_key = f"dv_query_result:{config_hash}{user_part}"
     cached = cache.get(cache_key)
@@ -2059,8 +2067,8 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             'next_cursor': next_cursor,
             'error':     None,
         }
-        # Cache for 30 minutes (1800s) — confirmed acceptable staleness window
-        cache.set(cache_key, res, 1800)
+        # Cache for 4 hours (14400s); sync_version busts immediately on data updates
+        cache.set(cache_key, res, 14400)
         return res
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}

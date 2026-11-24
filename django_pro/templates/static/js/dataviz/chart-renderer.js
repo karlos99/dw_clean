@@ -501,8 +501,41 @@
     });
   }
 
+  var _deferredEchartsQueued = false;
+
+  function _readRawChartOption(container) {
+    if (!container) return null;
+    var scriptEl = container.querySelector('script.dv-chart-option');
+    if (scriptEl) {
+      var text = scriptEl.textContent || '{}';
+      container._cachedOptionRaw = text;
+      scriptEl.remove();
+      return text;
+    }
+    if (container._cachedOptionRaw) {
+      return container._cachedOptionRaw;
+    }
+    return container.dataset ? container.dataset.chartOption : null;
+  }
+
+  function _queueDeferredEchartsInit() {
+    if (_deferredEchartsQueued) return;
+    _deferredEchartsQueued = true;
+    function _flush() {
+      _deferredEchartsQueued = false;
+      if (typeof window.echarts !== 'undefined') {
+        initAll();
+      }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _flush, { once: true });
+    } else {
+      window.addEventListener('load', _flush, { once: true });
+    }
+  }
+
   function initChart(container) {
-    const raw = container.dataset.chartOption;
+    const raw = _readRawChartOption(container);
     if (!raw) return;
 
     // Apply per-chart container sizing from the page builder (chart-slot data attrs)
@@ -621,6 +654,15 @@
     if (option.__type__ === 'table') {
       container._isTable = true;
       _renderSummaryTable(container, option);
+      return null;
+    }
+
+    // If echarts.min.js is loaded with defer and has not executed yet, queue a
+    // re-init as soon as DOMContentLoaded / load completes.
+    if (typeof window.echarts === 'undefined') {
+      container._echartsInited = false;
+      container._echartsObserved = false;
+      _queueDeferredEchartsInit();
       return null;
     }
 

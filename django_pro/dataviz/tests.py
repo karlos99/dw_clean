@@ -6311,3 +6311,258 @@ class SankeyOtherSystemSplitTests(SimpleTestCase):
         )
         formatter = opt['series'][0]['label']['__formatter_js__']
         self.assertIn('__force_label__', formatter)
+
+
+class ChartPerformanceAndReliabilityRegressionTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        self.user = User.objects.create_user(
+            username='perf_admin',
+            email='perf_admin@example.com',
+            password='password',
+            is_staff=True,
+            is_superuser=True,
+        )
+
+    def test_chart_preview_uses_safe_json_script_without_quot_bloat(self):
+        from dataviz.views.api.chart_api import _render_saved_chart
+
+        chart = SavedChart.objects.create(
+            name='XSS Safe Option Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade'], 'x_col': 'grade', 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        with patch('dataviz.utils.data_loader.run_column_query', return_value={
+            'rows': [{'grade': '</script><script>alert(1)</script>'}],
+            'columns': ['grade'],
+        }):
+            res = _render_saved_chart(chart.pk, {}, is_embed=True)
+
+        self.assertIsNone(res['error'])
+        html = res['html']
+        self.assertIn('<script type="application/json" class="dv-chart-option">', html)
+        self.assertNotIn('data-chart-option=', html)
+        self.assertNotIn('</script><script>', html)
+        self.assertIn('\\u003c/script\\u003e', html)
+
+    def test_render_saved_chart_skips_navigation_context_processor(self):
+        from dataviz.views.api.chart_api import _render_saved_chart
+        from django.test import RequestFactory
+
+        chart = SavedChart.objects.create(
+            name='No Context Processor Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade'], 'x_col': 'grade', 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        req = RequestFactory().get(f'/dataviz/api/charts/{chart.pk}/render/')
+        req.user = self.user
+
+        with patch('dataviz.utils.data_loader.run_column_query', return_value={
+            'rows': [{'grade': '05'}],
+            'columns': ['grade'],
+        }), patch('users.context_processors.navigation_pages') as mock_nav:
+            res = _render_saved_chart(chart.pk, {}, is_embed=True, request=req)
+
+        self.assertIsNone(res['error'])
+        mock_nav.assert_not_called()
+
+    def test_batch_render_warm_fast_path_uses_single_bulk_query_and_no_pool(self):
+        from dataviz.views.api.chart_api import _render_saved_chart, chart_batch_render_api
+        from django.test import RequestFactory
+
+        charts = []
+        with patch('dataviz.utils.data_loader.run_column_query', return_value={
+            'rows': [{'grade': '06'}],
+            'columns': ['grade'],
+        }):
+            for i in range(3):
+                c = SavedChart.objects.create(
+                    name=f'Batch Fast {i}',
+                    chart_type='bar',
+                    source_type=SavedChart.SOURCE_COLUMNS,
+                    config={'selected_columns': ['grade'], 'x_col': 'grade', 'chart_type': 'bar'},
+                    owner=self.user,
+                )
+                _render_saved_chart(c.pk, {}, is_embed=True)
+                charts.append(c)
+
+        req = RequestFactory().post(
+            '/dataviz/api/charts/batch-render/',
+            data=json.dumps({
+                'chart_ids': [c.pk for c in charts],
+                'source': 'page',
+                'source_id': 'slug-1',
+                'source_name': 'Page 1',
+                'filters': {},
+            }),
+            content_type='application/json',
+        )
+        req.user = self.user
+
+        with patch('clickhouse_utils.thread_pool.get_chart_pool') as mock_pool:
+            with self.assertNumQueries(1):
+                resp = chart_batch_render_api(req)
+            mock_pool.assert_not_called()
+
+        self.assertEqual(resp.status_code, 200)
+        payload = json.loads(resp.content)['charts']
+        for c in charts:
+            self.assertEqual(payload[str(c.pk)]['cache_status'], 'HIT')
+            self.assertIn('dv-chart-option', payload[str(c.pk)]['html'])
+
+    def test_flight_lock_deleted_on_unhandled_exception(self):
+        from django.core.cache import cache
+        from dataviz.views.api.chart_api import (
+            _chart_flight_keys, _render_saved_chart, build_chart_render_cache_key,
+        )
+        from clickhouse_utils.client import get_analytics_sync_version
+
+        chart = SavedChart.objects.create(
+            name='Crash Lock Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade'], 'x_col': 'grade', 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        sync_v = get_analytics_sync_version()
+        _, _, _, pf_hash, updated_ts, config_hash = build_chart_render_cache_key(
+            chart, {}, is_embed=True, sync_version=sync_v,
+        )
+        lock_key, _ = _chart_flight_keys(
+            chart.pk, updated_ts, config_hash, pf_hash, 'e', sync_v, '',
+        )
+
+        with patch('dataviz.views.api.chart_api.render_to_string', side_effect=RuntimeError('template boom')):
+            with self.assertRaises(RuntimeError):
+                _render_saved_chart(chart.pk, {}, is_embed=True, chart_obj=chart, sync_version=sync_v)
+
+        self.assertIsNone(cache.get(lock_key))
+
+    def test_warm_published_page_charts_honors_page_default_filters(self):
+        from dataviz.models import DataVizPage, DataVizPageRow, DataVizPageSection
+        from dataviz.views.api.chart_api import chart_render_api, warm_published_page_charts
+        from django.test import RequestFactory
+
+        page = DataVizPage.objects.create(
+            title='Filtered Warm Page',
+            slug='filtered-warm-page',
+            status=DataVizPage.STATUS_ACTIVE,
+            page_filters=[{
+                'id': 'f_grade',
+                'label': 'Grade',
+                'source_col': 'grade',
+                'widget': 'select',
+                'default_val': '08',
+            }],
+            owner=self.user,
+        )
+        row = DataVizPageRow.objects.create(page=page, label='Top', position=0)
+        chart = SavedChart.objects.create(
+            name='Warm Filtered Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade'], 'x_col': 'grade', 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        DataVizPageSection.objects.create(
+            page=page, row=row, element_type=DataVizPageSection.TYPE_CHART, chart=chart, position=0,
+        )
+
+        with patch('dataviz.utils.data_loader.run_column_query', return_value={
+            'rows': [{'grade': '08'}],
+            'columns': ['grade'],
+        }) as mock_query:
+            warmed = warm_published_page_charts(warm_schools=False, page_ids=[page.pk])
+            self.assertEqual(warmed, 1)
+            self.assertEqual(mock_query.call_count, 1)
+
+            # Subsequent page load with ?pf_grade=08 must hit the warmed render cache!
+            req = RequestFactory().get(
+                f'/dataviz/api/charts/{chart.pk}/render/?source=page&source_id={page.slug}&pf_grade=08'
+            )
+            req.user = self.user
+            resp = chart_render_api(req, chart.pk)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp['X-Chart-Cache'], 'HIT')
+            self.assertEqual(mock_query.call_count, 1)
+
+    def test_saturated_batch_with_test_and_mark_enrichment_does_not_deadlock(self):
+        from unittest.mock import MagicMock
+        from dataviz.utils import data_loader as dl
+        from clickhouse_utils.thread_pool import get_chart_pool
+
+        def slow_test_fetch(*_args, **_kwargs):
+            time.sleep(0.05)
+
+        def slow_mark_fetch(*_args, **_kwargs):
+            time.sleep(0.05)
+
+        fake_cursor = MagicMock()
+        fake_cursor.__enter__.return_value = fake_cursor
+        fake_cursor.__exit__.return_value = False
+        fake_exec = MagicMock()
+        fake_exec.cursor.return_value = fake_cursor
+
+        def run_one(idx):
+            from clickhouse_utils.thread_pool import close_thread_db_connection
+            try:
+                rows = [{'student_id': f'S{idx}', 'school_year': '2025-2026', 'stu_annual_key': f'K{idx}'}]
+                return dl._enrich_rows_test_mark(
+                    rows, ['test_2025_2026_sbac_ela_pl'], ['mark_2025_2026_eng_p1'], {},
+                )
+            finally:
+                close_thread_db_connection()
+
+        with patch('clickhouse_utils.executor.QueryExecutor', return_value=fake_exec), \
+             patch.object(dl, '_build_test_columns_from_db', return_value=([{'col_name': 'test_2025_2026_sbac_ela_pl', 'year': '2025-2026', 'test_name': 'SBAC', 'subject': 'ELA', 'metric': 'PL'}], {})), \
+             patch.object(dl, '_build_mark_columns_from_db', return_value=([{'col_name': 'mark_2025_2026_eng_p1', 'year': '2025-2026', 'subject': 'ENG', 'course_name': 'Eng 1'}], {})), \
+             patch.object(dl, '_fetch_test_data', side_effect=slow_test_fetch), \
+             patch.object(dl, '_fetch_mark_data', side_effect=slow_mark_fetch):
+            pool = get_chart_pool()
+            futures = [pool.submit(run_one, i) for i in range(10)]
+            for fut in futures:
+                self.assertIsNone(fut.result(timeout=3.0))
+
+    def test_dataset_column_projection_pruning_narrows_wide_dataset(self):
+        from dataviz.models import Dataset
+        from dataviz.utils.compiler import compile_dataset_to_sql
+        from dataviz.views.api.chart_api import _dataset_projected_columns_for_chart
+
+        wide_cols = [
+            'current_student.stu_annual_key',
+            'current_student.ssid',
+            'current_student.grade',
+            'current_student.school',
+            'current_student.gender',
+            'current_student.ell',
+            'current_student.sped',
+            'current_student.homeless',
+            'current_student.foster',
+        ]
+        ds = Dataset.objects.create(
+            name='Wide Student Dataset',
+            base_table='current_student',
+            columns=wide_cols,
+            joins=[],
+            filters=[],
+            owner=self.user,
+        )
+        cfg = {'chart_type': 'sankey', 'sk_stage_cols': ['grade', 'school']}
+        col_mappings = {c: c.split('.')[-1] for c in wide_cols}
+        projected = _dataset_projected_columns_for_chart(ds, cfg, {}, col_mappings)
+        self.assertIsNotNone(projected)
+        self.assertIn('current_student.grade', projected)
+        self.assertIn('current_student.school', projected)
+        self.assertIn('current_student.stu_annual_key', projected)
+        self.assertNotIn('current_student.homeless', projected)
+        self.assertNotIn('current_student.foster', projected)
+
+        sql, _ = compile_dataset_to_sql(ds, projected_columns=projected)
+        self.assertIn('"current_student"."grade"', sql)
+        self.assertNotIn('"current_student"."homeless"', sql)
+

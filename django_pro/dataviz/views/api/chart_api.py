@@ -22,13 +22,14 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '29'
+_CHART_PIPELINE_VERSION = '30'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
-_FLIGHT_LOCK_TTL = 30
-_FLIGHT_WAIT_S = 0.05
-_FLIGHT_WAIT_TRIES = 80  # 4s; gunicorn timeout is 120s
+_FLIGHT_LOCK_TTL = 35
+_FLIGHT_MAX_WAIT_S = 15.0
+_RENDER_CACHE_TTL = 86400  # 24h; sync_version + updated_at bust immediately on changes
+_DATA_CACHE_TTL = 14400    # 4h; sync_version + dataset.updated_at bust immediately
 
 _CLICKHOUSE_AGGREGATE_CHARTS = frozenset({
     'bar', 'column', 'grouped_bar', 'stacked_bar', 'line', 'area',
@@ -1903,6 +1904,7 @@ def chart_save_api(request):
         chart.config['selected_columns'] = sel_cols
 
     chart.save()
+    schedule_chart_warm(chart.pk)
 
     if is_htmx:
         return HttpResponse(
@@ -1979,6 +1981,7 @@ def chart_move_api(request, chart_id):
         chart.name = display_name
     
     chart.save()
+    schedule_chart_warm(chart.pk)
     return JsonResponse({'chart': chart.to_dict(), 'success': True})
 
 
@@ -1996,6 +1999,7 @@ def chart_duplicate_api(request, chart_id):
     chart.id = None
     chart.name = f"{chart.name} (Copy)"
     chart.save()
+    schedule_chart_warm(chart.pk)
     
     return JsonResponse({'chart': chart.to_dict(), 'success': True})
 
@@ -2118,52 +2122,213 @@ def _dedupe_chart_rows(rows, cfg, *, used_aggregate=False):
     return rows
 
 
-def _chart_flight_keys(chart_id, updated_ts, pf_hash, embed_suffix, sync_version, scope_suffix=''):
+def _chart_flight_keys(chart_id, updated_ts, config_hash, pf_hash, embed_suffix, sync_version, scope_suffix=''):
     lock_key = (
         f'chart_flight:{_CHART_PIPELINE_VERSION}:{chart_id}:'
-        f'{updated_ts}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
+        f'{updated_ts}:{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
     )
     return lock_key, f'{lock_key}:done'
 
 
-def _wait_chart_flight(done_key):
-    for _ in range(_FLIGHT_WAIT_TRIES):
-        time.sleep(_FLIGHT_WAIT_S)
-        done = cache.get(done_key)
+def _wait_chart_flight(lock_key, done_key):
+    deadline = time.monotonic() + _FLIGHT_MAX_WAIT_S
+    attempt = 0
+    while time.monotonic() < deadline:
+        sleep_s = 0.025 if attempt < 8 else (0.05 if attempt < 28 else 0.10)
+        time.sleep(sleep_s)
+        attempt += 1
+        vals = cache.get_many([done_key, lock_key])
+        done = vals.get(done_key)
         if done is not None:
             payload = dict(done)
             payload['cache_status'] = 'HIT'
             return payload
+        if vals.get(lock_key) is None:
+            # Leader released or lost lock; check done_key once more in case set+delete just completed
+            done = cache.get(done_key)
+            if done is not None:
+                payload = dict(done)
+                payload['cache_status'] = 'HIT'
+                return payload
+            return None
     return None
 
 
-def warm_published_page_charts(limit=200, warm_schools=True):
-    """Fill Redis for charts on active DataViz pages and dashboards after a ClickHouse sync."""
-    from dataviz.models import DataVizPage, DataVizPageSection, DashboardChart
-    from clickhouse_utils.thread_pool import get_io_pool
+def build_chart_render_cache_key(chart, pf_filters: dict | None, *, is_embed: bool = False,
+                                 sync_version: str | None = None, scope_suffix: str = '',
+                                 school_id: str | None = None):
+    """Compute normalized ``pf_filters``, ``render_cache_key``, and ``etag`` for *chart*."""
+    from clickhouse_utils.client import get_analytics_sync_version
 
-    ids = []
-    seen = set()
-    qs = (
-        DataVizPageSection.objects
-        .filter(
-            element_type=DataVizPageSection.TYPE_CHART,
-            chart_id__isnull=False,
-            page__status=DataVizPage.STATUS_ACTIVE,
-        )
-        .order_by('page_id', 'gs_y', 'gs_x')
-        .values_list('chart_id', flat=True)
+    if sync_version is None:
+        sync_version = get_analytics_sync_version()
+
+    norm_pf = dict(pf_filters or {})
+    if school_id and school_id not in ('all', 'All', ''):
+        norm_pf.setdefault('school_state_id', school_id)
+
+    pf_params = sorted(norm_pf.items())
+    pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
+    updated_ts = int(chart.updated_at.timestamp())
+    config_hash = hashlib.md5(
+        json.dumps(chart.config or {}, sort_keys=True, default=str).encode()
+    ).hexdigest()[:12]
+    embed_suffix = 'e' if is_embed else 's'
+    render_cache_key = (
+        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart.pk}:{updated_ts}:'
+        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
     )
-    for cid in qs.iterator():
-        if cid in seen:
-            continue
-        seen.add(cid)
-        ids.append(cid)
-        if limit and len(ids) >= limit:
-            break
+    etag = f'W/"{render_cache_key[-16:]}"'
+    return render_cache_key, etag, norm_pf, pf_hash, updated_ts, config_hash
 
-    # Also include charts from home dashboards if limit allows
-    if limit is None or len(ids) < limit:
+
+def _dataset_projected_columns_for_chart(ds, chart_cfg: dict, raw_filters: dict | None,
+                                         col_mappings: dict | None) -> list[str] | None:
+    """Return a narrowed subset of ``ds.columns`` when safe for a raw-row chart render.
+
+    Only prunes when the dataset does not rely on wide-row ``SELECT DISTINCT``
+    collapse (either ``ds.distinct`` is False or ``_projection_has_unique_key(ds)``
+    is True) and does not use results-JSON ``GROUP BY`` deduplication. If any
+    referenced column cannot be mapped unambiguously onto ``ds.columns``, returns
+    ``None`` so compilation safely falls back to the full dataset projection.
+    """
+    ds_cols = list(ds.columns or [])
+    if len(ds_cols) <= 6:
+        return None
+    if getattr(ds, 'distinct', True) and not _projection_has_unique_key(ds):
+        return None
+
+    from dataviz.utils.compiler import _is_results_json_column, build_dataset_col_index
+    if not chart_cfg.get('one_row_per_stu_annual_key') and any(_is_results_json_column(c) for c in ds_cols):
+        return None
+
+    index = build_dataset_col_index(ds)
+    rev_map = {alias: full for full, alias in (col_mappings or {}).items() if isinstance(alias, str)}
+
+    refs: list[str] = []
+
+    def _add_ref(val):
+        if isinstance(val, str):
+            for part in val.split(','):
+                p = part.strip()
+                if p:
+                    refs.append(p)
+        elif isinstance(val, (list, tuple)):
+            for item in val:
+                _add_ref(item)
+
+    for key in _CONFIG_COL_KEYS:
+        _add_ref(chart_cfg.get(key))
+    for key in ('x_cols', 'y_cols', 'ds_date_col'):
+        _add_ref(chart_cfg.get(key))
+    for extra in _chart_extra_query_columns(chart_cfg):
+        _add_ref(extra)
+    for line in (chart_cfg.get('ds_lines') or []):
+        if isinstance(line, dict):
+            _add_ref(line.get('value_col'))
+            if isinstance(line.get('filters'), dict):
+                for fk in line['filters']:
+                    _add_ref(fk)
+    if isinstance(chart_cfg.get('ac_col_filters'), dict):
+        for fk in chart_cfg['ac_col_filters']:
+            _add_ref(fk)
+    for fk in (raw_filters or {}):
+        _add_ref(fk)
+
+    needed_full: set[str] = set()
+    for ref in refs:
+        resolved = _resolve_dataset_col(ref, ds, index) or rev_map.get(ref)
+        if not resolved or resolved not in ds_cols:
+            return None
+        needed_full.add(resolved)
+
+    if not needed_full:
+        return None
+
+    # Always preserve key/identifier/filter columns present on the dataset for
+    # dedupe, caseload filtering, and school/grade post-filters.
+    _KEEP_SUFFIXES = {
+        'stu_annual_key', 'ssid', 'student_id', 'local_student_id',
+        'school_year', 'grade', 'grade_label', 'school_state_id', 'state_school_code',
+    }
+    for full_col in ds_cols:
+        bare = full_col.split('.')[-1]
+        if bare in _KEEP_SUFFIXES:
+            needed_full.add(full_col)
+
+    narrowed = [c for c in ds_cols if c in needed_full]
+    if 0 < len(narrowed) < len(ds_cols):
+        return narrowed
+    return None
+
+
+def warm_published_page_charts(limit=200, warm_schools=True, page_ids=None, chart_ids=None):
+    """Fill Redis for charts on active DataViz pages and dashboards using page default filters."""
+    from dataviz.models import DataVizPage, DataVizPageSection, DashboardChart
+    from dataviz.views.page_views import resolve_page_default_filters
+    from clickhouse_utils.thread_pool import get_chart_pool, close_thread_db_connection
+    from clickhouse_utils.client import get_analytics_sync_version
+
+    sync_version = get_analytics_sync_version()
+    specs = []  # list of (chart_id, pf_filters_dict)
+    seen_specs = set()
+
+    def _add_spec(cid, pf_dict):
+        if not cid:
+            return
+        if chart_ids is not None and cid not in chart_ids:
+            return
+        sig = (int(cid), json.dumps(pf_dict or {}, sort_keys=True, default=str))
+        if sig in seen_specs:
+            return
+        seen_specs.add(sig)
+        specs.append((int(cid), dict(pf_dict or {})))
+
+    pages_qs = DataVizPage.objects.filter(status=DataVizPage.STATUS_ACTIVE)
+    if page_ids is not None:
+        pages_qs = pages_qs.filter(pk__in=page_ids)
+    pages_by_id = {p.pk: p for p in pages_qs}
+    first_tab_by_page = {}
+    default_pf_by_page = {}
+    for pid, page_obj in pages_by_id.items():
+        _, _, default_pf = resolve_page_default_filters(page_obj)
+        default_pf_by_page[pid] = default_pf
+        first_tab = page_obj.tabs.order_by('position', 'id').values_list('id', flat=True).first()
+        first_tab_by_page[pid] = first_tab
+
+    if pages_by_id:
+        sec_qs = (
+            DataVizPageSection.objects
+            .filter(
+                element_type=DataVizPageSection.TYPE_CHART,
+                chart_id__isnull=False,
+                page_id__in=list(pages_by_id.keys()),
+            )
+            .select_related('row')
+        )
+        if chart_ids is not None:
+            sec_qs = sec_qs.filter(chart_id__in=chart_ids)
+
+        ordered_sections = sorted(
+            sec_qs,
+            key=lambda s: (
+                0 if (
+                    first_tab_by_page.get(s.page_id) is None
+                    or (s.row and s.row.tab_id == first_tab_by_page.get(s.page_id))
+                ) else 1,
+                s.row.position if s.row else 9999,
+                s.gs_y,
+                s.gs_x,
+                s.page_id,
+            ),
+        )
+        for sec in ordered_sections:
+            _add_spec(sec.chart_id, default_pf_by_page.get(sec.page_id, {}))
+            if limit and len(specs) >= limit:
+                break
+
+    # Also include charts from home dashboards (or standalone user-menu charts) if limit allows
+    if page_ids is None and (limit is None or len(specs) < limit):
         dash_qs = (
             DashboardChart.objects
             .filter(
@@ -2172,13 +2337,16 @@ def warm_published_page_charts(limit=200, warm_schools=True):
             )
             .values_list('chart_id', flat=True)
         )
+        if chart_ids is not None:
+            dash_qs = dash_qs.filter(chart_id__in=chart_ids)
         for cid in dash_qs.iterator():
-            if cid in seen:
-                continue
-            seen.add(cid)
-            ids.append(cid)
-            if limit and len(ids) >= limit:
+            _add_spec(cid, {})
+            if limit and len(specs) >= limit:
                 break
+
+    if chart_ids is not None and not specs:
+        for cid in chart_ids:
+            _add_spec(cid, {})
 
     school_ids = ['']
     if warm_schools:
@@ -2194,34 +2362,90 @@ def warm_published_page_charts(limit=200, warm_schools=True):
         except Exception:
             pass
 
-    pool = get_io_pool()
     tasks = []
-    for cid in ids:
-        tasks.append((cid, ''))
+    for cid, pf_dict in specs:
+        tasks.append((cid, pf_dict, ''))
         if warm_schools and len(school_ids) > 1:
             for s_id in school_ids[1:]:
-                tasks.append((cid, s_id))
+                tasks.append((cid, pf_dict, s_id))
 
-    def _warm_one(item):
-        c_id, sch_id = item
+    if not tasks:
+        return 0
+
+    charts_map = SavedChart.objects.in_bulk({cid for cid, _, _ in tasks})
+
+    def _warm_one(item, *, close_conn=True):
+        c_id, pf_dict, sch_id = item
+        chart_obj = charts_map.get(c_id)
+        if chart_obj is None:
+            return False
         try:
-            _render_saved_chart(c_id, {}, is_embed=True, school_id=sch_id)
+            _render_saved_chart(
+                c_id, pf_dict, is_embed=True, school_id=sch_id,
+                chart_obj=chart_obj, sync_version=sync_version,
+            )
             return True
         except Exception:
             _timing_log.exception('op=warm_published_page_charts chart_id=%s school_id=%s', c_id, sch_id)
             return False
         finally:
-            from clickhouse_utils.thread_pool import close_thread_db_connection
-            close_thread_db_connection()
+            if close_conn:
+                close_thread_db_connection()
 
-    if len(tasks) <= 1:
-        warmed = sum(1 for t in tasks if _warm_one(t))
-        return warmed
+    if len(tasks) == 1:
+        return 1 if _warm_one(tasks[0], close_conn=False) else 0
 
-    pool = get_io_pool()
-    futures = [pool.submit(_warm_one, t) for t in tasks]
-    warmed = sum(1 for f in futures if f.result())
+    # Submit in bounded chunks of 4 so background warming never starves interactive users.
+    pool = get_chart_pool()
+    warmed = 0
+    chunk_size = 4
+    for idx in range(0, len(tasks), chunk_size):
+        chunk = tasks[idx:idx + chunk_size]
+        futures = [pool.submit(_warm_one, t) for t in chunk]
+        warmed += sum(1 for f in futures if f.result())
     return warmed
+
+
+def schedule_chart_warm(chart_id: int):
+    """Fire-and-forget warm for a newly saved chart (skipped in test runner)."""
+    import sys
+    if 'test' in sys.argv or not chart_id:
+        return
+    try:
+        from clickhouse_utils.thread_pool import get_chart_pool, close_thread_db_connection
+
+        def _bg():
+            try:
+                warm_published_page_charts(limit=10, warm_schools=False, chart_ids={int(chart_id)})
+            except Exception:
+                _timing_log.debug('Background chart warm skipped for %s', chart_id, exc_info=True)
+            finally:
+                close_thread_db_connection()
+
+        get_chart_pool().submit(_bg)
+    except Exception:
+        pass
+
+
+def schedule_page_charts_warm(page_id: int):
+    """Fire-and-forget warm for all charts on a newly published DataVizPage."""
+    import sys
+    if 'test' in sys.argv or not page_id:
+        return
+    try:
+        from clickhouse_utils.thread_pool import get_chart_pool, close_thread_db_connection
+
+        def _bg():
+            try:
+                warm_published_page_charts(limit=50, warm_schools=False, page_ids=[int(page_id)])
+            except Exception:
+                _timing_log.debug('Background page warm skipped for %s', page_id, exc_info=True)
+            finally:
+                close_thread_db_connection()
+
+        get_chart_pool().submit(_bg)
+    except Exception:
+        pass
 
 
 def _chart_data_scope(request):
@@ -2299,7 +2523,7 @@ def _filter_chart_rows_for_caseload(result, user):
 
 def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
                          drill_source_name='', is_embed=False, request=None, if_none_match=None,
-                         school_id=None):
+                         school_id=None, chart_obj=None, sync_version=None, scope_info=None):
     """
     Core chart-render pipeline: runs the chart's query (or reuses the 2-layer
     Redis cache), builds the ECharts option, and renders the chart_preview
@@ -2321,43 +2545,35 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
       {'html': str, 'error': str|None, 'cache_status': 'HIT'|'MISS', 'etag': str}
     """
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
+    from clickhouse_utils.client import get_analytics_sync_version
 
-    chart = get_object_or_404(SavedChart, pk=chart_id)
+    chart = chart_obj if chart_obj is not None else get_object_or_404(SavedChart, pk=chart_id)
     # Read once per render so a sync that happens mid-request cannot produce
     # mismatched data/render cache keys.
-    sync_version = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    if sync_version is None:
+        sync_version = get_analytics_sync_version()
     # Counselor caseload users get their own chart/data cache entries so an
     # unscoped chart can never be served into a caseload-only view.
-    chart_user, scope_suffix = _chart_data_scope(request)
+    if scope_info is not None:
+        chart_user, scope_suffix = scope_info
+    else:
+        chart_user, scope_suffix = _chart_data_scope(request)
 
-    # ── School scope ────────────────────────────────────────────────
-    if school_id and school_id not in ('all', 'All', ''):
-        pf_filters = dict(pf_filters or {})
-        pf_filters.setdefault('school_state_id', school_id)
-
-    # ── Build cache key ────────────────────────────────────────────
-    pf_params = sorted(pf_filters.items())
-    pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
-    # updated_at as an int-second timestamp busts the key on every chart save
-    updated_ts = int(chart.updated_at.timestamp())
-    config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
-    # Raw rows cached below are already narrowed by chart.source_filters +
-    # page filters (minus config.skip_page_filters) and by
-    # one_row_per_stu_annual_key. Include those in the data-cache key so two
-    # charts that share a dataset but use different filters cannot read each
-    # other's cached rows (e.g. a multi-year trend chart and a single-year
-    # school chart created in the same second).
+    render_cache_key, etag, pf_filters, pf_hash, updated_ts, config_hash = (
+        build_chart_render_cache_key(
+            chart, pf_filters,
+            is_embed=is_embed,
+            sync_version=sync_version,
+            scope_suffix=scope_suffix,
+            school_id=school_id,
+        )
+    )
+    embed_suffix = 'e' if is_embed else 's'
     filter_cfg_hash = hashlib.md5(json.dumps({
         'source_filters': chart.source_filters or {},
-        'skip_page_filters': chart.config.get('skip_page_filters') or [],
-        'one_row_per_stu_annual_key': bool(chart.config.get('one_row_per_stu_annual_key')),
+        'skip_page_filters': (chart.config or {}).get('skip_page_filters') or [],
+        'one_row_per_stu_annual_key': bool((chart.config or {}).get('one_row_per_stu_annual_key')),
     }, sort_keys=True, default=str).encode()).hexdigest()[:12]
-    embed_suffix = 'e' if is_embed else 's'
-    render_cache_key = (
-        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}{scope_suffix}'
-    )
-    etag = f'W/"{render_cache_key[-16:]}"'
 
     if if_none_match == etag:
         return {'not_modified': True, 'etag': etag}
@@ -2368,7 +2584,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
 
     lock_key, done_key = _chart_flight_keys(
-        chart_id, updated_ts, pf_hash, embed_suffix, sync_version, scope_suffix,
+        chart.pk, updated_ts, config_hash, pf_hash, embed_suffix, sync_version, scope_suffix,
     )
     done = cache.get(done_key)
     if done is not None:
@@ -2378,267 +2594,294 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
 
     got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
     if not got_lock:
-        waited = _wait_chart_flight(done_key)
+        waited = _wait_chart_flight(lock_key, done_key)
         if waited is not None:
             return waited
+        # Re-check render cache in case leader populated it just as wait ended
+        cached_html = cache.get(render_cache_key)
+        if cached_html is not None:
+            return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
 
-    # ── Layer 1 – Data cache: raw rows keyed by source + filters ──
-    sel_cols_hash = ""
-    if chart.source_type == SavedChart.SOURCE_COLUMNS:
-        _sel_for_hash = list(chart.config.get('selected_columns', []))
-        for _c in _chart_extra_query_columns(chart.config):
-            if _c not in _sel_for_hash:
-                _sel_for_hash.append(_c)
-        sel_cols_hash = hashlib.md5(json.dumps(_sel_for_hash, sort_keys=True).encode()).hexdigest()[:8]
-
-    extra_cols_hash = hashlib.md5(
-        json.dumps(_chart_extra_query_columns(chart.config), sort_keys=True).encode()
-    ).hexdigest()[:8]
-
-    source_part = (
-        f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
-        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:'
-        f'{config_hash}:{filter_cfg_hash}:{pf_hash}:{updated_ts}:'
-        f'{sync_version}{scope_suffix}'
-    )
-    data_cache_key = f'chart_data:{source_part}'
-    data_cached = cache.get(data_cache_key)
-    result = data_cached if data_cached is not None else None
-
-    # ── Cache miss: run the full pipeline ─────────────────────────
-    chart_cfg = _effective_chart_cfg(chart)
-    # True when ClickHouse pushed the aggregation down; its compact rows are
-    # chart-specific and must never be written to the shared per-dataset row
-    # cache (a sibling chart would then read the wrong compact columns).
-    used_aggregate = False
-    option = None
     try:
-        if result is not None:
-            # Data cache hit — skip SQL, jump to rendering
-            pass
-        elif chart.source_type == SavedChart.SOURCE_SQL:
-            result = run_raw_sql(chart.source_sql)
-            result = _filter_chart_rows_for_caseload(result, chart_user)
-        elif chart.source_type == SavedChart.SOURCE_COLUMNS:
-            selected_columns = list(chart.config.get('selected_columns', []))
-            for c in _chart_extra_query_columns(chart.config):
-                if c not in selected_columns:
-                    selected_columns.append(c)
-            merged_filters = _merge_page_filters(
-                chart.source_filters, pf_filters, chart_cfg,
-            )
-            result = run_column_query(
-                selected_columns, merged_filters,
-                user=chart_user,
-                apply_user_filters=chart_user is not None,
-            )
-            result = _augment_chart_result_rows(
-                chart.chart_type, chart_cfg, {}, result,
-            )
-        elif chart.source_type == SavedChart.SOURCE_DATASET:
-            from dataviz.models import Dataset
-            from dataviz.utils.compiler import (
-                compile_dataset_to_sql, execute_compiled_query_aliased,
-                generate_column_aliases, dedupe_rows_by_stu_annual_key,
-                load_dataset_result,
-            )
-            from dataviz.utils.status_filter import prepare_interactive_filters
-            try:
-                ds = Dataset.objects.get(pk=chart.source_id)
-            except Dataset.DoesNotExist:
-                result = {'error': 'Dataset not found', 'rows': [], 'columns': []}
-            else:
-                # Dataset-specific data cache — key includes dataset updated_at
-                # so schema changes automatically bust stale cached rows.
-                col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
-                raw_filters = _merge_page_filters(
+        # ── Layer 1 – Data cache: raw rows keyed by source + filters ──
+        sel_cols_hash = ""
+        if chart.source_type == SavedChart.SOURCE_COLUMNS:
+            _sel_for_hash = list((chart.config or {}).get('selected_columns', []))
+            for _c in _chart_extra_query_columns(chart.config or {}):
+                if _c not in _sel_for_hash:
+                    _sel_for_hash.append(_c)
+            sel_cols_hash = hashlib.md5(json.dumps(_sel_for_hash, sort_keys=True).encode()).hexdigest()[:8]
+
+        extra_cols_hash = hashlib.md5(
+            json.dumps(_chart_extra_query_columns(chart.config or {}), sort_keys=True).encode()
+        ).hexdigest()[:8]
+
+        source_part = (
+            f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
+            f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:'
+            f'{config_hash}:{filter_cfg_hash}:{pf_hash}:{updated_ts}:'
+            f'{sync_version}{scope_suffix}'
+        )
+        data_cache_key = f'chart_data:{source_part}'
+        data_cached = cache.get(data_cache_key)
+        result = data_cached if data_cached is not None else None
+
+        # ── Cache miss: run the full pipeline ─────────────────────────
+        chart_cfg = _effective_chart_cfg(chart)
+        # True when ClickHouse pushed the aggregation down; its compact rows are
+        # chart-specific and must never be written to the shared per-dataset row
+        # cache (a sibling chart would then read the wrong compact columns).
+        used_aggregate = False
+        option = None
+        try:
+            if result is not None:
+                # Data cache hit — skip SQL, jump to rendering
+                pass
+            elif chart.source_type == SavedChart.SOURCE_SQL:
+                result = run_raw_sql(chart.source_sql)
+                result = _filter_chart_rows_for_caseload(result, chart_user)
+            elif chart.source_type == SavedChart.SOURCE_COLUMNS:
+                selected_columns = list((chart.config or {}).get('selected_columns', []))
+                for c in _chart_extra_query_columns(chart.config or {}):
+                    if c not in selected_columns:
+                        selected_columns.append(c)
+                merged_filters = _merge_page_filters(
                     chart.source_filters, pf_filters, chart_cfg,
                 )
-                limit_val = _parse_chart_row_limit(chart_cfg)
-                one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
-                ds_updated = int(ds.updated_at.timestamp())
-                is_sql_ds = getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL
-                if is_sql_ds:
-                    ds_filter_hash = hashlib.md5(json.dumps({
-                        '__sql__': True,
-                        '__one_per_sak__': one_per_sak,
-                        **raw_filters,
-                    }, sort_keys=True, default=str).encode()).hexdigest()[:12]
-                else:
-                    active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-                    resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
-                    ds_filter_hash = hashlib.md5(json.dumps(
-                        {
-                            **resolved_filters,
-                            '__status__': status_val,
-                            '__one_per_sak__': one_per_sak,
-                        },
-                        sort_keys=True, default=str,
-                    ).encode()).hexdigest()[:12]
-                ds_cache_key = (
-                    f'chart_data:ds:{_CHART_PIPELINE_VERSION}:{chart.source_id}:'
-                    f'{ds_updated}:{limit_val}:{ds_filter_hash}:{sync_version}{scope_suffix}'
+                result = run_column_query(
+                    selected_columns, merged_filters,
+                    user=chart_user,
+                    apply_user_filters=chart_user is not None,
                 )
-                ds_cached = cache.get(ds_cache_key)
-                used_aggregate = False
-                if ds_cached is not None:
-                    result = ds_cached
-                    chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
+                result = _augment_chart_result_rows(
+                    chart.chart_type, chart_cfg, {}, result,
+                )
+            elif chart.source_type == SavedChart.SOURCE_DATASET:
+                from dataviz.models import Dataset
+                from dataviz.utils.compiler import (
+                    compile_dataset_to_sql, execute_compiled_query_aliased,
+                    generate_column_aliases, load_dataset_result,
+                )
+                from dataviz.utils.status_filter import prepare_interactive_filters
+                try:
+                    ds = Dataset.objects.get(pk=chart.source_id)
+                except Dataset.DoesNotExist:
+                    result = {'error': 'Dataset not found', 'rows': [], 'columns': []}
                 else:
+                    # Dataset-specific data cache — key includes dataset updated_at
+                    # so schema changes automatically bust stale cached rows.
+                    col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
+                    raw_filters = _merge_page_filters(
+                        chart.source_filters, pf_filters, chart_cfg,
+                    )
+                    limit_val = _parse_chart_row_limit(chart_cfg)
+                    one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
+                    ds_updated = int(ds.updated_at.timestamp())
+                    is_sql_ds = getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL
+                    projected_cols = None
                     if is_sql_ds:
-                        if _is_pivot_summary_chart(chart_cfg, chart.chart_type):
-                            aggregated = _clickhouse_aggregate_sql_table(
-                                ds, chart_cfg, raw_filters, col_mappings,
-                                column_defs=chart.column_defs,
-                                user=chart_user,
-                            )
-                        else:
-                            aggregated = _clickhouse_aggregate_sql_dataset(
-                                ds, chart_cfg, raw_filters, col_mappings,
-                                column_defs=chart.column_defs,
-                                user=chart_user,
-                            )
-                        if aggregated is not None:
-                            res, chart_cfg = aggregated
-                            used_aggregate = True
-                        else:
-                            res = _load_sql_dataset_filtered(
-                                ds, raw_filters, col_mappings,
-                                limit=limit_val, user=chart_user,
-                            )
-                            if res is None:
-                                res = load_dataset_result(
-                                    ds, user=chart_user, limit=limit_val,
-                                    one_per_sak=one_per_sak,
-                                )
-                                if not res.get('error') and res.get('rows'):
-                                    res = dict(res)
-                                    res['rows'] = _apply_sql_dataset_row_filters(
-                                        res['rows'], raw_filters,
-                                    )
-                                    res['row_count'] = len(res['rows'])
-                                    res = _filter_chart_rows_for_caseload(
-                                        res, chart_user,
-                                    )
-                            elif chart_user is not None:
-                                res = _filter_chart_rows_for_caseload(res, chart_user)
+                        ds_filter_hash = hashlib.md5(json.dumps({
+                            '__sql__': True,
+                            '__one_per_sak__': one_per_sak,
+                            **raw_filters,
+                        }, sort_keys=True, default=str).encode()).hexdigest()[:12]
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                         resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
-                        if _is_pivot_summary_chart(chart_cfg, chart.chart_type):
-                            aggregated = _clickhouse_aggregate_table_cells(
-                                ds, chart_cfg, raw_filters, col_mappings,
-                                column_defs=chart.column_defs,
-                                user=chart_user,
-                            )
-                        else:
-                            aggregated = _clickhouse_aggregate_dataset(
-                                ds, chart_cfg, raw_filters, col_mappings,
-                                column_defs=chart.column_defs,
-                                user=chart_user,
-                            )
-                        if aggregated is not None:
-                            res, chart_cfg = aggregated
-                            used_aggregate = True
-                        else:
-                            sql, params = compile_dataset_to_sql(
-                                ds, user=chart_user, interactive_filters=resolved_filters,
-                                limit=limit_val, status_filter=status_val,
-                                one_row_per_stu_annual_key=one_per_sak,
-                            )
-                            res = execute_compiled_query_aliased(sql, params, col_mappings)
-                    if res.get('error'):
-                        result = {'error': res['error'], 'rows': [], 'columns': []}
-                    else:
-                        rows = res.get('rows', [])
-                        result = {'rows': rows, 'columns': res.get('columns', []), 'row_count': len(rows)}
-                        # Compact CH aggregates are chart-specific; do not store
-                        # them under the shared dataset-row cache key.
-                        if result.get('rows') and not used_aggregate:
-                            cache.set(ds_cache_key, result, timeout=1800)
-                    if not used_aggregate:
-                        chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
-
-                # After data is retrieved (either from cache or fresh query), augment with assessment cols if needed.
-                # This must be done outside the dataset cache because different charts on the same dataset
-                # might require different assessment columns.
-                if not result.get('error') and result.get('rows'):
-                    aliased_rows = result['rows']
-                    aliased_rows = _dedupe_chart_rows(
-                        aliased_rows, chart_cfg, used_aggregate=used_aggregate,
+                        ds_filter_hash = hashlib.md5(json.dumps(
+                            {
+                                **resolved_filters,
+                                '__status__': status_val,
+                                '__one_per_sak__': one_per_sak,
+                            },
+                            sort_keys=True, default=str,
+                        ).encode()).hexdigest()[:12]
+                    ds_cache_key = (
+                        f'chart_data:ds:{_CHART_PIPELINE_VERSION}:{chart.source_id}:'
+                        f'{ds_updated}:{limit_val}:{ds_filter_hash}:{sync_version}{scope_suffix}'
                     )
-                    _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
-                    if _missing_assessment:
-                        aliased_rows = _augment_rows_with_assessment_cols(
-                            aliased_rows, _missing_assessment, None,
-                            source_filters=raw_filters,
+                    ds_cached = cache.get(ds_cache_key)
+                    used_aggregate = False
+                    if ds_cached is not None:
+                        result = ds_cached
+                        chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
+                    else:
+                        if is_sql_ds:
+                            if _is_pivot_summary_chart(chart_cfg, chart.chart_type):
+                                aggregated = _clickhouse_aggregate_sql_table(
+                                    ds, chart_cfg, raw_filters, col_mappings,
+                                    column_defs=chart.column_defs,
+                                    user=chart_user,
+                                )
+                            else:
+                                aggregated = _clickhouse_aggregate_sql_dataset(
+                                    ds, chart_cfg, raw_filters, col_mappings,
+                                    column_defs=chart.column_defs,
+                                    user=chart_user,
+                                )
+                            if aggregated is not None:
+                                res, chart_cfg = aggregated
+                                used_aggregate = True
+                            else:
+                                res = _load_sql_dataset_filtered(
+                                    ds, raw_filters, col_mappings,
+                                    limit=limit_val, user=chart_user,
+                                )
+                                if res is None:
+                                    res = load_dataset_result(
+                                        ds, user=chart_user, limit=limit_val,
+                                        one_per_sak=one_per_sak,
+                                    )
+                                    if not res.get('error') and res.get('rows'):
+                                        res = dict(res)
+                                        res['rows'] = _apply_sql_dataset_row_filters(
+                                            res['rows'], raw_filters,
+                                        )
+                                        res['row_count'] = len(res['rows'])
+                                        res = _filter_chart_rows_for_caseload(
+                                            res, chart_user,
+                                        )
+                                elif chart_user is not None:
+                                    res = _filter_chart_rows_for_caseload(res, chart_user)
+                        else:
+                            active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+                            resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
+                            if _is_pivot_summary_chart(chart_cfg, chart.chart_type):
+                                aggregated = _clickhouse_aggregate_table_cells(
+                                    ds, chart_cfg, raw_filters, col_mappings,
+                                    column_defs=chart.column_defs,
+                                    user=chart_user,
+                                )
+                            else:
+                                aggregated = _clickhouse_aggregate_dataset(
+                                    ds, chart_cfg, raw_filters, col_mappings,
+                                    column_defs=chart.column_defs,
+                                    user=chart_user,
+                                )
+                            if aggregated is not None:
+                                res, chart_cfg = aggregated
+                                used_aggregate = True
+                            else:
+                                projected_cols = _dataset_projected_columns_for_chart(
+                                    ds, chart_cfg, raw_filters, col_mappings,
+                                )
+                                proj_cache_key = None
+                                if projected_cols:
+                                    proj_hash = hashlib.md5(
+                                        json.dumps(projected_cols).encode()
+                                    ).hexdigest()[:8]
+                                    proj_cache_key = f'{ds_cache_key}:p{proj_hash}'
+                                    proj_cached = cache.get(proj_cache_key)
+                                    if proj_cached is not None:
+                                        res = proj_cached
+                                    else:
+                                        sql, params = compile_dataset_to_sql(
+                                            ds, user=chart_user, interactive_filters=resolved_filters,
+                                            limit=limit_val, status_filter=status_val,
+                                            one_row_per_stu_annual_key=one_per_sak,
+                                            projected_columns=projected_cols,
+                                        )
+                                        res = execute_compiled_query_aliased(sql, params, col_mappings)
+                                        if not res.get('error') and res.get('rows'):
+                                            cache.set(proj_cache_key, res, timeout=_DATA_CACHE_TTL)
+                                else:
+                                    sql, params = compile_dataset_to_sql(
+                                        ds, user=chart_user, interactive_filters=resolved_filters,
+                                        limit=limit_val, status_filter=status_val,
+                                        one_row_per_stu_annual_key=one_per_sak,
+                                    )
+                                    res = execute_compiled_query_aliased(sql, params, col_mappings)
+                        if res.get('error'):
+                            result = {'error': res['error'], 'rows': [], 'columns': []}
+                        else:
+                            rows = res.get('rows', [])
+                            result = {'rows': rows, 'columns': res.get('columns', []), 'row_count': len(rows)}
+                            # Compact CH aggregates and narrowed projections are chart-specific;
+                            # do not store them under the shared full-dataset row cache key.
+                            if result.get('rows') and not used_aggregate and not projected_cols:
+                                cache.set(ds_cache_key, result, timeout=_DATA_CACHE_TTL)
+                        if not used_aggregate:
+                            chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
+
+                    # After data is retrieved (either from cache or fresh query), augment with assessment cols if needed.
+                    # This must be done outside the dataset cache because different charts on the same dataset
+                    # might require different assessment columns.
+                    if not result.get('error') and result.get('rows'):
+                        aliased_rows = result['rows']
+                        aliased_rows = _dedupe_chart_rows(
+                            aliased_rows, chart_cfg, used_aggregate=used_aggregate,
                         )
-                    result['rows'] = aliased_rows
-                    result['row_count'] = len(aliased_rows)
+                        _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
+                        if _missing_assessment:
+                            aliased_rows = _augment_rows_with_assessment_cols(
+                                aliased_rows, _missing_assessment, None,
+                                source_filters=raw_filters,
+                            )
+                        result['rows'] = aliased_rows
+                        result['row_count'] = len(aliased_rows)
 
-        else:
-            merged_filters = _merge_page_filters(
-                chart.source_filters, pf_filters, chart_cfg,
-            )
-            user = getattr(request, 'user', None)
-            extra_cols = _chart_extra_query_columns(chart_cfg)
-            result = run_saved_query(
-                chart.source_id, merged_filters, user,
-                extra_columns=extra_cols or None,
-                apply_user_filters=chart_user is not None,
-            )
-            result = _augment_chart_result_rows(
-                chart.chart_type, chart_cfg, {}, result,
-            )
+            else:
+                merged_filters = _merge_page_filters(
+                    chart.source_filters, pf_filters, chart_cfg,
+                )
+                user = getattr(request, 'user', None)
+                extra_cols = _chart_extra_query_columns(chart_cfg)
+                result = run_saved_query(
+                    chart.source_id, merged_filters, user,
+                    extra_columns=extra_cols or None,
+                    apply_user_filters=chart_user is not None,
+                )
+                result = _augment_chart_result_rows(
+                    chart.chart_type, chart_cfg, {}, result,
+                )
 
-        if result.get('error'):
+            if result.get('error'):
+                option_json = '{}'
+                error = result['error']
+            else:
+                # Save data cache (4h TTL; sync_version busts immediately on data updates)
+                if data_cached is None and result.get('rows') and not used_aggregate and chart.source_type != SavedChart.SOURCE_DATASET:
+                    cache.set(data_cache_key, result, timeout=_DATA_CACHE_TTL)
+                chart_cfg['is_embed'] = is_embed
+                option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)
+                option.pop('__series_names__', None)
+                option.pop('__sk_diag__', None)
+                option_json = json.dumps(option)
+                error = None
+        except Exception as exc:
             option_json = '{}'
-            error = result['error']
-        else:
-            # Save data cache (30 min TTL — confirmed acceptable staleness window)
-            if data_cached is None and result.get('rows') and not used_aggregate:
-                cache.set(data_cache_key, result, timeout=1800)
-            chart_cfg['is_embed'] = is_embed
-            option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)
-            option.pop('__series_names__', None)
-            option.pop('__sk_diag__', None)
-            option_json = json.dumps(option)
-            error = None
-    except Exception as exc:
-        option_json = '{}'
-        error = str(exc)
+            error = str(exc)
 
-    table_layout = _chart_partial_table_layout(chart_cfg, option)
+        table_layout = _chart_partial_table_layout(chart_cfg, option)
 
-    ctx = {
-        'option_json':       option_json,
-        'chart_id':          chart.pk,
-        'drill_enabled':     '0' if chart_cfg.get('disable_drill') else '1',
-        'drill_source':      drill_source,
-        'drill_source_id':   drill_source_id,
-        'drill_source_name': drill_source_name,
-        'error':             error,
-        'embed':             is_embed,
-        **table_layout,
-    }
-    html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
+        ctx = {
+            'option_json':       option_json,
+            'chart_id':          chart.pk,
+            'drill_enabled':     '0' if chart_cfg.get('disable_drill') else '1',
+            'drill_source':      drill_source,
+            'drill_source_id':   drill_source_id,
+            'drill_source_name': drill_source_name,
+            'error':             error,
+            'embed':             is_embed,
+            **table_layout,
+        }
+        # Omit ``request`` so Django does not run global TEMPLATE_CONTEXT_PROCESSORS
+        # (such as users.context_processors.navigation_pages) on every chart render.
+        html = render_to_string('dataviz/partials/chart_preview.html', ctx)
 
-    # Cache only successful renders (no error); render cache = 1 hour.
-    # Recompute the key from the data we actually just fetched: the
-    # lookup above used data_hash='raw' whenever the data cache was cold,
-    # but by now `result` holds real rows — a later call whose data cache
-    # *is* warm will compute the real data_hash on its lookup, so storing
-    # under that same real-data key (not 'raw') is what makes it a HIT.
-    if not error:
-        cache.set(render_cache_key, html, timeout=3600)
+        if not error:
+            cache.set(render_cache_key, html, timeout=_RENDER_CACHE_TTL)
 
-    payload = {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}
-    if got_lock:
-        cache.set(done_key, {
-            'html': html, 'error': error, 'etag': etag,
-        }, timeout=_FLIGHT_LOCK_TTL)
-        cache.delete(lock_key)
-    return payload
+        payload = {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}
+        if got_lock:
+            done_ttl = _FLIGHT_LOCK_TTL if not error else 2
+            cache.set(done_key, {
+                'html': html, 'error': error, 'etag': etag,
+            }, timeout=done_ttl)
+        return payload
+    finally:
+        if got_lock:
+            cache.delete(lock_key)
 
 
 @login_required
@@ -2649,17 +2892,7 @@ def chart_render_api(request, chart_id):
     Return a rendered chart partial for a saved chart_id.
     Runs the underlying query and builds the ECharts option.
     Used by page/dashboard view to lazy-load chart data.
-
-    Caching: rendered HTML is cached in Redis keyed by
-      chart_id + chart.updated_at + sorted pf_* filter params
-    so that repeat views (same filters, any user) return in <10 ms.
-    The cache automatically busts when the chart config is saved
-    (updated_at changes) or when the 5-minute TTL expires.
     """
-    # source/source_id/source_name are breadcrumb-only and do NOT affect
-    # query results. But embed mode (source=page/dashboard) changes the
-    # rendered HTML (no min-height on the chart container), so it must
-    # be included in the render cache key.
     is_embed = request.GET.get('source') in ('page', 'dashboard')
     pf_filters = _parse_pf_filters(request.GET)
 
@@ -2677,6 +2910,7 @@ def chart_render_api(request, chart_id):
         is_embed=is_embed, request=request,
         if_none_match=request.headers.get('If-None-Match'),
         school_id=request.GET.get('school_id', ''),
+        chart_obj=chart,
     )
     _timing_log.info(
         'op=chart_render_api cache_status=%s chart_id=%s',
@@ -2702,30 +2936,32 @@ def chart_render_api(request, chart_id):
 @timed_fn('chart_batch_render_api')
 def chart_batch_render_api(request):
     """
-    Render multiple saved charts concurrently in one request.
-
-    POST JSON: {"chart_ids": [1, 2, 3], "source": "page", "source_id": "...",
-                "source_name": "...", "filters": {"grade": ["K", "1"], ...}}
-    ``filters`` uses bare column names (no 'pf_' prefix), since this is a
-    JSON body rather than query-string params.
-
-    Returns {"charts": {"<chart_id>": {"html": ..., "error": ...}, ...}}.
-
-    Used by the page viewer to render the initial (above-the-fold) burst of
-    charts in parallel via the shared ClickHouse-bound thread pool, instead
-    of each chart firing its own sequential/connection-limited request.
-    Individual charts still go through chart_render_api's normal lazy-load
-    path afterward — this just warms/produces the same cache so those
-    requests come back fast.
+    Render multiple saved charts concurrently in one request, using a bulk
+    PostgreSQL + Redis MGET fast-path on the main thread before spawning
+    worker threads only for cold cache misses.
     """
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-    chart_ids = body.get('chart_ids') or []
-    if not chart_ids:
+    raw_chart_ids = body.get('chart_ids') or []
+    if not raw_chart_ids:
         return JsonResponse({'charts': {}})
+
+    # Normalize & deduplicate chart IDs while preserving order
+    ordered_ids: list[int] = []
+    seen_ids: set[int] = set()
+    invalid_keys: list[str] = []
+    for raw_cid in raw_chart_ids:
+        try:
+            cid_int = int(raw_cid)
+        except (TypeError, ValueError):
+            invalid_keys.append(str(raw_cid))
+            continue
+        if cid_int not in seen_ids:
+            seen_ids.add(cid_int)
+            ordered_ids.append(cid_int)
 
     source = body.get('source', '')
     source_id = body.get('source_id', '')
@@ -2735,13 +2971,17 @@ def chart_batch_render_api(request):
     school_id = body.get('school_id') or ''
     etags = body.get('etags') or {}
 
+    charts: dict[str, dict] = {k: {'html': '', 'error': 'Chart not found'} for k in invalid_keys}
+    if not ordered_ids:
+        return JsonResponse({'charts': charts})
+
     # Non-admins may only batch-render their own home-dashboard charts
-    permitted = set(chart_ids)
+    permitted = set(ordered_ids)
     if source_id == 'home' and not is_project_admin(request.user):
         from django.db.models import Q as _Q
         allowed = set(
             SavedChart.objects
-            .filter(pk__in=chart_ids)
+            .filter(pk__in=ordered_ids)
             .filter(
                 _Q(is_user_menu=True) |
                 _Q(dashboard_slots__dashboard__owner=request.user,
@@ -2752,20 +2992,75 @@ def chart_batch_render_api(request):
         )
         permitted = allowed
 
-    from clickhouse_utils.thread_pool import get_io_pool, close_thread_db_connection
-    pool = get_io_pool()
+    charts_by_id = SavedChart.objects.in_bulk(ordered_ids)
 
-    def _one(cid):
+    from clickhouse_utils.client import get_analytics_sync_version
+    sync_version = get_analytics_sync_version()
+    scope_info = _chart_data_scope(request)
+    _, scope_suffix = scope_info
+
+    # Fast-path 1: permissions, 404s, ETag 304s, and a single Redis MGET for warm HTML
+    cache_lookup_keys: dict[int, tuple[str, str]] = {}
+    for cid in ordered_ids:
         if cid not in permitted:
-            return cid, {'html': '', 'error': 'Not permitted'}
+            charts[str(cid)] = {'html': '', 'error': 'Not permitted'}
+            continue
+        chart_obj = charts_by_id.get(cid)
+        if chart_obj is None:
+            charts[str(cid)] = {'html': '', 'error': 'Chart not found'}
+            continue
+        if_none_match = etags.get(str(cid)) or etags.get(cid)
+        rkey, etag, _, _, _, _ = build_chart_render_cache_key(
+            chart_obj, pf_filters,
+            is_embed=is_embed,
+            sync_version=sync_version,
+            scope_suffix=scope_suffix,
+            school_id=school_id,
+        )
+        if if_none_match and if_none_match == etag:
+            charts[str(cid)] = {
+                'html': '',
+                'error': None,
+                'cache_status': 'HIT',
+                'etag': etag,
+                'not_modified': True,
+            }
+            continue
+        cache_lookup_keys[cid] = (rkey, etag)
+
+    misses: list[int] = []
+    if cache_lookup_keys:
+        warm_map = cache.get_many([rk for rk, _ in cache_lookup_keys.values()])
+        for cid, (rkey, etag) in cache_lookup_keys.items():
+            cached_html = warm_map.get(rkey)
+            if cached_html is not None:
+                charts[str(cid)] = {
+                    'html': cached_html,
+                    'error': None,
+                    'cache_status': 'HIT',
+                    'etag': etag,
+                    'not_modified': False,
+                }
+            else:
+                misses.append(cid)
+
+    if not misses:
+        return JsonResponse({'charts': charts})
+
+    from clickhouse_utils.thread_pool import get_chart_pool, close_thread_db_connection
+
+    def _one(cid, *, close_conn=True):
         try:
-            if_none_match = etags.get(str(cid)) or (etags.get(int(cid)) if str(cid).isdigit() else None)
+            if_none_match = etags.get(str(cid)) or etags.get(cid)
             res = _render_saved_chart(
                 cid, pf_filters,
                 drill_source=source, drill_source_id=source_id, drill_source_name=source_name,
                 is_embed=is_embed, request=request,
                 if_none_match=if_none_match,
                 school_id=school_id,
+                chart_obj=charts_by_id.get(cid),
+                sync_version=sync_version,
+                scope_info=scope_info,
             )
             return cid, {
                 'html': res.get('html', ''),
@@ -2777,10 +3072,16 @@ def chart_batch_render_api(request):
         except Exception as exc:
             return cid, {'html': '', 'error': str(exc)}
         finally:
-            close_thread_db_connection()
+            if close_conn:
+                close_thread_db_connection()
 
-    futures = [pool.submit(_one, cid) for cid in chart_ids]
-    charts = {}
+    if len(misses) == 1:
+        cid, payload = _one(misses[0], close_conn=False)
+        charts[str(cid)] = payload
+        return JsonResponse({'charts': charts})
+
+    pool = get_chart_pool()
+    futures = [pool.submit(_one, cid) for cid in misses]
     for f in futures:
         cid, payload = f.result()
         charts[str(cid)] = payload
@@ -2861,6 +3162,7 @@ def chart_save_and_attach_api(request):
         chart.config['selected_columns'] = sel_cols if isinstance(sel_cols, list) else []
 
     chart.save()
+    schedule_chart_warm(chart.pk)
 
     # ── Attach chart to the target page ──
     target_row_id = body.get('target_row_id')

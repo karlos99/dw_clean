@@ -38,15 +38,23 @@ def index(request):
             home_forced_chart_ids = [int(c) for c in (home_cfg.home_forced_charts or [])]
             slots = list(home_dashboard.chart_slots.select_related('chart').order_by('position'))
 
-            # Pre-render each chart via the shared (cached) pipeline so the home
-            # page renders charts exactly like the dataviz pages do. Parallelized across
-            # worker threads so homepage latency is max(single_chart) rather than sum.
-            from clickhouse_utils.thread_pool import get_io_pool, close_thread_db_connection
-            from dataviz.views.api.chart_api import _render_saved_chart
+            # Hybrid SSR + Async Fallback: check Redis in one MGET so warm home
+            # charts render inline with 0ms paint, while cold cache misses render
+            # shimmer skeletons immediately (never blocking `/` TTFB on ClickHouse)
+            # and load asynchronously via /dataviz/api/charts/batch-render/.
+            from clickhouse_utils.client import get_analytics_sync_version
+            from dataviz.views.api.chart_api import (
+                build_chart_render_cache_key, _chart_data_scope,
+            )
+
+            sync_version = get_analytics_sync_version()
+            _, scope_suffix = _chart_data_scope(request)
+            slot_cache_keys = {}
 
             for slot in slots:
                 slot.rendered_html = ''
                 slot.render_error = None
+                slot.needs_async_load = False
                 if slot.chart:
                     parts = [p.strip() for p in (slot.chart.name or '').replace('\\', '/').split('/') if p.strip()]
                     if len(parts) > 1:
@@ -57,39 +65,29 @@ def index(request):
                         slot.chart_last_directory = ""
                         slot.chart_display_name = parts[0] if parts else slot.chart.name
                         slot.chart_short_location = slot.chart.name
+                    if slot.element_type == 'chart':
+                        rkey, _, _, _, _, _ = build_chart_render_cache_key(
+                            slot.chart, {},
+                            is_embed=True,
+                            sync_version=sync_version,
+                            scope_suffix=scope_suffix,
+                            school_id=active_school_id,
+                        )
+                        slot_cache_keys[slot.pk] = rkey
                 else:
                     slot.chart_last_directory = ""
                     slot.chart_display_name = "Chart"
                     slot.chart_short_location = "Chart"
 
-            def _render_slot(s):
-                if s.element_type != 'chart' or not s.chart_id:
-                    return
-                try:
-                    res = _render_saved_chart(
-                        s.chart_id, {},
-                        drill_source='dashboard',
-                        drill_source_id=s.dashboard_id,
-                        drill_source_name='My Charts',
-                        is_embed=True,
-                        request=request,
-                        school_id=active_school_id,
-                    )
-                    s.rendered_html = res.get('html', '')
-                    s.render_error = res.get('error')
-                except Exception as exc:
-                    s.render_error = str(exc)
-                finally:
-                    close_thread_db_connection()
+            warm_html_map = cache.get_many(list(slot_cache_keys.values())) if slot_cache_keys else {}
+            for slot in slots:
+                if slot.pk in slot_cache_keys:
+                    cached_html = warm_html_map.get(slot_cache_keys[slot.pk])
+                    if cached_html is not None:
+                        slot.rendered_html = cached_html
+                    else:
+                        slot.needs_async_load = True
 
-            render_targets = [s for s in slots if s.element_type == 'chart' and s.chart_id]
-            if len(render_targets) > 1:
-                pool = get_io_pool()
-                futures = [pool.submit(_render_slot, s) for s in render_targets]
-                for f in futures:
-                    f.result()
-            elif len(render_targets) == 1:
-                _render_slot(render_targets[0])
             home_dashboard_json = json.dumps(home_dashboard.to_dict())
             home_slots_json = json.dumps([s.to_dict() for s in slots])
 

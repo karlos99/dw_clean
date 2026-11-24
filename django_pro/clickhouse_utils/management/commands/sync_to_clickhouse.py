@@ -706,7 +706,16 @@ class Command(BaseCommand):
             build_enrollment_analytics_rows,
         )
 
+        t0 = time.perf_counter()
+        self.stdout.write('  enroll_history: loading roster + building rows...')
         event_rows, weekly_rows = build_enrollment_analytics_rows()
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'  enroll_history: {len(event_rows)} events, '
+                f'{len(weekly_rows)} student-weeks '
+                f'({time.perf_counter() - t0:.1f}s)'
+            )
+        )
         out: dict[str, int] = {}
         specs = (
             ('analytics_student_enrollment_events',
@@ -724,10 +733,14 @@ class Command(BaseCommand):
                 ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
             insert_table = f'{ch_db}.{target}'
             batch_size = 8000
+            t_ins = time.perf_counter()
             for i in range(0, len(rows), batch_size):
                 batch = rows[i:i + batch_size]
                 if batch:
                     ch.insert(insert_table, batch, column_names=columns)
+            self.stdout.write(
+                f'  {table}: inserted {len(rows)} rows in {time.perf_counter() - t_ins:.1f}s'
+            )
             if atomic:
                 ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
                 ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')

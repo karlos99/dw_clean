@@ -142,6 +142,57 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
 page_builder = PageBuilderView.as_view()
 
 
+def _resolve_page_filter_default(val: str) -> str:
+    if isinstance(val, str) and val.startswith('__sy_'):
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            return resolve_school_year(val)
+        except Exception:
+            pass
+    return val
+
+
+def resolve_page_default_filters(dv_page) -> tuple[list[dict], list[str], dict]:
+    """Return ``(default_filter_tags, hidden_filter_cols, default_pf_filters)`` for *dv_page*.
+
+    Shared by ``page_view`` and ``warm_published_page_charts`` so pre-warmed
+    Redis entries match the exact ``pf_*`` filter dict the browser requests on
+    initial load.
+    """
+    default_filter_tags = []
+    hidden_filter_cols = []
+    default_pf_filters: dict = {}
+
+    for f in (dv_page.page_filters or []):
+        default_val = (f.get('default_val') or '').strip()
+        if f.get('hidden'):
+            hidden_filter_cols.append(f.get('source_col', ''))
+        if not default_val:
+            continue
+        col = f.get('source_col', '')
+        if not col:
+            continue
+        label = f.get('label', '')
+        values = (
+            [v.strip() for v in default_val.split(',') if v.strip()]
+            if f.get('widget') == 'multi' else [default_val]
+        )
+        is_hidden = bool(f.get('hidden'))
+        for v in values:
+            v = _resolve_page_filter_default(v)
+            if not v:
+                continue
+            default_filter_tags.append({'col': col, 'label': label, 'value': v, 'hidden': is_hidden})
+            if col not in default_pf_filters:
+                default_pf_filters[col] = v
+            elif isinstance(default_pf_filters[col], list):
+                default_pf_filters[col].append(v)
+            else:
+                default_pf_filters[col] = [default_pf_filters[col], v]
+
+    return default_filter_tags, hidden_filter_cols, default_pf_filters
+
+
 def page_view(request, slug):
     """
     Render a published DataVizPage for end-users.
@@ -165,41 +216,7 @@ def page_view(request, slug):
                 from django.core.exceptions import PermissionDenied
                 raise PermissionDenied
 
-    # Admin-configured default filter values, in the same {col, label, value}
-    # shape the page's Alpine filter-tag JS already uses (see toggleValue()/
-    # removeTag() in view.html) — seeded client-side on first load, only for
-    # filters the visitor hasn't already picked a value for this session.
-    def _resolve_page_filter_default(val: str) -> str:
-        if isinstance(val, str) and val.startswith('__sy_'):
-            try:
-                from dataexploration.school_year_utils import resolve_school_year
-                return resolve_school_year(val)
-            except Exception:
-                pass
-        return val
-
-    default_filter_tags = []
-    hidden_filter_cols = []
-    for f in dv_page.page_filters:
-        default_val = (f.get('default_val') or '').strip()
-        if f.get('hidden'):
-            hidden_filter_cols.append(f.get('source_col', ''))
-        if not default_val:
-            continue
-        col = f.get('source_col', '')
-        if not col:
-            continue
-        label = f.get('label', '')
-        values = (
-            [v.strip() for v in default_val.split(',') if v.strip()]
-            if f.get('widget') == 'multi' else [default_val]
-        )
-        is_hidden = bool(f.get('hidden'))
-        for v in values:
-            v = _resolve_page_filter_default(v)
-            if not v:
-                continue
-            default_filter_tags.append({'col': col, 'label': label, 'value': v, 'hidden': is_hidden})
+    default_filter_tags, hidden_filter_cols, _ = resolve_page_default_filters(dv_page)
 
     sections = dv_page.sections.select_related('dashboard', 'chart', 'row').prefetch_related(
         'dashboard__chart_slots__chart'
@@ -292,12 +309,14 @@ def page_view(request, slug):
     default_qs = urlencode([('pf_' + t['col'], t['value']) for t in default_filter_tags])
 
     active_school = getattr(request.user, 'active_school', None)
+    first_tab_id = tabs[0].id if tabs else None
 
     response = render(request, 'dataviz/pages/view.html', {
         'page':         dv_page,
         'dv_page':      dv_page,
         'rows':         rows,
         'tabs':         tabs,
+        'first_tab_id': first_tab_id,
         'has_unassigned_rows': has_unassigned_rows,
         'sections':     sections,
         'orphan_sections': orphan_sections,

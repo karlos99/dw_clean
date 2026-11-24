@@ -709,7 +709,9 @@
                     var parsed = new DOMParser().parseFromString(html, 'text/html');
                     var chartNode = parsed.querySelector('.chart-container');
                     if (!chartNode) throw new Error('Chart render failed');
-                    var option = JSON.parse(chartNode.dataset.chartOption || '{}');
+                    var optionScript = chartNode.querySelector('script.dv-chart-option');
+                    var rawOption = optionScript ? optionScript.textContent : (chartNode.dataset.chartOption || '{}');
+                    var option = JSON.parse(rawOption || '{}');
                     if (!option || !Object.keys(option).length) throw new Error('Chart returned no data');
                     containerEl.style.cssText = '';
                     containerEl.innerHTML = '';

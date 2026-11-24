@@ -10,6 +10,29 @@ from django.apps import apps
 # Actually, let's use apps.get_model for safety inside the method or file level if we know app order.
 # Users app is usually loaded early. Studata is loaded.
 
+_API_IGNORED_PREFIXES = (
+    '/static/',
+    '/media/',
+    '/admin/',
+    '/api/',
+    '/dataviz/api/',
+    '/ca-dash/api/',
+    '/studentdata/api/',
+    '/enrollment/api/',
+    '/query/api/',
+)
+
+
+def _is_api_or_partial_request(request) -> bool:
+    path = getattr(request, 'path', '') or ''
+    if path.startswith(_API_IGNORED_PREFIXES):
+        return True
+    headers = getattr(request, 'headers', None) or {}
+    if headers.get('HX-Request') == 'true' and headers.get('HX-Boosted') != 'true':
+        return True
+    return False
+
+
 class ActiveRoleMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -23,25 +46,32 @@ class ActiveRoleMiddleware:
                 request.user.is_impersonated = False
 
             # --- Expire time-boxed role assignments before resolving access ---
+            # Skip housekeeping writes on sub-resource API/HTMX calls (e.g. chart
+            # batch/lazy renders); full page navigations already reconcile expiry.
             expired_fallbacks = {}
-            try:
-                expired_fallbacks = request.user.sync_expired_role_assignments()
-            except Exception:
-                # Never break a request because of role housekeeping.
-                expired_fallbacks = {}
+            if not _is_api_or_partial_request(request):
+                try:
+                    expired_fallbacks = request.user.sync_expired_role_assignments()
+                except Exception:
+                    # Never break a request because of role housekeeping.
+                    expired_fallbacks = {}
+
+            # Fetch effective roles once per request so active_role, default-role
+            # fallback, and unrestricted checks reuse a single SQL query.
+            effective_roles = list(request.user.effective_roles())
+            roles_by_id = {str(r.id): r for r in effective_roles}
 
             # --- Role Context ---
             active_role_id = request.session.get('active_role_id')
             
             if active_role_id:
-                if active_role_id == 'all': # Explicit "All" selection
+                if active_role_id == 'all':  # Explicit "All" selection
                     request.user.active_role = None
                 else:
-                    try:
-                        # Verify the user actually possesses this role
-                        role = request.user.effective_roles().get(id=active_role_id)
-                        request.user.active_role = role
-                    except (Role.DoesNotExist, ValueError, TypeError):
+                    matched_role = roles_by_id.get(str(active_role_id))
+                    if matched_role is not None:
+                        request.user.active_role = matched_role
+                    else:
                         # The selected role expired or is no longer assigned.
                         fallback_role_id = None
                         try:
@@ -50,14 +80,15 @@ class ActiveRoleMiddleware:
                             pass
                         if fallback_role_id:
                             request.session['active_role_id'] = str(fallback_role_id)
-                            request.user.active_role = Role.objects.filter(
-                                id=fallback_role_id
-                            ).first()
+                            request.user.active_role = (
+                                roles_by_id.get(str(fallback_role_id))
+                                or Role.objects.filter(id=fallback_role_id).first()
+                            )
                         else:
                             request.session.pop('active_role_id', None)
-                            self._set_default_role(request)
+                            self._set_default_role(request, effective_roles)
             else:
-                self._set_default_role(request)
+                self._set_default_role(request, effective_roles)
 
             # --- Counselor Caseload Context ---
             # Layered on top of the active role: page permissions still come
@@ -76,7 +107,7 @@ class ActiveRoleMiddleware:
             
             # Ensure we treat it as a list of strings
             user_schools_list = request.user.schools if isinstance(request.user.schools, list) else []
-            unrestricted = self._is_unrestricted(request.user)
+            unrestricted = self._is_unrestricted(request.user, effective_roles)
 
             if user_schools_list or unrestricted:
                 # Pre-fetch available schools for the UI
@@ -123,9 +154,10 @@ class ActiveRoleMiddleware:
         response = self.get_response(request)
         return response
 
-    def _set_default_role(self, request):
+    def _set_default_role(self, request, roles=None):
         """Set the highest priority role as default active role."""
-        roles = list(request.user.effective_roles())
+        if roles is None:
+            roles = list(request.user.effective_roles())
         if not roles:
             request.user.active_role = None
             return
@@ -166,10 +198,16 @@ class ActiveRoleMiddleware:
              request.user.active_role = None
 
     @staticmethod
-    def _is_unrestricted(user):
+    def _is_unrestricted(user, roles=None):
         """Superusers and District/Project-level roles can act across all schools."""
         if user.is_superuser:
             return True
+        if roles is not None:
+            unrestricted_names = {'Project Admin', 'District Admin', 'District View'}
+            return any(
+                (r.name in unrestricted_names) or ('district' in (r.name or '').lower())
+                for r in roles
+            )
         effective_roles = user.effective_roles()
         return effective_roles.filter(
             name__in=['Project Admin', 'District Admin', 'District View']
@@ -208,7 +246,7 @@ class UsageTrackingMiddleware:
             return response
 
         path = request.path or ''
-        if self._is_ignored_path(path):
+        if self._is_ignored_path(path) or _is_api_or_partial_request(request):
             return response
 
         try:
@@ -272,17 +310,12 @@ class UsageTrackingMiddleware:
     def _is_ignored_path(path: str) -> bool:
         if not path:
             return True
-        ignored_prefixes = (
-            '/static/',
-            '/media/',
-            '/admin/',
-        )
         ignored_paths = (
             '/favicon.ico',
         )
         if path in ignored_paths:
             return True
-        return path.startswith(ignored_prefixes)
+        return path.startswith(_API_IGNORED_PREFIXES)
 
     @staticmethod
     def _close_active_visit(request, usage_session, now):

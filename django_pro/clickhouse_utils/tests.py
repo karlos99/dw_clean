@@ -88,9 +88,28 @@ class AnalyticsRoutingTests(SimpleTestCase):
 
 
 class ThreadPoolSizingTests(SimpleTestCase):
-    def test_ch_io_pool_stays_under_clickhouse_concurrency_cap(self):
-        from clickhouse_utils.thread_pool import get_io_pool
-        self.assertEqual(get_io_pool()._max_workers, 8)
+    def test_ch_pools_stay_under_clickhouse_concurrency_cap(self):
+        from clickhouse_utils.thread_pool import (
+            get_chart_pool, get_io_pool, is_in_chart_pool, is_in_io_pool,
+        )
+        self.assertEqual(get_io_pool()._max_workers, 6)
+        self.assertEqual(get_chart_pool()._max_workers, 6)
+        # 8 gunicorn workers × (6 chart + 6 io) <= 96 < ClickHouse 100 concurrent query cap
+        self.assertLessEqual(8 * (get_io_pool()._max_workers + get_chart_pool()._max_workers), 100)
+        self.assertFalse(is_in_io_pool())
+        self.assertTrue(get_io_pool().submit(is_in_io_pool).result(timeout=2))
+        self.assertTrue(get_chart_pool().submit(is_in_chart_pool).result(timeout=2))
+
+    def test_analytics_sync_version_composes_dataloader_bump(self):
+        from clickhouse_utils.client import (
+            bump_dataloader_sync_version, get_analytics_sync_version,
+        )
+        fake_cache = {'analytics:clickhouse_sync_version': '2026-11-24T12:00:00'}
+        with patch('django.core.cache.cache.get_many', side_effect=lambda keys: {k: fake_cache.get(k) for k in keys}), \
+             patch('django.core.cache.cache.set', side_effect=lambda k, v, t=None: fake_cache.__setitem__(k, v)):
+            self.assertEqual(get_analytics_sync_version(), '2026-11-24T12:00:00')
+            dl_v = bump_dataloader_sync_version()
+            self.assertEqual(get_analytics_sync_version(), f'2026-11-24T12:00:00:dl{dl_v}')
 
     def test_close_thread_db_connection_calls_default_close(self):
         from unittest.mock import patch
@@ -656,3 +675,17 @@ class StudentIncidentsAnalyticsTests(SimpleTestCase):
         self.assertEqual(rows[0][23], 'Classroom')
         self.assertEqual(rows[0][24], 0)
         self.assertEqual(rows[0][25], 0)
+
+
+class EnrollmentAnalyticsJsonTests(SimpleTestCase):
+    def test_segments_from_json_string_payload(self):
+        from clickhouse_utils.student_enrollment_analytics import _segments_from_json
+
+        payload = (
+            '{"enrollment_segments": [{"segment_seq": 1, "enter_date": "2026-08-19", '
+            '"STATE_SCHOOL_CODE": "123", "school": "Example", "grade": "06"}]}'
+        )
+        segments = _segments_from_json(payload, '2025-2026')
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0]['grade'], '06')
+        self.assertEqual(segments[0]['state_school_id'], '123')

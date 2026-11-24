@@ -3,12 +3,9 @@
 
 Datasets are read-only ClickHouse SQL over the existing synced student tables:
 
-* ``enroll_history`` (PostgreSQL) — students with at least one attended day in
-  the school year (district membership from enrollment segments).
-* ``current_student`` — active roster for the **current** school year (programs,
-  ELL, race tracking).
-* ``analytics_student_enrollment_weekly`` / ``analytics_student_enrollment_events``
-  — rebuilt by ``manage.py sync_to_clickhouse`` (see ``student_enrollment_analytics``).
+* ``current_student`` — SIS-aligned roster counts (Active / Inactive by school year).
+* ``enroll_history`` — supplemental days attended; drives weekly drops/changes via
+  ``analytics_student_enrollment_*`` (rebuilt in ``sync_to_clickhouse``).
 
 Run inside the Django container (after ``sync_to_clickhouse`` has built enrollment analytics):
 
@@ -71,83 +68,29 @@ CASE
 END"""
 
 
-def _enrolled_students_sql(current_sy: str) -> str:
-    """District enrollment from enroll_history (>= 1 day in year)."""
-    csy = (current_sy or '').replace("'", "''")
-    grade_expr = PG_GRADE_LABEL.format(col='coalesce(cs.grade, eh.current_grade)')
-    state_id = """
-coalesce(
-    nullif(trim(cs.school_state_id), ''),
-    nullif(trim(eh.enrollment_status_json->'enrollment_segments'->0->>'STATE_SCHOOL_CODE'), ''),
-    ''
-)"""
-    return f"""
-SELECT
-    trim(eh.ssid) AS ssid,
-    coalesce(nullif(trim(cs.stu_annual_key), ''),
-             trim(eh.ssid) || '|' || trim(eh.school_year)) AS stu_annual_key,
-    coalesce(nullif(trim(cs.student_name), ''),
-             trim(concat_ws(' ', eh.first_name, eh.middle_name, eh.last_name))) AS student_name,
-    coalesce(nullif(trim(cs.grade), ''), nullif(trim(eh.current_grade), '')) AS grade,
-    ({grade_expr}) AS grade_label,
-    coalesce(nullif(trim(cs.school), ''), nullif(trim(eh.current_school), '')) AS school,
-    ({state_id}) AS school_state_id,
-    coalesce(nullif(trim(sch.school_group), ''), 'Unknown') AS school_group,
-    coalesce(nullif(trim(cs.status), ''),
-             coalesce(eh.enrollment_status_json->>'current_status', '')) AS status,
-    trim(eh.school_year) AS school_year,
-    coalesce(cs.ell, '') AS ell,
-    coalesce(cs.ltel, '') AS ltel,
-    coalesce(cs.sed, '') AS sed,
-    coalesce(cs.sped, '') AS sped,
-    coalesce(cs.foster, '') AS foster,
-    coalesce(cs.homeless, '') AS homeless,
-    coalesce(se.migrant, '') AS migrant,
-    coalesce(cs.gate, '') AS gate,
-    coalesce(cs.in_504, '') AS in_504,
-    coalesce(cs.dli, '') AS dli,
-    coalesce(cs.gender, '') AS gender,
-    coalesce(cs.race, '') AS race,
-    coalesce(nullif(trim(eh.days_attended), ''), '0') AS days_attended
-FROM enroll_history eh
-LEFT JOIN current_student cs
-    ON trim(cs.ssid) = trim(eh.ssid)
-   AND trim(cs.school_year) = trim(eh.school_year)
-LEFT JOIN (
-    SELECT state_id, max(school_group) AS school_group
-    FROM school
-    WHERE state_id IS NOT NULL AND trim(state_id) != ''
-    GROUP BY state_id
-) sch ON sch.state_id = ({state_id})
-LEFT JOIN LATERAL (
-    SELECT max(se.migrant) AS migrant
-    FROM student_enroll se
-    WHERE trim(se.ssid) = trim(eh.ssid)
-      AND trim(se.school_year) = trim(eh.school_year)
-) se ON true
-WHERE trim(coalesce(eh.ssid, '')) != ''
-  AND trim(coalesce(eh.school_year, '')) != ''
-  AND lower(trim(coalesce(eh.active_in_year, ''))) IN ('true', 't', '1', 'yes')
-  AND coalesce(nullif(trim(eh.days_attended), '')::int, 0) >= 1
-  AND (
-        trim(eh.school_year) <> '{csy}'
-        OR coalesce(eh.enrollment_status_json->>'is_currently_active', 'false')
-           IN ('true', 't', '1', 'yes')
-        OR lower(trim(coalesce(cs.status, ''))) LIKE 'active%'
-  )
-"""
-
-
-def _active_students_sql(current_sy: str) -> str:
-    """Active roster for the current school year only."""
-    csy = (current_sy or '').replace("'", "''")
+def _roster_students_sql(
+    *,
+    school_year_only: str | None = None,
+    statuses: tuple[str, ...] = ('Active', 'Inactive'),
+    postgres: bool = False,
+) -> str:
+    """SIS roster from ``current_student`` (Data Explorer parity)."""
+    sy_only = (school_year_only or '').replace("'", "''")
+    grade_expr = (
+        PG_GRADE_LABEL.format(col='cs.grade')
+        if postgres
+        else GRADE_SQL.format(col='cs.grade')
+    )
+    status_literals = ', '.join(
+        "'" + s.replace("'", "''") + "'" for s in statuses
+    )
     return f"""
 SELECT
     cs.ssid AS ssid,
     cs.stu_annual_key AS stu_annual_key,
     cs.student_name AS student_name,
     cs.grade AS grade,
-    ({PG_GRADE_LABEL.format(col='cs.grade')}) AS grade_label,
+    ({grade_expr}) AS grade_label,
     cs.school AS school,
     cs.school_state_id AS school_state_id,
     coalesce(nullif(trim(sch.school_group), ''), 'Unknown') AS school_group,
@@ -164,7 +107,8 @@ SELECT
     coalesce(cs.in_504, '') AS in_504,
     coalesce(cs.dli, '') AS dli,
     coalesce(cs.gender, '') AS gender,
-    coalesce(cs.race, '') AS race
+    coalesce(cs.race, '') AS race,
+    '' AS days_attended
 FROM current_student AS cs
 LEFT JOIN (
     SELECT state_id, max(school_group) AS school_group
@@ -176,12 +120,30 @@ LEFT JOIN (
     SELECT ssid, school_year, max(migrant) AS migrant
     FROM student_enroll
     WHERE ssid IS NOT NULL AND trim(ssid) != ''
+      AND school_year IS NOT NULL AND trim(school_year) != ''
     GROUP BY ssid, school_year
 ) AS se ON se.ssid = cs.ssid AND se.school_year = cs.school_year
-WHERE cs.status = 'Active'
-  AND cs.ssid IS NOT NULL AND trim(cs.ssid) != ''
-  AND trim(cs.school_year) = '{csy}'
+WHERE cs.ssid IS NOT NULL AND trim(cs.ssid) != ''
+  AND cs.school_year IS NOT NULL AND trim(cs.school_year) != ''
+  AND cs.status IN ({status_literals})
+  {f"AND trim(cs.school_year) = '{sy_only}'" if sy_only else ''}
 """
+
+
+def _active_students_sql(current_sy: str, *, postgres: bool = False) -> str:
+    return _roster_students_sql(
+        school_year_only=current_sy,
+        statuses=('Active',),
+        postgres=postgres,
+    )
+
+
+def _inactive_students_sql(current_sy: str, *, postgres: bool = False) -> str:
+    return _roster_students_sql(
+        school_year_only=current_sy,
+        statuses=('Inactive',),
+        postgres=postgres,
+    )
 
 _STUDENT_COLUMNS = [
     'ssid', 'stu_annual_key', 'student_name', 'grade', 'grade_label',
@@ -195,7 +157,13 @@ _STUDENT_DRILL = _STUDENT_COLUMNS
 # Year-by-year snapshot: for past years use week 41, for the current year use
 # the latest week with data. This keeps historical bars comparable and stops
 # the current year at the data snapshot.
-_WEEK41_STUDENTS_SQL = """
+def _week41_students_sql(this_sy: str) -> str:
+    """ClickHouse week-41 (or latest-week) student snapshot per school year."""
+    csy = (this_sy or '').replace("'", "''")
+    current_predicate = (
+        f"school_year = '{csy}'" if csy else "0"
+    )
+    return f"""
 SELECT
     w.ssid AS ssid,
     w.stu_annual_key AS stu_annual_key,
@@ -228,7 +196,7 @@ INNER JOIN (
     SELECT
         school_year,
         multiIf(
-            school_year = '{{This School Year}}',
+            {current_predicate},
             max(school_week),
             if(countIf(school_week = 41) > 0, 41, max(school_week))
         ) AS target_week
@@ -360,7 +328,7 @@ _EVENT_COLUMNS = [
     'homeless', 'migrant', 'gate', 'in_504', 'dli', 'fep_date',
 ]
 
-_WEEKLY_CHANGES_SQL = f"""
+_WEEKLY_CHANGES_SQL = """
 SELECT
     school_year AS school_year,
     school_week AS school_week,
@@ -383,74 +351,124 @@ GROUP BY
     grade_label
 """
 
-# Overview table: total enrollment plus one row per program, ELL status, and race.
-# Counts are pre-aggregated so the summary table can sum student_count by year.
-_OVERVIEW_SQL = f"""
+_WEEKLY_CHANGES_DISTRICT_SQL = """
+WITH
+events AS (
+    SELECT
+        school_year,
+        school_week,
+        countIf(event_type = 'New Enrollment') AS new_enrollments,
+        countIf(event_type = 'Exit') AS exits,
+        countIf(event_type = 'New Enrollment') - countIf(event_type = 'Exit') AS net_change
+    FROM analytics_student_enrollment_events
+    WHERE event_type IN ('New Enrollment', 'Exit')
+      AND school_week IS NOT NULL
+    GROUP BY school_year, school_week
+),
+week_grid AS (
+    SELECT
+        school_year,
+        school_week,
+        any(week_label) AS week_label,
+        any(week_start_date) AS week_start_date,
+        any(week_end_date) AS week_end_date
+    FROM analytics_student_enrollment_weekly
+    WHERE school_week IS NOT NULL
+    GROUP BY school_year, school_week
+),
+combined AS (
+    SELECT
+        g.school_year AS school_year,
+        g.school_week AS school_week,
+        g.week_label AS week_label,
+        g.week_start_date AS week_start_date,
+        g.week_end_date AS week_end_date,
+        coalesce(e.new_enrollments, 0) AS new_enrollments,
+        coalesce(e.exits, 0) AS exits,
+        coalesce(e.net_change, 0) AS net_change
+    FROM week_grid AS g
+    LEFT JOIN events AS e
+        ON e.school_year = g.school_year AND e.school_week = g.school_week
+),
+roster AS (
+    SELECT
+        school_year,
+        uniqExactIf(ssid, status = 'Active') AS active_roster
+    FROM current_student
+    WHERE ssid IS NOT NULL AND trim(ssid) != ''
+      AND status IN ('Active', 'Inactive')
+    GROUP BY school_year
+)
 SELECT
-    multiIf(
-        category_group = 'Total',
-        'Total',
-        concat(category_group, ' · ', category)
-    ) AS category_label,
+    c.school_year AS school_year,
+    c.school_week AS school_week,
+    c.week_label AS week_label,
+    c.week_start_date AS week_start_date,
+    c.week_end_date AS week_end_date,
+    c.new_enrollments AS new_enrollments,
+    c.exits AS exits,
+    c.net_change AS net_change,
+    r.active_roster - sum(c.net_change) OVER (
+        PARTITION BY c.school_year
+        ORDER BY c.school_week DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    ) AS active_headcount
+FROM combined AS c
+INNER JOIN roster AS r ON r.school_year = c.school_year
+ORDER BY c.school_year, c.school_week
+"""
+
+_WEEKLY_CHANGE_DISTRICT_COLUMNS = [
+    'school_year', 'school_week', 'week_label', 'week_start_date',
+    'week_end_date', 'new_enrollments', 'exits', 'net_change', 'active_headcount',
+]
+
+
+def _roster_overview_sql(roster_sql: str) -> str:
+    """Overview from SIS roster (current_student): totals, programs, ELL, race by year."""
+    programs_sql = _programs_sql(roster_sql)
+    snap = f"FROM ({roster_sql}) AS snap"
+    return f"""
+SELECT
+    CASE
+        WHEN category_group = 'Total' THEN 'Total'
+        ELSE category_group || ' · ' || category
+    END AS category_label,
     category_group AS category_group,
     category AS category,
     school_year AS school_year,
     student_count AS student_count
 FROM (
-    SELECT
-        'Total' AS category_group,
-        'Total' AS category,
-        school_year,
-        count() AS student_count
-    FROM ({_WEEK41_STUDENTS_SQL})
+    SELECT 'Total' AS category_group, 'Total' AS category, school_year,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap}
     GROUP BY school_year
 
     UNION ALL
 
-    SELECT
-        'Program' AS category_group,
-        program AS category,
-        school_year,
-        count() AS student_count
-    FROM (
-        SELECT
-            school_year,
-            arrayJoin(arrayFilter(x -> x != '', [
-                if(lower(trim(sed)) = 'y', 'SED', ''),
-                if(lower(trim(sped)) = 'y', 'SPED', ''),
-                if(lower(trim(foster)) = 'y', 'Foster', ''),
-                if(lower(trim(homeless)) = 'y', 'Homeless', ''),
-                if(lower(trim(migrant)) = 'y', 'Migrant', ''),
-                if(lower(trim(in_504)) = 'y', '504', ''),
-                if(lower(trim(gate)) = 'y', 'GATE', ''),
-                if(lower(trim(dli)) = 'y', 'DLI', ''),
-                if(lower(trim(ltel)) = 'y', 'LTEL', '')
-            ])) AS program
-        FROM ({_WEEK41_STUDENTS_SQL})
-    ) AS p
-    WHERE program != ''
+    SELECT 'Program' AS category_group, program AS category, school_year,
+           COUNT(DISTINCT ssid) AS student_count
+    FROM ({programs_sql}) AS p
     GROUP BY program, school_year
 
     UNION ALL
 
-    SELECT
-        'ELL' AS category_group,
-        coalesce(nullif(trim(ell), ''), 'Unknown') AS category,
-        school_year,
-        count() AS student_count
-    FROM ({_WEEK41_STUDENTS_SQL})
+    SELECT 'ELL' AS category_group,
+           coalesce(nullif(trim(ell), ''), 'Unknown') AS category,
+           school_year,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap}
     GROUP BY category, school_year
 
     UNION ALL
 
-    SELECT
-        'Race' AS category_group,
-        coalesce(nullif(trim(race), ''), 'Unknown') AS category,
-        school_year,
-        count() AS student_count
-    FROM ({_WEEK41_STUDENTS_SQL})
+    SELECT 'Race' AS category_group,
+           coalesce(nullif(trim(race), ''), 'Unknown') AS category,
+           school_year,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap}
     GROUP BY category, school_year
-)
+) AS u
 """
 
 _OVERVIEW_COLUMNS = [
@@ -502,6 +520,9 @@ OVERVIEW_ORDER = (
     + [f'ELL · {e}' for e in ELL_STATUS_ORDER]
     + [f'Race · {r}' for r in RACE_ORDER]
 )
+CURRENT_YEAR_ROSTER_ORDER = [
+    'Roster · Total', 'Roster · Active', 'Roster · Inactive',
+]
 SCHOOL_GROUP_CHARTS = [
     ('High Schools', ['High School']),
     ('Middle Schools', ['Middle School']),
@@ -532,69 +553,94 @@ ORDER BY v
 """
 
 
-def _current_overview_sql(active_sql: str) -> str:
-    """Active current-year counts: total, programs, ELL, and race."""
-    snap = f"FROM ({active_sql}) AS snap"
+def _current_overview_sql(
+    roster_cy_sql: str,
+    active_sql: str,
+    inactive_sql: str,
+) -> str:
+    """Current year SIS roster: total, active/inactive, and active-only mix."""
+    programs_sql = _active_programs_sql(active_sql)
+    snap_roster = f"FROM ({roster_cy_sql}) AS snap"
+    snap_active = f"FROM ({active_sql}) AS snap"
+    snap_inactive = f"FROM ({inactive_sql}) AS snap"
     return f"""
 SELECT
-    multiIf(
-        category_group = 'Total',
-        'Total',
-        concat(category_group, ' · ', category)
-    ) AS category_label,
+    category_group || ' · ' || category AS category_label,
     category_group AS category_group,
     category AS category,
-    student_count AS student_count
+    student_count AS student_count,
+    'Students' AS value_axis
 FROM (
-    SELECT 'Total' AS category_group, 'Total' AS category,
-           count(DISTINCT ssid) AS student_count
-    {snap}
+    SELECT 'Roster' AS category_group, 'Total' AS category,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap_roster}
+
+    UNION ALL
+
+    SELECT 'Roster' AS category_group, 'Active' AS category,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap_active}
+
+    UNION ALL
+
+    SELECT 'Roster' AS category_group, 'Inactive' AS category,
+           COUNT(DISTINCT ssid) AS student_count
+    {snap_inactive}
 
     UNION ALL
 
     SELECT 'Program' AS category_group, program AS category,
-           count(DISTINCT ssid) AS student_count
-    FROM ({_active_programs_sql(active_sql)}) AS p
+           COUNT(DISTINCT ssid) AS student_count
+    FROM ({programs_sql}) AS p
     GROUP BY program
 
     UNION ALL
 
     SELECT 'ELL' AS category_group,
            coalesce(nullif(trim(ell), ''), 'Unknown') AS category,
-           count(DISTINCT ssid) AS student_count
-    {snap}
+           COUNT(DISTINCT ssid) AS student_count
+    {snap_active}
     GROUP BY category
 
     UNION ALL
 
     SELECT 'Race' AS category_group,
            coalesce(nullif(trim(race), ''), 'Unknown') AS category,
-           count(DISTINCT ssid) AS student_count
-    {snap}
+           COUNT(DISTINCT ssid) AS student_count
+    {snap_active}
     GROUP BY category
 ) AS u
 """
 
 
 _CURRENT_OVERVIEW_COLUMNS = [
-    'category_label', 'category_group', 'category', 'student_count',
+    'category_label', 'category_group', 'category', 'student_count', 'value_axis',
 ]
 
 
-def _dataset_specs(enrolled_sql: str, active_sql: str) -> list[dict]:
-    programs_sql = _programs_sql(enrolled_sql)
+def _dataset_specs(
+    roster_sql: str,
+    active_sql: str,
+    roster_cy_sql: str,
+    active_sql_pg: str,
+    inactive_sql_pg: str,
+    *,
+    this_sy: str,
+) -> list[dict]:
+    programs_sql = _programs_sql(roster_sql)
     active_programs_sql = _active_programs_sql(active_sql)
+    week41_sql = _week41_students_sql(this_sy)
+    overview_sql = _roster_overview_sql(roster_sql)
     return [
     {
         'name': f'{PREFIX} Enrolled Students',
-        'sql': enrolled_sql,
-        'base_table': 'enroll_history',
+        'sql': roster_sql,
+        'base_table': 'current_student',
         'columns': _STUDENT_COLUMNS + ['days_attended'],
         'folder': DATASET_FOLDER,
         'description': (
-            'One row per student per school year from enroll_history when the '
-            'student attended at least one day. Current year rows require an '
-            'active roster (or is_currently_active in history).'
+            'One row per student per school year from current_student (SIS roster: '
+            'Active and Inactive), matching Data Explorer / SIS.'
         ),
     },
     {
@@ -610,7 +656,7 @@ def _dataset_specs(enrolled_sql: str, active_sql: str) -> list[dict]:
     },
     {
         'name': f'{PREFIX} Year Snapshot',
-        'sql': _WEEK41_STUDENTS_SQL,
+        'sql': week41_sql,
         'base_table': 'analytics_student_enrollment_weekly',
         'columns': _WEEK41_COLUMNS,
         'folder': DATASET_FOLDER,
@@ -621,30 +667,31 @@ def _dataset_specs(enrolled_sql: str, active_sql: str) -> list[dict]:
     },
     {
         'name': f'{PREFIX} Current Year Active Overview',
-        'sql': _current_overview_sql(active_sql),
+        'sql': _current_overview_sql(
+            roster_cy_sql, active_sql_pg, inactive_sql_pg,
+        ),
         'base_table': 'current_student',
         'columns': _CURRENT_OVERVIEW_COLUMNS,
         'folder': DATASET_FOLDER,
         'description': (
-            'Pre-aggregated active-student counts for the current year: total, '
-            'programs, ELL, and race.'
+            'Current school year SIS roster totals (Active / Inactive) and '
+            'active-roster program / ELL / race mix.'
         ),
     },
     {
         'name': f'{PREFIX} Overview Breakdown',
-        'sql': _OVERVIEW_SQL,
-        'base_table': 'enroll_history',
+        'sql': overview_sql,
+        'base_table': 'current_student',
         'columns': _OVERVIEW_COLUMNS,
         'folder': DATASET_FOLDER,
         'description': (
-            'Pre-aggregated overview counts: total enrollment plus one row per '
-            'program, ELL status, and race, by school year.'
+            'SIS roster counts by school year: total, programs, ELL, and race.'
         ),
     },
     {
         'name': f'{PREFIX} Program Participation',
         'sql': programs_sql,
-        'base_table': 'enroll_history',
+        'base_table': 'current_student',
         'columns': _PROGRAM_COLUMNS,
         'folder': DATASET_FOLDER,
         'description': (
@@ -668,7 +715,7 @@ def _dataset_specs(enrolled_sql: str, active_sql: str) -> list[dict]:
         'folder': DATASET_FOLDER,
         'description': (
             'One row per enrolled student per dw_cal instructional school week, '
-            'derived from enroll_history segment date ranges.'
+            'Week-level active counts from enroll_history segments (drops/changes source).'
         ),
     },
     {
@@ -694,6 +741,17 @@ def _dataset_specs(enrolled_sql: str, active_sql: str) -> list[dict]:
             'school type, and grade, using dw_cal school weeks.'
         ),
     },
+    {
+        'name': f'{PREFIX} Weekly Changes District',
+        'sql': _WEEKLY_CHANGES_DISTRICT_SQL,
+        'base_table': 'analytics_student_enrollment_events',
+        'columns': _WEEKLY_CHANGE_DISTRICT_COLUMNS,
+        'folder': DATASET_FOLDER,
+        'description': (
+            'District weekly events from enroll_history plus active_headcount '
+            'anchored to current_student (SIS) at the latest analytics week.'
+        ),
+    },
     ]
 
 
@@ -705,11 +763,10 @@ def _chart_specs() -> list[dict]:
     current_overview_ds = f'{PREFIX} Current Year Active Overview'
     programs_ds = f'{PREFIX} Program Participation'
     active_programs_ds = f'{PREFIX} Active Program Participation'
-    weekly_active_ds = f'{PREFIX} Weekly Active'
-    changes_ds = f'{PREFIX} Weekly Changes'
+    changes_ds = f'{PREFIX} Weekly Changes District'
     years = recent_school_years(4)
     current_overview_order = (
-        ['Total']
+        CURRENT_YEAR_ROSTER_ORDER
         + [f'Program · {p}' for p in PROGRAM_ORDER]
         + [f'ELL · {e}' for e in ELL_STATUS_ORDER]
         + [f'Race · {r}' for r in RACE_ORDER]
@@ -726,29 +783,30 @@ def _chart_specs() -> list[dict]:
                 'student_count': 'Students',
             },
             'config': summary_cfg(
-                'Enrollment Totals, Programs, ELL, and Race by School Year',
+                'SIS Roster — Totals, Programs, ELL, and Race by Year',
                 'category_label', 'school_year',
                 st_agg_func='sum', st_value_col='student_count',
                 sort_col='__manual__', category_order=OVERVIEW_ORDER,
                 st_col_order=years, st_show_row_totals=False,
                 st_show_col_totals=False,
                 skip_page_filters=['school_year'],
+                __compact_cells__=True,
             ),
         },
         {
             'name': f'{PREFIX} Enrollment by Year',
             'chart_type': 'bar',
-            'dataset': year_ds,
-            'drill_columns': _WEEK41_COLUMNS,
+            'dataset': enrolled_ds,
+            'drill_columns': _STUDENT_DRILL,
             'column_defs': {
                 'school_year': 'School Year', 'ssid': 'Total Students',
-                'school_week': 'Snapshot Week', 'week_label': 'Week',
             },
             'config': base_chart_cfg(
-                'bar', 'Enrollment by School Year (Week 41 / Latest)',
+                'bar', 'Enrollment by School Year (SIS Roster)',
                 x_col='school_year', y_col='ssid', agg='count_unique',
                 sort_col='__manual__', category_order=years,
                 skip_page_filters=['school_year'],
+                one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -760,12 +818,13 @@ def _chart_specs() -> list[dict]:
                 'category_label': 'Category', 'student_count': 'Active Students',
             },
             'config': summary_cfg(
-                'Active Students — Totals, Programs, ELL, and Race',
-                'category_label', '',
+                'Current Year — SIS Roster and Active Mix',
+                'category_label', 'value_axis',
                 st_agg_func='sum', st_value_col='student_count',
                 sort_col='__manual__', category_order=current_overview_order,
                 st_show_row_totals=False, st_show_col_totals=False,
                 skip_page_filters=['school_year'],
+                __compact_cells__=True,
             ),
         },
         {
@@ -929,18 +988,18 @@ def _chart_specs() -> list[dict]:
         {
             'name': f'{PREFIX} Active Enrollment by School Week',
             'chart_type': 'line',
-            'dataset': weekly_active_ds,
-            'drill_columns': _WEEKLY_ACTIVE_COLUMNS,
+            'dataset': changes_ds,
+            'drill_columns': _WEEKLY_CHANGE_DISTRICT_COLUMNS,
             'drill_through_filter_map': {
                 'x_col': 'school_week', 'series_col': 'school_year',
             },
             'column_defs': {
                 'school_week': 'School Week', 'school_year': 'School Year',
-                'ssid': 'Total Students',
+                'active_headcount': 'Active Students (SIS)',
             },
             'config': base_chart_cfg(
-                'line', 'Enrollment by School Week (enroll_history segments)',
-                x_col='school_week', y_col='ssid', agg='count_unique',
+                'line', 'Active Enrollment by School Week (SIS roster + history deltas)',
+                x_col='school_week', y_col='active_headcount', agg='sum',
                 stack_col='school_year', series_col='school_year',
                 sort_col='__manual__', category_order=WEEK_ORDER,
                 stack_order=years, show_grid=False, show_points=True,
@@ -954,17 +1013,20 @@ def _chart_specs() -> list[dict]:
             'name': f'{PREFIX} New Enrollments, Exits, and Net Change by Week',
             'chart_type': 'line',
             'dataset': changes_ds,
-            'drill_columns': _WEEKLY_CHANGE_COLUMNS,
+            'drill_columns': _WEEKLY_CHANGE_DISTRICT_COLUMNS,
             'drill_through_filter_map': {'x_col': 'school_week'},
             'column_defs': {
                 'school_week': 'School Week',
                 'new_enrollments': 'New Enrollments',
                 'exits': 'Exits',
                 'net_change': 'Net Change',
+                'active_headcount': 'Active Students (SIS)',
             },
             'config': base_chart_cfg(
-                'line', 'Total New Enrollments, Exits, and Net Change by School Week',
-                x_col='school_week', y_cols=['new_enrollments', 'exits', 'net_change'],
+                'line', 'Weekly Events and Active Headcount (SIS-anchored)',
+                x_col='school_week', y_cols=[
+                    'new_enrollments', 'exits', 'net_change', 'active_headcount',
+                ],
                 agg='sum', sort_col='__manual__',
                 category_order=WEEK_ORDER, show_points=True, data_labels=False,
                 show_grid=False, sparse_series=True, zero_as_gap=True,
@@ -1004,87 +1066,86 @@ def _chart_specs() -> list[dict]:
     return charts
 
 
-def page_spec(enrolled_sql: str) -> dict:
+def page_spec(roster_sql: str) -> dict:
     return {
     'title': 'Enrollment',
     'slug': PAGE_SLUG,
     'folder': PAGE_FOLDER,
     'description': (
-        'Historical enrollment from enroll_history (at least one attended day). '
-        'The Current Year tab tracks active students (programs, ELL, race). Weekly '
-        'charts use instructional weeks from enrollment segment dates.'
+        'Enrollment counts use current_student (SIS roster). enroll_history drives '
+        'weekly drops, exits, and net change from enrollment segments.'
     ),
     'page_filters': [
         {
             'id': 'school_year', 'label': 'School Year',
-            'source_col': 'school_year', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.school_year'),
+            'source_col': 'school_year', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.school_year'),
             'widget': 'select', 'default_val': '__sy_this__', 'hidden': False,
         },
         {
             'id': 'school_group', 'label': 'School Type',
-            'source_col': 'school_group', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.school_group'),
+            'source_col': 'school_group', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.school_group'),
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
         {
             'id': 'school', 'label': 'School',
-            'source_col': 'school', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.school'),
+            'source_col': 'school', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.school'),
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
         {
             'id': 'grade', 'label': 'Grade',
-            'source_col': 'grade_label', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.grade_label'),
+            'source_col': 'grade_label', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.grade_label'),
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
         {
             'id': 'sed', 'label': 'SED',
-            'source_col': 'sed', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.sed'),
+            'source_col': 'sed', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.sed'),
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
         {
             'id': 'sped', 'label': 'SPED',
-            'source_col': 'sped', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.sped'),
+            'source_col': 'sped', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.sped'),
             'widget': 'multi', 'default_val': '', 'hidden': False,
         },
         {
             'id': 'foster', 'label': 'Foster',
-            'source_col': 'foster', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.foster'),
+            'source_col': 'foster', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.foster'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
         {
             'id': 'homeless', 'label': 'Homeless',
-            'source_col': 'homeless', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.homeless'),
+            'source_col': 'homeless', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.homeless'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
         {
             'id': 'migrant', 'label': 'Migrant',
-            'source_col': 'migrant', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.migrant'),
+            'source_col': 'migrant', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.migrant'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
         {
             'id': 'gate', 'label': 'GATE',
-            'source_col': 'gate', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.gate'),
+            'source_col': 'gate', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.gate'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
         {
             'id': 'in_504', 'label': '504',
-            'source_col': 'in_504', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.in_504'),
+            'source_col': 'in_504', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.in_504'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
         {
             'id': 'dli', 'label': 'DLI',
-            'source_col': 'dli', 'source_table': 'enroll_history',
-            'source_distinct_sql': _filter_sql_pg(enrolled_sql, 'd.dli'),
+            'source_col': 'dli', 'source_table': 'current_student',
+            'source_distinct_sql': _filter_sql_pg(roster_sql, 'd.dli'),
             'widget': 'multi', 'default_val': '', 'hidden': True,
         },
     ],
@@ -1136,7 +1197,7 @@ def page_spec(enrolled_sql: str) -> dict:
         {'tab': 'By School', 'label': 'Special and other schools', 'sections': [
             {'chart': f'{PREFIX} Enrollment by School - Special & Other', 'gs_x': 0, 'gs_w': 12, 'gs_h': 10},
         ]},
-        {'tab': 'Programs', 'label': 'Program participation (enrolled, filtered year)', 'sections': [
+        {'tab': 'Programs', 'label': 'Program participation (roster, filtered year)', 'sections': [
             {'chart': f'{PREFIX} Program Participation', 'gs_x': 0, 'gs_w': 12, 'gs_h': 7},
         ]},
         {'tab': 'Programs', 'label': 'Programs by school type', 'sections': [
@@ -1183,8 +1244,14 @@ def main() -> None:
     print(f'Using owner: {owner}')
 
     this_sy = current_school_year()
-    enrolled_sql = _enrolled_students_sql(this_sy)
+    roster_sql = _roster_students_sql()
+    roster_cy_sql = _roster_students_sql(
+        school_year_only=this_sy,
+        postgres=True,
+    )
     active_sql = _active_students_sql(this_sy)
+    active_sql_pg = _active_students_sql(this_sy, postgres=True)
+    inactive_sql_pg = _inactive_students_sql(this_sy, postgres=True)
 
     enable_dataset_tables([
         'enroll_history', 'current_student', 'school', 'student_enroll',
@@ -1192,7 +1259,14 @@ def main() -> None:
         'analytics_student_enrollment_events',
     ])
 
-    dataset_specs = _dataset_specs(enrolled_sql, active_sql)
+    dataset_specs = _dataset_specs(
+        roster_sql,
+        active_sql,
+        roster_cy_sql,
+        active_sql_pg,
+        inactive_sql_pg,
+        this_sy=this_sy,
+    )
     datasets = {spec['name']: upsert_dataset(spec, owner, default_folder=DATASET_FOLDER)
                 for spec in dataset_specs}
     charts = {spec['name']: upsert_chart(
@@ -1201,7 +1275,7 @@ def main() -> None:
         allowed_prefix=PREFIX,
     ) for spec in _chart_specs()}
     remove_obsolete_charts()
-    page = upsert_page(page_spec(enrolled_sql), charts, owner)
+    page = upsert_page(page_spec(roster_sql), charts, owner)
     attach_page_to_students_menu(page, 0)
     print('Enrollment page ready.')
 
