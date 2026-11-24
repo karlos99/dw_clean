@@ -6,6 +6,9 @@ Django management command to sync data from PostgreSQL to ClickHouse.
 PostgreSQL ``student_marks_list`` materialized view. Derived
 ``analytics_student_marks`` / ``analytics_marks_metadata`` read that CH table.
 
+``analytics_student_enrollment_events`` and ``analytics_student_enrollment_weekly``
+are built from PostgreSQL ``enroll_history`` (see ``student_enrollment_analytics``).
+
 Usage:
     python manage.py sync_to_clickhouse              # incremental where possible
     python manage.py sync_to_clickhouse --full       # force atomic full reload
@@ -145,6 +148,12 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ccgi_application_status': {'current_student'},
     'analytics_student_incidents': {'current_student', 'student_incidents'},
     'analytics_student_attendance_weekly': {'current_student', 'student_attendance'},
+    'analytics_student_enrollment_events': {
+        'enroll_history', 'current_student', 'student_enroll', 'school',
+    },
+    'analytics_student_enrollment_weekly': {
+        'enroll_history', 'current_student', 'student_enroll', 'school',
+    },
 }
 
 
@@ -334,6 +343,12 @@ class Command(BaseCommand):
             if 'analytics_student_course_program' not in derived_to_build:
                 derived_to_build.append('analytics_student_course_program')
 
+        enrollment_analytics = {
+            'analytics_student_enrollment_events',
+            'analytics_student_enrollment_weekly',
+        }
+        enrollment_rebuilt = False
+
         for table in derived_to_build:
             self.stdout.write(f'Rebuilding {table}...')
             try:
@@ -352,6 +367,18 @@ class Command(BaseCommand):
                     count = self._ch_count(ch, ch_db, table) or 0
                     self._record_meta(ch, ch_db, table, count, None, 'derived-pg')
                     self.stdout.write(self.style.SUCCESS(f'  {table} rebuilt ({count} rows).'))
+                    continue
+                if table in enrollment_analytics:
+                    if enrollment_rebuilt:
+                        self.stdout.write(f'  {table} already rebuilt with enrollment pair.')
+                        continue
+                    enrollment_rebuilt = True
+                    counts = self._rebuild_analytics_student_enrollment(ch, ch_db, atomic=atomic)
+                    for tbl, count in counts.items():
+                        self._record_meta(ch, ch_db, tbl, count, None, 'derived-pg')
+                        self.stdout.write(
+                            self.style.SUCCESS(f'  {tbl} rebuilt ({count} rows).')
+                        )
                     continue
                 self._rebuild_derived_table(
                     ch, ch_db, table, atomic=atomic, pg_fn_kwargs=pg_fn_kwargs,
@@ -671,6 +698,41 @@ class Command(BaseCommand):
         if atomic:
             ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+
+    def _rebuild_analytics_student_enrollment(self, ch, ch_db, atomic):
+        from clickhouse_utils.student_enrollment_analytics import (
+            ANALYTICS_STUDENT_ENROLLMENT_EVENTS_COLUMNS,
+            ANALYTICS_STUDENT_ENROLLMENT_WEEKLY_COLUMNS,
+            build_enrollment_analytics_rows,
+        )
+
+        event_rows, weekly_rows = build_enrollment_analytics_rows()
+        out: dict[str, int] = {}
+        specs = (
+            ('analytics_student_enrollment_events',
+             ANALYTICS_STUDENT_ENROLLMENT_EVENTS_COLUMNS, event_rows),
+            ('analytics_student_enrollment_weekly',
+             ANALYTICS_STUDENT_ENROLLMENT_WEEKLY_COLUMNS, weekly_rows),
+        )
+        for table, columns, rows in specs:
+            staging = f'{table}__sync'
+            target = staging if atomic else table
+            if atomic:
+                ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+                ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
+            else:
+                ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
+            insert_table = f'{ch_db}.{target}'
+            batch_size = 8000
+            for i in range(0, len(rows), batch_size):
+                batch = rows[i:i + batch_size]
+                if batch:
+                    ch.insert(insert_table, batch, column_names=columns)
+            if atomic:
+                ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+                ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+            out[table] = len(rows)
+        return out
 
     def _rebuild_analytics_student_attendance_weekly(self, ch, ch_db, atomic):
         from clickhouse_utils.student_attendance_analytics import (

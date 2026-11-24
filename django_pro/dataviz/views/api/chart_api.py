@@ -2102,12 +2102,19 @@ def _dedupe_chart_rows(rows, cfg, *, used_aggregate=False):
     from dataviz.utils.compiler import dedupe_rows_by_ssid, dedupe_rows_by_stu_annual_key
     if cfg.get('one_row_per_stu_annual_key'):
         rows = dedupe_rows_by_stu_annual_key(rows)
+        return rows
     skip_pf = set(cfg.get('skip_page_filters') or [])
     multi_year_trend = bool(cfg.get('multi_year_trend')) or 'test_year' in skip_pf
     if cfg.get('one_row_per_ssid') or (
         cfg.get('student_share_percent') and not multi_year_trend
     ):
-        rows = dedupe_rows_by_ssid(rows)
+        # One row per SSID globally removes students from every year except the
+        # first row returned — wrong for school_year / test_year trend charts.
+        x_col = str(cfg.get('x_col') or '').strip()
+        if x_col in skip_pf and x_col in ('school_year', 'test_year'):
+            rows = dedupe_rows_by_stu_annual_key(rows)
+        else:
+            rows = dedupe_rows_by_ssid(rows)
     return rows
 
 

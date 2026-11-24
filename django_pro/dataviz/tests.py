@@ -292,6 +292,33 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertEqual(len(out), 3)
         self.assertEqual([r['grade'] for r in out], ['1', '3', '4'])
 
+    def test_dedupe_chart_rows_school_year_axis_uses_stu_annual_key(self):
+        from dataviz.views.api.chart_api import _dedupe_chart_rows
+
+        rows = [
+            {
+                'ssid': '1',
+                'stu_annual_key': '1|2024-2025',
+                'school_year': '2024-2025',
+                'ell': 'EL',
+            },
+            {
+                'ssid': '1',
+                'stu_annual_key': '1|2025-2026',
+                'school_year': '2025-2026',
+                'ell': 'RFEP',
+            },
+        ]
+        cfg = {
+            'one_row_per_ssid': True,
+            'x_col': 'school_year',
+            'skip_page_filters': ['school_year', 'ell'],
+        }
+        out = _dedupe_chart_rows(rows, cfg)
+        self.assertEqual(len(out), 2)
+        years = {r['school_year'] for r in out}
+        self.assertEqual(years, {'2024-2025', '2025-2026'})
+
     def test_compile_dataset_to_sql_one_row_per_sak_prefers_results_json(self):
         # With one_row_per_stu_annual_key + a results.other_info->'key' column,
         # DISTINCT ON must prefer the duplicate results row carrying the JSON

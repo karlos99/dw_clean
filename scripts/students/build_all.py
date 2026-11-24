@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build the full Students section: events, Enrollment, English Learners, Behavior.
+"""Build the full Students section: ClickHouse enrollment analytics, pages.
 
 Run inside the Django container:
 
@@ -26,18 +26,31 @@ def _run(args: list[str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build all Students section pages.')
     parser.add_argument('--owner', default='', help='Owner username or email.')
-    parser.add_argument('--skip-events', action='store_true',
-                        help='Keep the existing weekly event table (do not rebuild).')
+    parser.add_argument(
+        '--skip-sync',
+        action='store_true',
+        help='Skip enrollment analytics rebuild (sync_to_clickhouse).',
+    )
     args = parser.parse_args()
 
     owner_args = ['--owner', args.owner] if args.owner else []
 
-    if not args.skip_events:
-        _run([sys.executable, str(HERE / 'build_student_weekly_events.py')])
+    from _common import bootstrap_django
 
-    skip_args = ['--skip-events']
-    _run([sys.executable, str(HERE / 'create_enrollment_dataviz.py'), *owner_args, *skip_args])
-    _run([sys.executable, str(HERE / 'create_el_dataviz.py'), *owner_args, *skip_args])
+    project_dir = bootstrap_django()
+    manage = Path(project_dir) / 'manage.py'
+
+    if not args.skip_sync:
+        _run([
+            sys.executable,
+            str(manage),
+            'sync_to_clickhouse',
+            '--tables',
+            'analytics_student_enrollment_events,analytics_student_enrollment_weekly',
+        ])
+
+    _run([sys.executable, str(HERE / 'create_enrollment_dataviz.py'), *owner_args])
+    _run([sys.executable, str(HERE / 'create_el_dataviz.py'), *owner_args])
     _run([sys.executable, str(HERE / 'create_behavior_dataviz.py'), *owner_args])
     print('\nStudents section build complete.')
 

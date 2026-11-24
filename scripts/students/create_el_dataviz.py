@@ -288,7 +288,7 @@ def _chart_specs() -> list[dict]:
                 sort_col='school_year', sort_dir='asc',
                 stack_order=ELL_STATUS_ORDER, color_map=ELL_COLORS,
                 skip_page_filters=['school_year', 'ell'],
-                one_row_per_ssid=True,
+                one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -302,7 +302,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'English Learner Students by School Year',
                 x_col='school_year', y_col='ssid', agg='count_unique',
                 sort_col='school_year', sort_dir='asc',
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -315,7 +315,7 @@ def _chart_specs() -> list[dict]:
             'config': base_chart_cfg(
                 'bar', 'English Learner Students by School',
                 x_col='school', y_col='ssid', agg='count_unique',
-                top_n=40, x_label_rotation=30, one_row_per_ssid=True,
+                top_n=40, x_label_rotation=30, one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -329,7 +329,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'English Learner Students by Grade',
                 x_col='grade_label', y_col='ssid', agg='count_unique',
                 sort_col='__manual__', category_order=GRADE_ORDER,
-                one_row_per_ssid=True,
+                one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -343,7 +343,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'Long-Term English Learner Students by Year',
                 x_col='school_year', y_col='ssid', agg='count_unique',
                 sort_col='school_year', sort_dir='asc',
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -358,7 +358,7 @@ def _chart_specs() -> list[dict]:
                 stack_col='elpi_level', series_col='elpi_level',
                 sort_col='test_year', sort_dir='asc',
                 stack_order=ELPI_STACK_ORDER, color_map=ELPI_COLORS,
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -373,7 +373,7 @@ def _chart_specs() -> list[dict]:
                 stack_col='elpi_level', series_col='elpi_level',
                 sort_col='__manual__', category_order=GRADE_ORDER,
                 stack_order=ELPI_STACK_ORDER, color_map=ELPI_COLORS,
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -389,7 +389,7 @@ def _chart_specs() -> list[dict]:
                 sort_col='_value', sort_dir='desc', top_n=25,
                 stack_order=ELPI_STACK_ORDER, color_map=ELPI_COLORS,
                 skip_page_filters=['school_year'],
-                x_label_rotation=30, one_row_per_ssid=True,
+                x_label_rotation=30, one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -402,7 +402,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'RFEP / Reclassifications by School Year',
                 x_col='school_year', y_col='ssid', agg='count_unique',
                 sort_col='school_year', sort_dir='asc',
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -416,7 +416,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'RFEP Students by School Year',
                 x_col='school_year', y_col='ssid', agg='count_unique',
                 sort_col='school_year', sort_dir='asc',
-                skip_page_filters=['school_year'], one_row_per_ssid=True,
+                skip_page_filters=['school_year'], one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -428,7 +428,7 @@ def _chart_specs() -> list[dict]:
             'config': base_chart_cfg(
                 'bar', 'Reclassifications by School',
                 x_col='school', y_col='ssid', agg='count_unique',
-                top_n=40, x_label_rotation=30, one_row_per_ssid=True,
+                top_n=40, x_label_rotation=30, one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -441,7 +441,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'Reclassifications by Grade',
                 x_col='grade_label', y_col='ssid', agg='count_unique',
                 sort_col='__manual__', category_order=GRADE_ORDER,
-                one_row_per_ssid=True,
+                one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -458,7 +458,7 @@ def _chart_specs() -> list[dict]:
                 'bar', 'Current Year Reclassifications by School Week',
                 x_col='school_week', y_col='ssid', agg='count_unique',
                 sort_col='__manual__', sort_dir='asc', category_order=WEEK_ORDER,
-                x_label_rotation=0, one_row_per_ssid=True,
+                x_label_rotation=0, one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -476,7 +476,7 @@ def _chart_specs() -> list[dict]:
                 x_col='school_week', y_col='ssid', agg='count_unique',
                 stack_col='school_group', series_col='school_group',
                 sort_col='__manual__', sort_dir='asc', category_order=WEEK_ORDER,
-                stack_order=SCHOOL_TYPE_ORDER, one_row_per_ssid=True,
+                stack_order=SCHOOL_TYPE_ORDER, one_row_per_stu_annual_key=True,
             ),
         },
         {
@@ -592,20 +592,12 @@ PAGE_SPEC = {
 def main() -> None:
     parser = argparse.ArgumentParser(description='Create the Students -> English Learners page.')
     parser.add_argument('--owner', default='', help='Owner username or email.')
-    parser.add_argument('--skip-events', action='store_true',
-                        help='Do not rebuild the weekly event table first.')
     args = parser.parse_args()
 
     project_dir = bootstrap_django()
     print(f'Django project: {project_dir}')
     owner = resolve_owner(args.owner)
     print(f'Using owner: {owner}')
-
-    if not args.skip_events:
-        from build_student_weekly_events import rebuild_table
-
-        count = rebuild_table()
-        print(f'  weekly events refreshed: {count}')
 
     enable_dataset_tables([
         'current_student', 'school', 'student_enroll',

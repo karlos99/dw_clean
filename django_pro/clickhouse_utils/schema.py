@@ -43,6 +43,8 @@ def get_all_ddl():
         CREATE_ANALYTICS_CCGI_APPLICATION_STATUS,
         CREATE_ANALYTICS_STUDENT_INCIDENTS,
         CREATE_ANALYTICS_STUDENT_ATTENDANCE_WEEKLY,
+        CREATE_ANALYTICS_STUDENT_ENROLLMENT_EVENTS,
+        CREATE_ANALYTICS_STUDENT_ENROLLMENT_WEEKLY,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -83,6 +85,8 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ccgi_application_status',
     'analytics_student_incidents',
     'analytics_student_attendance_weekly',
+    'analytics_student_enrollment_events',
+    'analytics_student_enrollment_weekly',
 )
 
 
@@ -809,6 +813,73 @@ CREATE TABLE IF NOT EXISTS analytics_student_attendance_weekly (
     week_end_date Nullable(String),
     week_label Nullable(String),
     attendance_rate_week Float64
+)
+ENGINE = MergeTree
+ORDER BY (school_year, school_week, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_ENROLLMENT_EVENTS = """
+CREATE TABLE IF NOT EXISTS analytics_student_enrollment_events (
+    event_type String,
+    event_date Nullable(String),
+    school_year String,
+    school_week Nullable(Int32),
+    week_start_date Nullable(String),
+    week_end_date Nullable(String),
+    week_label Nullable(String),
+    ssid String,
+    stu_annual_key Nullable(String),
+    student_name Nullable(String),
+    grade Nullable(String),
+    grade_label Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    school_group Nullable(String),
+    status Nullable(String),
+    ell Nullable(String),
+    ltel Nullable(String),
+    sed Nullable(String),
+    sped Nullable(String),
+    foster Nullable(String),
+    homeless Nullable(String),
+    migrant Nullable(String),
+    gate Nullable(String),
+    in_504 Nullable(String),
+    dli Nullable(String),
+    fep_date Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, event_type, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_ENROLLMENT_WEEKLY = """
+CREATE TABLE IF NOT EXISTS analytics_student_enrollment_weekly (
+    ssid String,
+    stu_annual_key Nullable(String),
+    student_name Nullable(String),
+    grade Nullable(String),
+    grade_label Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    school_group Nullable(String),
+    status Nullable(String),
+    school_year String,
+    school_week Int32,
+    week_start_date Nullable(String),
+    week_end_date Nullable(String),
+    week_label Nullable(String),
+    ell Nullable(String),
+    ltel Nullable(String),
+    sed Nullable(String),
+    sped Nullable(String),
+    foster Nullable(String),
+    homeless Nullable(String),
+    migrant Nullable(String),
+    gate Nullable(String),
+    in_504 Nullable(String),
+    dli Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY (school_year, school_week, ssid)
