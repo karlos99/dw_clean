@@ -222,6 +222,25 @@ def project_settings(request):
         cfg.home_show_chart_location = request.POST.get('home_show_chart_location') == 'on'
         cfg.disabled_school_years = request.POST.getlist('disabled_school_years')
 
+        from ca_dash.config_helpers import discover_reporting_years_in_data
+
+        ca_dash_all_years = discover_reporting_years_in_data()
+        ca_selected = []
+        for raw_y in request.POST.getlist('ca_dash_enabled_reporting_years'):
+            try:
+                ca_selected.append(int(raw_y))
+            except (TypeError, ValueError):
+                continue
+        ca_selected = sorted({y for y in ca_selected if y in ca_dash_all_years})
+        if not ca_selected or set(ca_selected) >= set(ca_dash_all_years):
+            cfg.ca_dash_enabled_reporting_years = []
+        else:
+            cfg.ca_dash_enabled_reporting_years = ca_selected
+
+        cfg.ca_dash_district_cds = request.POST.get('ca_dash_district_cds', '').strip()
+        cfg.ca_dash_district_short_name = request.POST.get('ca_dash_district_short_name', '').strip()
+        cfg.ca_dash_district_full_name = request.POST.get('ca_dash_district_full_name', '').strip()
+
         raw_forced = request.POST.get('home_forced_charts_json', '')
         try:
             forced = _json.loads(raw_forced) if raw_forced.strip() else []
@@ -365,9 +384,18 @@ def project_settings(request):
             'group': group,
         })
 
+    from ca_dash.config_helpers import discover_reporting_years_in_data
+
+    ca_dash_data_years = discover_reporting_years_in_data()
+    ca_dash_enabled_years = [int(y) for y in (cfg.ca_dash_enabled_reporting_years or [])]
+    ca_dash_all_reporting_years_enabled = not ca_dash_enabled_years
+
     context = {
         'cfg': cfg,
         'school_years': school_years,
+        'ca_dash_data_years': ca_dash_data_years,
+        'ca_dash_enabled_years': ca_dash_enabled_years,
+        'ca_dash_all_reporting_years_enabled': ca_dash_all_reporting_years_enabled,
         'column_definitions': settings_defs,
         'column_categories': settings_cats,
         'enable_course_program_columns': cfg.enable_course_program_columns,

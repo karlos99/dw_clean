@@ -1,0 +1,2757 @@
+{
+  "Official \u2022 CAA ELA PL by Grade and Year": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "grade_label": [
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "11th"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA ELA: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA ELA PL by Program": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA ELA: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2024",
+        "English Learners \u00b7 2025",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2024",
+        "Students with Disabilities \u00b7 2025",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2024",
+        "Socioeconomically Disadvantaged \u00b7 2025",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2024",
+        "Foster Youth \u00b7 2025",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2024",
+        "Migrant Education \u00b7 2025",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2024",
+        "Homeless \u00b7 2025",
+        "Homeless \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA ELA PL by Race": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA ELA: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA ELA and Math PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "CAA"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA: ELA & Math PL by Year",
+      "agg": "sum",
+      "x_col": "subject,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "ELA \u00b7 2024",
+        "ELA \u00b7 2025",
+        "ELA \u00b7 2026",
+        "Math \u00b7 2024",
+        "Math \u00b7 2025",
+        "Math \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Math PL by Grade and Year": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "grade_label": [
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "11th"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Math: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Math PL by Program": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Math: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2024",
+        "English Learners \u00b7 2025",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2024",
+        "Students with Disabilities \u00b7 2025",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2024",
+        "Socioeconomically Disadvantaged \u00b7 2025",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2024",
+        "Foster Youth \u00b7 2025",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2024",
+        "Migrant Education \u00b7 2025",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2024",
+        "Homeless \u00b7 2025",
+        "Homeless \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Math PL by Race": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "CAA"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Math: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA School Results Table": {
+    "source_filters": {
+      "assessment": [
+        "CAA"
+      ],
+      "school_scope": [
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "summary_table",
+      "chart_title": "CAA: ELA and Math Results by School",
+      "sort_col": "__alpha__",
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "disable_drill": true,
+      "st_row_col": "school_subject",
+      "st_col_col": "year_pl",
+      "st_col_mode": "values",
+      "st_agg_func": "sum",
+      "st_value_col": "student_count",
+      "st_col_group_sep": " \u00b7 ",
+      "st_col_order": [
+        "2024 \u00b7 Level 4",
+        "2024 \u00b7 Level 3",
+        "2024 \u00b7 Level 2",
+        "2024 \u00b7 Level 1",
+        "2025 \u00b7 Level 4",
+        "2025 \u00b7 Level 3",
+        "2025 \u00b7 Level 2",
+        "2025 \u00b7 Level 1",
+        "2026 \u00b7 Level 4",
+        "2026 \u00b7 Level 3",
+        "2026 \u00b7 Level 2",
+        "2026 \u00b7 Level 1"
+      ],
+      "district_total_school": "District Total",
+      "ignore_school_filter_at_district": true
+    }
+  },
+  "Official \u2022 CAA Science PL by Grade and Year": {
+    "source_filters": {
+      "assessment": [
+        "CAA Science"
+      ],
+      "grade_label": [
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "11th"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Science: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Science PL by Program": {
+    "source_filters": {
+      "assessment": [
+        "CAA Science"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Science: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2024",
+        "English Learners \u00b7 2025",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2024",
+        "Students with Disabilities \u00b7 2025",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2024",
+        "Socioeconomically Disadvantaged \u00b7 2025",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2024",
+        "Foster Youth \u00b7 2025",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2024",
+        "Migrant Education \u00b7 2025",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2024",
+        "Homeless \u00b7 2025",
+        "Homeless \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Science PL by Race": {
+    "source_filters": {
+      "assessment": [
+        "CAA Science"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAA Science: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Science PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "CAA Science"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "stacked_bar",
+      "chart_title": "CAA Science: PL by Year",
+      "agg": "sum",
+      "x_col": "test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "test_year_label",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "x_label_rotation": 0,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAA Science School Results Table": {
+    "source_filters": {
+      "assessment": [
+        "CAA Science"
+      ],
+      "school_scope": [
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "summary_table",
+      "chart_title": "CAA Science: School Results by Year",
+      "sort_col": "__alpha__",
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "disable_drill": true,
+      "st_row_col": "school_name",
+      "st_col_col": "year_pl",
+      "st_col_mode": "values",
+      "st_agg_func": "sum",
+      "st_value_col": "student_count",
+      "st_col_group_sep": " \u00b7 ",
+      "st_col_order": [
+        "2024 \u00b7 Level 4",
+        "2024 \u00b7 Level 3",
+        "2024 \u00b7 Level 2",
+        "2024 \u00b7 Level 1",
+        "2025 \u00b7 Level 4",
+        "2025 \u00b7 Level 3",
+        "2025 \u00b7 Level 2",
+        "2025 \u00b7 Level 1",
+        "2026 \u00b7 Level 4",
+        "2026 \u00b7 Level 3",
+        "2026 \u00b7 Level 2",
+        "2026 \u00b7 Level 1"
+      ],
+      "district_total_school": "District Total",
+      "ignore_school_filter_at_district": true
+    }
+  },
+  "Official \u2022 CAST PL by Grade and Year": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "grade_label": [
+        "5th",
+        "8th",
+        "11th",
+        "12th",
+        "All Grades"
+      ],
+      "school_scope": [
+        "District"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade",
+        "district_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAST: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#f59e77",
+        "Level 2": "#dfe553",
+        "Level 3": "#82c036",
+        "Level 4": "#0496b8"
+      },
+      "category_order": [
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026",
+        "12th \u00b7 2024",
+        "12th \u00b7 2025",
+        "12th \u00b7 2026",
+        "All Grades \u00b7 2024",
+        "All Grades \u00b7 2025",
+        "All Grades \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAST PL by Program": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAST: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAST PL by Race": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAST: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAST PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "stacked_bar",
+      "chart_title": "CAST: PL by Year",
+      "agg": "sum",
+      "x_col": "test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "test_year_label",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "x_label_rotation": 0,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 CAST School Results Table": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "school_scope": [
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "summary_table",
+      "chart_title": "CAST: School Results by Year",
+      "sort_col": "__alpha__",
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "disable_drill": true,
+      "st_row_col": "school_name",
+      "st_col_col": "year_pl",
+      "st_col_mode": "values",
+      "st_agg_func": "sum",
+      "st_value_col": "student_count",
+      "st_col_group_sep": " \u00b7 ",
+      "st_col_order": [
+        "2024 \u00b7 Level 4",
+        "2024 \u00b7 Level 3",
+        "2024 \u00b7 Level 2",
+        "2024 \u00b7 Level 1",
+        "2025 \u00b7 Level 4",
+        "2025 \u00b7 Level 3",
+        "2025 \u00b7 Level 2",
+        "2025 \u00b7 Level 1",
+        "2026 \u00b7 Level 4",
+        "2026 \u00b7 Level 3",
+        "2026 \u00b7 Level 2",
+        "2026 \u00b7 Level 1"
+      ],
+      "district_total_school": "District Total",
+      "ignore_school_filter_at_district": true
+    }
+  },
+  "Official \u2022 CAST Science Domain PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "CAST"
+      ],
+      "grade_label": [
+        "All Grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "CAST: Science Domain PL by Year",
+      "agg": "sum",
+      "x_col": "domain,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "category_order": [
+        "Life Sciences \u00b7 2024",
+        "Life Sciences \u00b7 2025",
+        "Life Sciences \u00b7 2026",
+        "Physical Sciences \u00b7 2024",
+        "Physical Sciences \u00b7 2025",
+        "Physical Sciences \u00b7 2026",
+        "Earth & Space Sciences \u00b7 2024",
+        "Earth & Space Sciences \u00b7 2025",
+        "Earth & Space Sciences \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC PL by Assessment and Year": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative",
+        "ELPAC Interim",
+        "Alternate ELPAC Summative",
+        "Alternate ELPAC Interim"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "ELPAC: PL by Assessment and Year",
+      "agg": "sum",
+      "x_col": "assessment,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "ELPAC Summative \u00b7 2024",
+        "ELPAC Summative \u00b7 2025",
+        "ELPAC Summative \u00b7 2026",
+        "ELPAC Interim \u00b7 2024",
+        "ELPAC Interim \u00b7 2025",
+        "ELPAC Interim \u00b7 2026",
+        "Alternate ELPAC Summative \u00b7 2024",
+        "Alternate ELPAC Summative \u00b7 2025",
+        "Alternate ELPAC Summative \u00b7 2026",
+        "Alternate ELPAC Interim \u00b7 2024",
+        "Alternate ELPAC Interim \u00b7 2025",
+        "Alternate ELPAC Interim \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC Summative Domain PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative"
+      ],
+      "grade_label": [
+        "All Grades"
+      ],
+      "school_scope": [
+        "District"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "ELPAC Summative: Domain PL by Year",
+      "agg": "sum",
+      "x_col": "domain,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#db487e",
+        "Level 2": "#8a65c4",
+        "Level 3": "#718d41",
+        "Level 4": "#5f9f9f"
+      },
+      "category_order": [
+        "Listening \u00b7 2024",
+        "Listening \u00b7 2025",
+        "Listening \u00b7 2026",
+        "Speaking \u00b7 2024",
+        "Speaking \u00b7 2025",
+        "Speaking \u00b7 2026",
+        "Reading \u00b7 2024",
+        "Reading \u00b7 2025",
+        "Reading \u00b7 2026",
+        "Writing \u00b7 2024",
+        "Writing \u00b7 2025",
+        "Writing \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC Summative PL by Grade and Year": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative"
+      ],
+      "grade_label": [
+        "Kindergarten",
+        "1st",
+        "2nd",
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "9th",
+        "10th",
+        "11th",
+        "12th",
+        "All Grades"
+      ],
+      "school_scope": [
+        "District"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade",
+        "district_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Summative ELPAC: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#db487e",
+        "Level 2": "#8a65c4",
+        "Level 3": "#718d41",
+        "Level 4": "#5f9f9f"
+      },
+      "category_order": [
+        "Kindergarten \u00b7 2024",
+        "Kindergarten \u00b7 2025",
+        "Kindergarten \u00b7 2026",
+        "1st \u00b7 2024",
+        "1st \u00b7 2025",
+        "1st \u00b7 2026",
+        "2nd \u00b7 2024",
+        "2nd \u00b7 2025",
+        "2nd \u00b7 2026",
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "9th \u00b7 2024",
+        "9th \u00b7 2025",
+        "9th \u00b7 2026",
+        "10th \u00b7 2024",
+        "10th \u00b7 2025",
+        "10th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026",
+        "12th \u00b7 2024",
+        "12th \u00b7 2025",
+        "12th \u00b7 2026",
+        "All Grades \u00b7 2024",
+        "All Grades \u00b7 2025",
+        "All Grades \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 30,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC Summative PL by Program": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "ELPAC Summative: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "category_order": [
+        "English Learners \u00b7 2026",
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Foster Youth \u00b7 2026",
+        "Homeless \u00b7 2026",
+        "Long-Term English Learner \u00b7 2026",
+        "Migrant Education \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Students with Disabilities \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC Summative PL by Race": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "ELPAC Summative: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 ELPAC Summative School Results Table": {
+    "source_filters": {
+      "assessment": [
+        "ELPAC Summative"
+      ],
+      "school_scope": [
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "summary_table",
+      "chart_title": "ELPAC Summative: School Results by Year",
+      "sort_col": "__alpha__",
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "disable_drill": true,
+      "st_row_col": "school_name",
+      "st_col_col": "year_pl",
+      "st_col_mode": "values",
+      "st_agg_func": "sum",
+      "st_value_col": "student_count",
+      "st_col_group_sep": " \u00b7 ",
+      "st_col_order": [
+        "2024 \u00b7 Level 4",
+        "2024 \u00b7 Level 3",
+        "2024 \u00b7 Level 2",
+        "2024 \u00b7 Level 1",
+        "2025 \u00b7 Level 4",
+        "2025 \u00b7 Level 3",
+        "2025 \u00b7 Level 2",
+        "2025 \u00b7 Level 1",
+        "2026 \u00b7 Level 4",
+        "2026 \u00b7 Level 3",
+        "2026 \u00b7 Level 2",
+        "2026 \u00b7 Level 1"
+      ],
+      "district_total_school": "District Total",
+      "ignore_school_filter_at_district": true
+    }
+  },
+  "Official \u2022 Smarter Balanced ELA PL by Grade and Year": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "grade_label": [
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "11th",
+        "All Grades"
+      ],
+      "school_scope": [
+        "District",
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade",
+        "district_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced ELA: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#f59e77",
+        "Level 2": "#dfe553",
+        "Level 3": "#82c036",
+        "Level 4": "#0496b8"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026",
+        "All Grades \u00b7 2024",
+        "All Grades \u00b7 2025",
+        "All Grades \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced ELA PL by Program": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced ELA: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced ELA PL by Race": {
+    "source_filters": {
+      "subject": [
+        "ELA"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced ELA: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced ELA and Math PL by Year": {
+    "source_filters": {
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced: ELA & Math PL by Year",
+      "agg": "sum",
+      "x_col": "subject,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "ELA \u00b7 2024",
+        "ELA \u00b7 2025",
+        "ELA \u00b7 2026",
+        "Math \u00b7 2024",
+        "Math \u00b7 2025",
+        "Math \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced Math PL by Grade and Year": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "grade_label": [
+        "3rd",
+        "4th",
+        "5th",
+        "6th",
+        "7th",
+        "8th",
+        "11th",
+        "All Grades"
+      ],
+      "school_scope": [
+        "District"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "district_by_grade",
+        "school_by_grade",
+        "district_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced Math: PL by Grade and Year",
+      "agg": "sum",
+      "x_col": "grade_label,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 1,
+      "y_axis_max": "100",
+      "y_axis_min": "0",
+      "color_map": {
+        "Level 1": "#f59e77",
+        "Level 2": "#dfe553",
+        "Level 3": "#82c036",
+        "Level 4": "#0496b8"
+      },
+      "category_order": [
+        "3rd \u00b7 2024",
+        "3rd \u00b7 2025",
+        "3rd \u00b7 2026",
+        "4th \u00b7 2024",
+        "4th \u00b7 2025",
+        "4th \u00b7 2026",
+        "5th \u00b7 2024",
+        "5th \u00b7 2025",
+        "5th \u00b7 2026",
+        "6th \u00b7 2024",
+        "6th \u00b7 2025",
+        "6th \u00b7 2026",
+        "7th \u00b7 2024",
+        "7th \u00b7 2025",
+        "7th \u00b7 2026",
+        "8th \u00b7 2024",
+        "8th \u00b7 2025",
+        "8th \u00b7 2026",
+        "11th \u00b7 2024",
+        "11th \u00b7 2025",
+        "11th \u00b7 2026",
+        "All Grades \u00b7 2024",
+        "All Grades \u00b7 2025",
+        "All Grades \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": false,
+      "show_axis_titles": false,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced Math PL by Program": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "group_type": [
+        "All Students",
+        "Program"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced Math: PL by Program",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "English Learners \u00b7 2026",
+        "Students with Disabilities \u00b7 2026",
+        "Socioeconomically Disadvantaged \u00b7 2026",
+        "Foster Youth \u00b7 2026",
+        "Migrant Education \u00b7 2026",
+        "Homeless \u00b7 2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "st_row_col": "",
+      "st_col_col": "",
+      "st_col_mode": "values",
+      "st_agg_func": "count",
+      "st_value_col": "",
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced Math PL by Race": {
+    "source_filters": {
+      "subject": [
+        "Math"
+      ],
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "group_type": [
+        "All Students",
+        "Race/Ethnicity"
+      ],
+      "report_row_type": [
+        "district_all_grades",
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "bar",
+      "chart_title": "Smarter Balanced Math: PL by Race",
+      "agg": "sum",
+      "x_col": "student_group,test_year_label",
+      "y_col": "student_count",
+      "stack_col": "performance_level",
+      "series_col": "performance_level",
+      "group_col": "",
+      "sort_col": "__manual__",
+      "sort_dir": "asc",
+      "bar_layout": "stacked",
+      "bar_orientation": "vertical",
+      "stack_order": [
+        "Level 4",
+        "Level 3",
+        "Level 2",
+        "Level 1"
+      ],
+      "show_percent": true,
+      "percent_decimals": 0,
+      "y_axis_max": 100,
+      "y_axis_min": 0,
+      "color_map": {
+        "Level 1": "#e15759",
+        "Level 2": "#f28e2b",
+        "Level 3": "#59a14f",
+        "Level 4": "#4e79a7"
+      },
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "category_order": [
+        "All Students \u00b7 2024",
+        "All Students \u00b7 2025",
+        "All Students \u00b7 2026",
+        "Hispanic or Latino \u00b7 2024",
+        "Hispanic or Latino \u00b7 2025",
+        "Hispanic or Latino \u00b7 2026",
+        "White \u00b7 2024",
+        "White \u00b7 2025",
+        "White \u00b7 2026",
+        "Asian \u00b7 2024",
+        "Asian \u00b7 2025",
+        "Asian \u00b7 2026",
+        "Black or African American \u00b7 2024",
+        "Black or African American \u00b7 2025",
+        "Black or African American \u00b7 2026",
+        "Filipino \u00b7 2024",
+        "Filipino \u00b7 2025",
+        "Filipino \u00b7 2026",
+        "American Indian or Alaska Native \u00b7 2024",
+        "American Indian or Alaska Native \u00b7 2025",
+        "American Indian or Alaska Native \u00b7 2026",
+        "Native Hawaiian or Pacific Islander \u00b7 2024",
+        "Native Hawaiian or Pacific Islander \u00b7 2025",
+        "Native Hawaiian or Pacific Islander \u00b7 2026",
+        "Two or More Races \u00b7 2024",
+        "Two or More Races \u00b7 2025",
+        "Two or More Races \u00b7 2026"
+      ],
+      "group_order": [
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "compare_gap": 30,
+      "center_group_labels": true,
+      "compare_cat_font_size": 12,
+      "compare_cat_rotation": 0,
+      "x_label_rotation": 0,
+      "x_label_font_size": 11,
+      "force_show_all_labels": false,
+      "show_axis_labels": true,
+      "show_axis_titles": true,
+      "show_toolbox": true,
+      "tooltip_show_count": true,
+      "tooltip_show_pct": true,
+      "disable_drill": true,
+      "data_labels": true
+    }
+  },
+  "Official \u2022 Smarter Balanced School Results Table": {
+    "source_filters": {
+      "assessment": [
+        "Smarter Balanced"
+      ],
+      "school_scope": [
+        "School"
+      ],
+      "student_group": [
+        "All Students"
+      ],
+      "report_row_type": [
+        "school_all_grades"
+      ]
+    },
+    "config": {
+      "chart_type": "summary_table",
+      "chart_title": "Smarter Balanced: ELA and Math Results by School",
+      "sort_col": "__alpha__",
+      "skip_page_filters": [
+        "test_year",
+        "grade"
+      ],
+      "multi_year_trend": true,
+      "disable_drill": true,
+      "st_row_col": "school_subject",
+      "st_col_col": "year_pl",
+      "st_col_mode": "values",
+      "st_agg_func": "sum",
+      "st_value_col": "student_count",
+      "st_col_group_sep": " \u00b7 ",
+      "st_col_order": [
+        "2024 \u00b7 Level 4",
+        "2024 \u00b7 Level 3",
+        "2024 \u00b7 Level 2",
+        "2024 \u00b7 Level 1",
+        "2025 \u00b7 Level 4",
+        "2025 \u00b7 Level 3",
+        "2025 \u00b7 Level 2",
+        "2025 \u00b7 Level 1",
+        "2026 \u00b7 Level 4",
+        "2026 \u00b7 Level 3",
+        "2026 \u00b7 Level 2",
+        "2026 \u00b7 Level 1"
+      ],
+      "district_total_school": "District Total",
+      "ignore_school_filter_at_district": true
+    }
+  }
+}

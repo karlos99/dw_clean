@@ -145,6 +145,49 @@ def _disposition_counts_as_suspension(label: str) -> bool:
     return any(m in text for m in markers)
 
 
+def _disposition_label_text(label: str) -> str:
+    return (label or '').lower().strip()
+
+
+def _disposition_mentions_expulsion(text: str) -> bool:
+    if not text:
+        return False
+    return any(m in text for m in ('expulsion', 'expel', 'expelled'))
+
+
+def _disposition_counts_as_expulsion_recommended(label: str) -> bool:
+    """Disposition text indicates a student was recommended/referred for expulsion."""
+    text = _disposition_label_text(label)
+    if not _disposition_mentions_expulsion(text):
+        return False
+    if 'recommend' in text:
+        return True
+    if 'refer' in text or 'referred' in text:
+        return True
+    if 'hearing' in text:
+        return True
+    return False
+
+
+def _disposition_counts_as_expulsion(label: str) -> bool:
+    """Disposition text indicates an expulsion outcome (not referral/hearing)."""
+    text = _disposition_label_text(label)
+    if not _disposition_mentions_expulsion(text):
+        return False
+    if _disposition_counts_as_expulsion_recommended(label):
+        return False
+    negated = (
+        'no expulsion',
+        'not expelled',
+        'not expulsion',
+        'denied expulsion',
+        'expulsion denied',
+    )
+    if any(m in text for m in negated):
+        return False
+    return True
+
+
 def _sum_disposition_duration_days(payload: dict, *, suspension_only: bool) -> int | float:
     total = 0.0
     for severity in ('Major', 'Minor'):
@@ -347,6 +390,30 @@ def format_incident_date_display(raw: str | None) -> str:
         except ValueError:
             continue
     return text
+
+
+def incident_expulsion_flags_for_item(item: dict) -> tuple[bool, bool]:
+    """Return (recommended_for_expulsion, expelled) from one incident's dispositions."""
+    if not isinstance(item, dict):
+        return False, False
+    recommended = False
+    expelled = False
+    dispositions = item.get('dispositions')
+    if not isinstance(dispositions, list):
+        return recommended, expelled
+    for disposition in dispositions:
+        if not isinstance(disposition, dict):
+            continue
+        label = (
+            disposition.get('disposition')
+            or disposition.get('Disposition')
+            or ''
+        )
+        if _disposition_counts_as_expulsion_recommended(label):
+            recommended = True
+        if _disposition_counts_as_expulsion(label):
+            expelled = True
+    return recommended, expelled
 
 
 def incident_suspension_days_for_item(item: dict) -> int | float:

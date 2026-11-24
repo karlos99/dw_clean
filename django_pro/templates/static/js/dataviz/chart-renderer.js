@@ -155,6 +155,352 @@
     });
   }
 
+  function _skEsc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function _skStageRank(label) {
+    var s = String(label || '').toLowerCase();
+    if (s.indexOf('elementary') >= 0) return 0;
+    if (s.indexOf('grade 8') >= 0) return 1;
+    if (s.indexOf('high school (8th)') >= 0) return 2;
+    if (s.indexOf('high school') >= 0) return 3;
+    var m = s.match(/college\s*(\d+)/);
+    if (m) return 10 + Number(m[1]);
+    return 50;
+  }
+
+  /**
+   * Sankey click-to-trace: dim unrelated nodes/links and show the exact
+   * upstream school counts for the clicked node.
+   */
+  function _attachSankeyTrace(chart, container, ancestorMap, otherDetails, otherExpand, series) {
+    var baseData = (series.data || []).map(function (item) { return Object.assign({}, item); });
+    var baseLinks = (series.links || []).map(function (item) { return Object.assign({}, item); });
+    var baseLineStyle = series.lineStyle || {};
+    var currentData = baseData;
+    var currentLinks = baseLinks;
+    var expanded = null;
+    var panel = null;
+
+    if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
+    }
+
+    function _parts(nodeName) {
+      var chunks = String(nodeName).split(' · ');
+      return {
+        stage: chunks.length > 1 ? chunks[0] : '',
+        value: chunks.length > 1 ? chunks.slice(1).join(' · ') : nodeName,
+      };
+    }
+
+    function _groupPairs(pairs) {
+      var groups = {};
+      (pairs || []).forEach(function (pair) {
+        var node = String(pair[0] || '');
+        var p = _parts(node);
+        if (!groups[p.stage]) groups[p.stage] = [];
+        groups[p.stage].push([p.value, Number(pair[1]) || 0]);
+      });
+      Object.keys(groups).forEach(function (st) {
+        groups[st].sort(function (a, b) { return b[1] - a[1]; });
+      });
+      return groups;
+    }
+
+    function _removePanel() {
+      if (panel) { panel.remove(); panel = null; }
+    }
+
+    function _ensurePanel() {
+      if (panel) return panel;
+      panel = document.createElement('div');
+      panel.className = 'dv-sk-trace';
+      panel.setAttribute('role', 'dialog');
+      panel.style.cssText = (
+        'position:absolute;top:10px;right:10px;z-index:30;width:300px;' +
+        'max-height:calc(100% - 20px);overflow:auto;background:#fff;' +
+        'border:1px solid #e2e8f0;border-radius:10px;' +
+        'box-shadow:0 12px 30px rgba(15,23,42,.18);padding:12px;' +
+        'font:12px/1.4 Inter,system-ui,sans-serif;color:#334155;'
+      );
+      container.appendChild(panel);
+      return panel;
+    }
+
+    function _applyDim(related) {
+      var data = currentData.map(function (item) {
+        return Object.assign({}, item, {
+          itemStyle: Object.assign({}, item.itemStyle || {}, {
+            opacity: related[item.name] ? 1 : 0.12,
+          }),
+        });
+      });
+      var links = currentLinks.map(function (item) {
+        var visible = related[item.source] && related[item.target];
+        return Object.assign({}, item, {
+          lineStyle: Object.assign({}, baseLineStyle, {
+            opacity: visible ? 0.85 : 0.04,
+          }),
+        });
+      });
+      chart.setOption({ series: [{ data: data, links: links }] }, { lazyUpdate: true });
+    }
+
+    function _collapse() {
+      expanded = null;
+      currentData = baseData;
+      currentLinks = baseLinks;
+      _removePanel();
+      chart.setOption(
+        { series: [{ data: baseData, links: baseLinks }] },
+        { lazyUpdate: false }
+      );
+    }
+
+    function _buildExpanded(otherName) {
+      var group = otherExpand && otherExpand[otherName];
+      if (!group || !group.children || !group.children.length) return null;
+      var children = group.children.map(function (c) {
+        return {
+          name: c.name,
+          depth: group.depth,
+          value: c.value,
+          // Expanded children are often below the chart's label threshold;
+          // force their labels on so the expanded schools/colleges are named.
+          __force_label__: true,
+          itemStyle: {
+            color: c.color || '#94a3b8',
+            borderColor: '#ffffff',
+            borderWidth: 1,
+          },
+        };
+      });
+      var data = baseData.slice();
+      var index = -1;
+      for (var i = 0; i < data.length; i++) {
+        if (data[i].name === otherName) { index = i; break; }
+      }
+      if (index >= 0) data.splice.apply(data, [index, 1].concat(children));
+      else data = data.concat(children);
+
+      var childNames = {};
+      children.forEach(function (c) { childNames[c.name] = true; });
+
+      var links = baseLinks.filter(function (l) {
+        return l.source !== otherName && l.target !== otherName;
+      }).map(function (l) { return Object.assign({}, l); });
+
+      group.children.forEach(function (c) {
+        (c.incoming || []).forEach(function (pair) {
+          var src = pair[0], val = Number(pair[1]) || 0;
+          if (!src || src === otherName || src === c.name) return;
+          links.push({ source: src, target: c.name, value: val });
+        });
+        (c.outgoing || []).forEach(function (pair) {
+          var dst = pair[0], val = Number(pair[1]) || 0;
+          if (!dst || dst === otherName || dst === c.name) return;
+          links.push({ source: c.name, target: dst, value: val });
+        });
+      });
+
+      return { data: data, links: links, childNames: childNames, group: group };
+    }
+
+    function _expandOther(otherName) {
+      if (expanded) _collapse();
+      var built = _buildExpanded(otherName);
+      if (!built) {
+        _showNormal(otherName);
+        return;
+      }
+      expanded = Object.assign({ name: otherName }, built);
+      currentData = built.data;
+      currentLinks = built.links;
+      chart.setOption(
+        { series: [{ data: currentData, links: currentLinks }] },
+        { lazyUpdate: false }
+      );
+      var related = {};
+      Object.keys(built.childNames).forEach(function (name) { related[name] = true; });
+      var info = ancestorMap && ancestorMap[otherName];
+      if (info) {
+        (info.ancestors || []).forEach(function (pair) {
+          if (pair && pair[0]) related[pair[0]] = true;
+        });
+      }
+      _applyDim(related);
+      _showPanel(otherName, { expandedOther: true });
+    }
+
+    function _showNormal(nodeName) {
+      var info = (ancestorMap && ancestorMap[nodeName]) || { total: 0, ancestors: [] };
+      var related = {};
+      related[nodeName] = true;
+      (info.ancestors || []).forEach(function (pair) {
+        if (pair && pair[0]) related[pair[0]] = true;
+      });
+      _applyDim(related);
+      _showPanel(nodeName, {});
+    }
+
+    function _showPanel(nodeName, opts) {
+      opts = opts || {};
+      var childPayload = opts.childPayload || null;
+      var isExpandedOther = !!opts.expandedOther;
+      var info;
+      if (childPayload) {
+        info = {
+          total: Number(childPayload.value) || 0,
+          ancestors: (childPayload.incoming || []).map(function (pair) {
+            return [pair[0], Number(pair[1]) || 0];
+          }),
+        };
+      } else {
+        info = (ancestorMap && ancestorMap[nodeName]) || { total: 0, ancestors: [] };
+      }
+      var groupedRows = otherDetails && otherDetails[nodeName];
+      var groupedTotal = 0;
+      if (groupedRows) {
+        groupedTotal = groupedRows.reduce(function (sum, row) {
+          return sum + (Number(row[1]) || 0);
+        }, 0);
+      }
+      var total = info.total || groupedTotal;
+      var stageParts = _parts(nodeName);
+      var groupLabel = /college/i.test(stageParts.stage) ? 'grouped colleges' : 'grouped values';
+      var groups = _groupPairs(info.ancestors || []);
+      var stageKeys = Object.keys(groups).sort(function (a, b) {
+        return _skStageRank(a) - _skStageRank(b);
+      });
+
+      _ensurePanel();
+      var html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">'
+        + '<div><div style="font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;">'
+        + _skEsc(stageParts.stage) + '</div>'
+        + '<div style="font-weight:700;font-size:13px;line-height:1.3;color:#0f172a;">'
+        + _skEsc(stageParts.value) + '</div>'
+        + '<div style="color:#64748b;margin-top:2px;">' + total + ' students</div></div>'
+        + '<button type="button" data-sk-close style="border:0;background:transparent;color:#94a3b8;font-size:18px;line-height:1;cursor:pointer;">&times;</button>'
+        + '</div>';
+
+      if (isExpandedOther) {
+        var expandedGroup = otherExpand && otherExpand[nodeName];
+        var expandedCount = (expandedGroup && expandedGroup.children)
+          ? expandedGroup.children.length : 0;
+        var totalCount = groupedRows ? groupedRows.length : expandedCount;
+        var expandedNote = expandedCount === totalCount
+          ? 'Expanded all ' + totalCount + ' ' + groupLabel + ' in the Sankey chart'
+          : 'Expanded ' + expandedCount + ' of ' + totalCount + ' ' + groupLabel
+            + ' in the Sankey chart';
+        html += '<div style="margin-top:6px;font-size:10px;color:#2563eb;font-weight:600;">'
+          + _skEsc(expandedNote) + '</div>'
+          + '<button type="button" data-sk-collapse style="margin-top:6px;width:100%;border:0;background:#eef2ff;color:#4338ca;border-radius:6px;padding:5px 8px;font:inherit;font-weight:600;cursor:pointer;">Collapse group in chart</button>';
+      } else if (childPayload && expanded) {
+        var parent = _parts(expanded.name);
+        html += '<div style="margin-top:6px;font-size:10px;color:#64748b;">Expanded from '
+          + _skEsc(parent.stage + ' · ' + parent.value) + '</div>'
+          + '<button type="button" data-sk-collapse style="margin-top:6px;width:100%;border:0;background:#eef2ff;color:#4338ca;border-radius:6px;padding:5px 8px;font:inherit;font-weight:600;cursor:pointer;">Collapse group in chart</button>';
+      }
+
+      if (groupedRows && groupedRows.length) {
+        var open = false;
+        html += '<div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:8px;">'
+          + '<button type="button" data-sk-other-toggle data-sk-count="' + groupedRows.length + '" '
+          + 'data-sk-label="' + groupLabel + '" data-sk-open="' + (open ? '1' : '0') + '" '
+          + 'style="border:0;background:#f1f5f9;color:#334155;border-radius:6px;padding:5px 8px;font:inherit;font-weight:600;cursor:pointer;width:100%;text-align:left;">'
+          + (open ? 'Hide ' : 'Show ') + groupedRows.length + ' ' + groupLabel + (open ? ' ▴' : ' ▾') + '</button>'
+          + '<div data-sk-other-list style="display:' + (open ? 'block' : 'none') + ';margin-top:6px;">';
+        groupedRows.forEach(function (row) {
+          html += '<div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0;">'
+            + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'
+            + _skEsc(row[0]) + '">' + _skEsc(row[0]) + '</span>'
+            + '<b style="white-space:nowrap;">' + (Number(row[1]) || 0) + '</b></div>';
+        });
+        html += '</div></div>';
+      }
+
+      if (!stageKeys.length) {
+        html += '<div style="color:#94a3b8;margin-top:8px;">No upstream schools.</div>';
+      } else {
+        stageKeys.forEach(function (st) {
+          var rows = groups[st];
+          html += '<div style="margin-top:10px;">'
+            + '<div style="font-weight:600;color:#475569;margin-bottom:4px;">' + _skEsc(st) + '</div>';
+          rows.forEach(function (row) {
+            html += '<div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0;">'
+              + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'
+              + _skEsc(row[0]) + '">' + _skEsc(row[0]) + '</span>'
+              + '<b style="white-space:nowrap;">' + row[1] + '</b></div>';
+          });
+          html += '</div>';
+        });
+      }
+      panel.innerHTML = html;
+
+      var closeBtn = panel.querySelector('[data-sk-close]');
+      if (closeBtn) closeBtn.addEventListener('click', _collapse);
+      var collapseBtn = panel.querySelector('[data-sk-collapse]');
+      if (collapseBtn) collapseBtn.addEventListener('click', _collapse);
+      var otherToggle = panel.querySelector('[data-sk-other-toggle]');
+      if (otherToggle) {
+        otherToggle.addEventListener('click', function () {
+          var list = panel.querySelector('[data-sk-other-list]');
+          if (!list) return;
+          var isHidden = list.style.display === 'none';
+          list.style.display = isHidden ? 'block' : 'none';
+          var count = this.getAttribute('data-sk-count') || '';
+          var label = this.getAttribute('data-sk-label') || 'grouped values';
+          this.setAttribute('data-sk-open', isHidden ? '1' : '0');
+          this.textContent = (isHidden ? 'Hide ' : 'Show ') + count + ' ' + label
+            + (isHidden ? ' ▴' : ' ▾');
+        });
+      }
+    }
+
+    function _showChild(nodeName) {
+      if (!expanded) return;
+      var child = null;
+      (expanded.group.children || []).forEach(function (c) {
+        if (c.name === nodeName) child = c;
+      });
+      if (!child) return;
+      var related = {};
+      related[nodeName] = true;
+      (child.incoming || []).forEach(function (pair) {
+        if (pair && pair[0]) related[pair[0]] = true;
+      });
+      (child.outgoing || []).forEach(function (pair) {
+        if (pair && pair[0]) related[pair[0]] = true;
+      });
+      _applyDim(related);
+      _showPanel(nodeName, { childPayload: child });
+    }
+
+    chart.on('click', function (params) {
+      if (!params || params.dataType !== 'node' || !params.name) return;
+      var name = params.name;
+      if (expanded) {
+        if (expanded.childNames[name]) {
+          _showChild(name);
+          return;
+        }
+        _collapse();
+      }
+      if (otherExpand && otherExpand[name]) {
+        _expandOther(name);
+        return;
+      }
+      _showNormal(name);
+    });
+  }
+
   function initChart(container) {
     const raw = container.dataset.chartOption;
     if (!raw) return;
@@ -194,6 +540,18 @@
     } catch (e) {
       container.textContent = 'Invalid chart option';
       return;
+    }
+
+    // Apply the server-requested minimum height for chart types that need
+    // vertical room (Sankey school bands). A page slot with an explicit height
+    // wins, so the page layout is never overridden.
+    if (option && option.__min_height__) {
+      var slotHasHeight = chartSlot && chartSlot.dataset.containerHeight;
+      var minH = Number(option.__min_height__);
+      if (!slotHasHeight && Number.isFinite(minH) && minH > 0) {
+        container.style.minHeight = minH + 'px';
+      }
+      delete option.__min_height__;
     }
 
     // Table column layout: also on data-* so embed/page renders stay in sync
@@ -248,6 +606,14 @@
           } catch (e) { /* ignore */ }
           delete s.label.__formatter_js__;
         }
+        (s && s.levels || []).forEach(function(level) {
+          if (level && level.label && level.label.__formatter_js__) {
+            try {
+              level.label.formatter = new Function('return ' + level.label.__formatter_js__)();
+            } catch (e) { /* ignore */ }
+            delete level.label.__formatter_js__;
+          }
+        });
       });
     }
 
@@ -280,6 +646,16 @@
       delete option.__group_label_bands__;
     }
 
+    // Sankey ancestry payload is client-side only; ECharts must not see it.
+    const sankeyAncestors = option && option.__sk_ancestors__;
+    const sankeyOtherDetails = option && option.__sk_other_details__;
+    const sankeyOtherExpand = option && option.__sk_other_expand__;
+    if (option) {
+      delete option.__sk_ancestors__;
+      delete option.__sk_other_details__;
+      delete option.__sk_other_expand__;
+    }
+
     // Large charts are already reduced by the server-side aggregation path;
     // avoid ECharts' expensive tweening when a chart still contains many
     // points. This preserves animation for ordinary charts.
@@ -301,6 +677,15 @@
 
     // Expose instance for external tools (e.g. chart-editor.js)
     container._echartsInstance = chart;
+
+    if ((sankeyAncestors || sankeyOtherDetails || sankeyOtherExpand)
+        && option.series && option.series[0]
+        && option.series[0].type === 'sankey') {
+      _attachSankeyTrace(
+        chart, container, sankeyAncestors, sankeyOtherDetails,
+        sankeyOtherExpand, option.series[0]
+      );
+    }
 
     // Correct size after the browser commits the flex / grid layout.
     // This is the primary fix for charts in page-builder grid cells where
@@ -346,7 +731,9 @@
 
     // Drill-through click handler
     const chartId = container.dataset.chartId;
-    const drillEnabled = container.dataset.drillEnabled === '1';
+    const noDrill = !!(option && option.__no_drill__);
+    delete option.__no_drill__;
+    const drillEnabled = container.dataset.drillEnabled === '1' && !noDrill;
     if (drillEnabled && chartId && chartId !== 'preview') {
       registerDrillThrough(chart, chartId, container);
     } else {

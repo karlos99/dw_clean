@@ -184,6 +184,11 @@ _STUDENT_CAREER_DRILL = [
     'ap_years', 'exam_count', 'exams_scored_3_plus', 'best_score',
     'enrolled_current', 'two_plus_exams', 'two_plus_scored_3_plus',
 ]
+_MULTI_EXAM_DRILL = [
+    'ssid', 'student_name', 'enrolled_school', 'enrolled_grade_display',
+    'test_year', 'exam_name', 'exam_grade', 'subject_exam',
+]
+_EXAM_CAREER_EXTRA = ['two_plus_exams', 'two_plus_scored_3_plus']
 _AWARD_DRILL = _STUDENT_SELECT_COLS + ['test_year', 'award_description']
 
 PL_COLORS = {
@@ -328,6 +333,22 @@ GROUP BY ap.ssid
 """
 
 
+def _exam_career_enriched_sql() -> str:
+    """Exam-level rows with per-student career qualification flags for filtering."""
+    return f"""
+SELECT
+    ex.*,
+    car.two_plus_exams AS two_plus_exams,
+    car.two_plus_scored_3_plus AS two_plus_scored_3_plus
+FROM (
+    {_exam_results_sql()}
+) AS ex
+INNER JOIN (
+    {_student_career_sql()}
+) AS car ON car.ssid = ex.ssid
+"""
+
+
 def _awards_sql() -> str:
     return _AWARD_SELECT
 
@@ -452,6 +473,15 @@ DATASET_SPECS = [
         'sql': _student_career_sql(),
     },
     {
+        'name': f'{AP_PREFIX} Exam Results (Career)',
+        'description': (
+            'One row per AP exam with career qualification flags '
+            '(2+ exams, 2+ scores of 3+) for multi-exam performance charts.'
+        ),
+        'columns': _EXAM_DRILL + _EXAM_CAREER_EXTRA,
+        'sql': _exam_career_enriched_sql(),
+    },
+    {
         'name': f'{AP_PREFIX} Scholar Awards',
         'description': 'One row per AP Scholar award by student and award year.',
         'columns': _AWARD_DRILL,
@@ -464,6 +494,7 @@ def _chart_specs() -> list[dict]:
     exam_ds = f'{AP_PREFIX} Exam Results'
     student_ds = f'{AP_PREFIX} Student Results'
     career_ds = f'{AP_PREFIX} Student Career'
+    exam_career_ds = f'{AP_PREFIX} Exam Results (Career)'
     award_ds = f'{AP_PREFIX} Scholar Awards'
     program_ds = f'{AP_PREFIX} Student Program Results'
     charts = [
@@ -541,14 +572,14 @@ def _chart_specs() -> list[dict]:
         {
             'name': f'{AP_PREFIX} Multi-Exam 3+ (Currently Enrolled)',
             'chart_type': 'bar',
-            'dataset': career_ds,
+            'dataset': exam_career_ds,
             'source_filters': {
                 'district_school': [1],
                 'enrolled_current': [1],
                 'two_plus_exams': [1],
                 'two_plus_scored_3_plus': [1],
             },
-            'drill_columns': _STUDENT_CAREER_DRILL,
+            'drill_columns': _MULTI_EXAM_DRILL,
             'drill_through_filter_map': {
                 'x_col': 'enrolled_school,enrolled_grade_display', 'series_col': '',
             },
@@ -556,11 +587,16 @@ def _chart_specs() -> list[dict]:
                 'enrolled_school': 'School (current enrollment)',
                 'enrolled_grade_display': 'Grade',
                 'ssid': 'Students',
+                'test_year': 'AP Year',
+                'exam_name': 'AP Exam',
+                'exam_grade': 'Score',
+                'subject_exam': 'Subject / Exam',
             },
             'config': _base_cfg(
                 'AP: Currently Enrolled — 2+ Exams (All Years) with 3+ on 2+ Exams',
                 x_col='enrolled_school,enrolled_grade_display', y_col='ssid', agg='count_unique',
                 one_row_per_ssid=True,
+                drill_show_detail_rows=True,
                 sort_col='__manual__', category_order=[],
                 group_gap=4, group_gap_size=1, bar_category_gap='4',
                 center_group_labels=True, force_show_all_labels=True,

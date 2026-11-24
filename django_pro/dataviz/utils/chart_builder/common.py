@@ -1439,6 +1439,60 @@ def _add_zoom(option: dict, cfg: dict = None, axis: str = 'x') -> None:
     ]
 
 
+def _resolve_current_school_year(cfg: dict) -> str:
+    """Concrete this-year label for chart truncation (e.g. 2025-2026)."""
+    explicit = str(cfg.get('current_school_year') or '').strip()
+    if explicit and not explicit.startswith('__sy_'):
+        return explicit
+    try:
+        from dataexploration.constants import SY_THIS_YEAR
+        from dataexploration.school_year_utils import resolve_school_year
+
+        resolved = resolve_school_year(SY_THIS_YEAR)
+        return str(resolved or '').strip()
+    except Exception:
+        return ''
+
+
+def _truncate_current_year_at_last_data(
+    series: list[dict],
+    categories: list,
+    raw_lookup: dict[str, dict],
+    cfg: dict,
+) -> None:
+    """Drop trailing points for the current school year after the last week with data.
+
+    School-scoped page filters only affect the underlying rows, so the cutoff
+    is always the last positive week in the filtered aggregation.
+    """
+    if not cfg.get('truncate_current_year_at_last_data'):
+        return
+    current_sy = _resolve_current_school_year(cfg)
+    if not current_sy:
+        return
+    vm = raw_lookup.get(current_sy)
+    if not vm:
+        for s in series:
+            if str(s.get('name', '')) == current_sy:
+                vm = raw_lookup.get(s['name'], {})
+                break
+    if not vm:
+        return
+    last_idx = -1
+    for i, cat in enumerate(categories):
+        if float(vm.get(cat, 0) or 0) > 0:
+            last_idx = i
+    if last_idx < 0:
+        return
+    for s in series:
+        if str(s.get('name', '')) != current_sy:
+            continue
+        data = list(s.get('data') or [])
+        for i in range(last_idx + 1, len(data)):
+            data[i] = None
+        s['data'] = data
+
+
 def _ordered_stacks(raw_stacks: list[str], cfg: dict) -> list[str]:
     """Return stack values respecting the user-defined stack_order when present."""
     order = cfg.get('stack_order') or []

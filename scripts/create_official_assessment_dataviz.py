@@ -11,9 +11,16 @@ Run:
 Optional:
     --owner you@example.com
     --qa
+    --verify  (compare live page/charts to this script; no writes)
+
+Live inventory: page ``official-assessment-results`` with 33 charts in
+``Assessment_pages / official_assessment_results /``, datasets
+``Official • Performance Levels`` and ``Official • Domains``.
+Student-level ELPAC detail lives in ``create_elpac_dataviz.py``.
 """
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -21,8 +28,73 @@ SOURCE_TABLE = 'official_data_db'
 DATASET_FOLDER = 'Assessments / Official Data'
 CHART_FOLDER = 'official_assessment_results'
 CHART_ROOT_FOLDER = 'Assessment_pages'
+OFFICIAL_PREFIX = 'Official •'
+PAGE_SLUG = 'official-assessment-results'
+SITE_MENU_ORDER = 10
 DEFAULT_OWNER_NAME = ('Carlos', 'Silva')
 DEFAULT_OWNER_EMAIL = 'carlos.silva@desertsands.us'
+
+# Reference IDs (Desert Sands); used by ``--verify`` only.
+LIVE_DATASET_IDS = {
+    'Official • Performance Levels': 39,
+    'Official • Domains': 40,
+}
+LIVE_CHART_IDS = {
+    'Official • Smarter Balanced ELA and Math PL by Year': 379,
+    'Official • Smarter Balanced ELA PL by Race': 380,
+    'Official • Smarter Balanced ELA PL by Program': 381,
+    'Official • Smarter Balanced Math PL by Race': 382,
+    'Official • Smarter Balanced Math PL by Program': 383,
+    'Official • Smarter Balanced ELA PL by Grade and Year': 384,
+    'Official • Smarter Balanced Math PL by Grade and Year': 385,
+    'Official • Smarter Balanced School Results Table': 386,
+    'Official • CAA ELA and Math PL by Year': 387,
+    'Official • CAA ELA PL by Race': 388,
+    'Official • CAA ELA PL by Program': 389,
+    'Official • CAA Math PL by Race': 390,
+    'Official • CAA Math PL by Program': 391,
+    'Official • CAA ELA PL by Grade and Year': 392,
+    'Official • CAA Math PL by Grade and Year': 393,
+    'Official • CAA School Results Table': 394,
+    'Official • CAST PL by Year': 395,
+    'Official • CAST PL by Race': 396,
+    'Official • CAST PL by Program': 397,
+    'Official • CAST PL by Grade and Year': 398,
+    'Official • CAST Science Domain PL by Year': 399,
+    'Official • CAST School Results Table': 400,
+    'Official • CAA Science PL by Year': 401,
+    'Official • CAA Science PL by Race': 402,
+    'Official • CAA Science PL by Program': 403,
+    'Official • CAA Science PL by Grade and Year': 404,
+    'Official • CAA Science School Results Table': 405,
+    'Official • ELPAC PL by Assessment and Year': 406,
+    'Official • ELPAC Summative PL by Race': 407,
+    'Official • ELPAC Summative PL by Program': 408,
+    'Official • ELPAC Summative PL by Grade and Year': 409,
+    'Official • ELPAC Summative Domain PL by Year': 410,
+    'Official • ELPAC Summative School Results Table': 411,
+}
+
+# UI palettes / filters saved on charts after publish (excludes dynamic ``category_order``).
+SB_CAST_GRADE_COLOR_MAP = {
+    'Level 1': '#f59e77',
+    'Level 2': '#dfe553',
+    'Level 3': '#82c036',
+    'Level 4': '#0496b8',
+}
+ELPAC_UI_COLOR_MAP = {
+    'Level 1': '#db487e',
+    'Level 2': '#8a65c4',
+    'Level 3': '#718d41',
+    'Level 4': '#5f9f9f',
+}
+_PERCENT_1_AXIS_OFF = {
+    'percent_decimals': 1,
+    'show_axis_labels': False,
+    'show_axis_titles': False,
+    'y_axis_max': '100',
+    'y_axis_min': '0',
+}
 
 ASSESSMENT_ORDER = [
     'Smarter Balanced', 'CAA', 'CAST', 'CAA Science',
@@ -48,6 +120,77 @@ ROW_DISTRICT_ALL_GRADES = 'district_all_grades'
 ROW_DISTRICT_BY_GRADE = 'district_by_grade'
 ROW_SCHOOL_ALL_GRADES = 'school_all_grades'
 ROW_SCHOOL_BY_GRADE = 'school_by_grade'
+
+# Saved UI filters/colors on live charts (``category_order`` stays data-driven).
+CHART_LIVE_TUNING = {
+    'Official • Smarter Balanced ELA PL by Grade and Year': {
+        'source_filters': {
+            'subject': ['ELA'],
+            'assessment': ['Smarter Balanced'],
+            'grade_label': [*CAASPP_GRADE_ORDER, DISTRICT_TOTAL_GRADE],
+            'school_scope': ['District', 'School'],
+            'student_group': ['All Students'],
+            'report_row_type': [
+                ROW_DISTRICT_BY_GRADE, ROW_SCHOOL_BY_GRADE, ROW_DISTRICT_ALL_GRADES,
+            ],
+        },
+        'config': {**_PERCENT_1_AXIS_OFF, 'color_map': SB_CAST_GRADE_COLOR_MAP},
+    },
+    'Official • Smarter Balanced Math PL by Grade and Year': {
+        'source_filters': {
+            'subject': ['Math'],
+            'assessment': ['Smarter Balanced'],
+            'grade_label': [*CAASPP_GRADE_ORDER, DISTRICT_TOTAL_GRADE],
+            'school_scope': ['District'],
+            'student_group': ['All Students'],
+            'report_row_type': [
+                ROW_DISTRICT_BY_GRADE, ROW_SCHOOL_BY_GRADE, ROW_DISTRICT_ALL_GRADES,
+            ],
+        },
+        'config': {**_PERCENT_1_AXIS_OFF, 'color_map': SB_CAST_GRADE_COLOR_MAP},
+    },
+    'Official • CAST PL by Grade and Year': {
+        'source_filters': {
+            'assessment': ['CAST'],
+            'grade_label': [*CAST_GRADE_ORDER, DISTRICT_TOTAL_GRADE],
+            'school_scope': ['District'],
+            'student_group': ['All Students'],
+            'report_row_type': [
+                ROW_DISTRICT_BY_GRADE, ROW_SCHOOL_BY_GRADE, ROW_DISTRICT_ALL_GRADES,
+            ],
+        },
+        'config': {**_PERCENT_1_AXIS_OFF, 'color_map': SB_CAST_GRADE_COLOR_MAP},
+    },
+    'Official • ELPAC Summative PL by Grade and Year': {
+        'source_filters': {
+            'assessment': ['ELPAC Summative'],
+            'grade_label': [*ELPAC_GRADE_ORDER, DISTRICT_TOTAL_GRADE],
+            'school_scope': ['District'],
+            'student_group': ['All Students'],
+            'report_row_type': [
+                ROW_DISTRICT_BY_GRADE, ROW_SCHOOL_BY_GRADE, ROW_DISTRICT_ALL_GRADES,
+            ],
+        },
+        'config': {
+            **_PERCENT_1_AXIS_OFF,
+            'color_map': ELPAC_UI_COLOR_MAP,
+            'chart_title': 'Summative ELPAC: PL by Grade and Year',
+            'x_label_rotation': 30,
+        },
+    },
+    'Official • ELPAC Summative Domain PL by Year': {
+        'source_filters': {
+            'assessment': ['ELPAC Summative'],
+            'grade_label': [DISTRICT_TOTAL_GRADE],
+            'school_scope': ['District'],
+        },
+        'config': {**_PERCENT_1_AXIS_OFF, 'color_map': ELPAC_UI_COLOR_MAP},
+    },
+    'Official • ELPAC Summative PL by Program': {
+        'config': _PERCENT_1_AXIS_OFF,
+    },
+}
+
 GROUP_ORDER = [
     'All Students', 'English Learners',
     'Students with Disabilities', 'Socioeconomically Disadvantaged',
@@ -58,6 +201,7 @@ GROUP_ORDER = [
 ]
 PROGRAM_GROUP_ORDER = [
     'English Learners',
+    'Long-Term English Learner',
     'Students with Disabilities',
     'Socioeconomically Disadvantaged',
     'Foster Youth',
@@ -92,6 +236,7 @@ _CAASPP_REPORT_GROUP_IDS = (
     '128',
     '31', '031',
     '160',
+    '250',
     '240',
     '52', '052',
     '28', '028',
@@ -113,6 +258,7 @@ _GROUP_LABELS = {
     '128': 'Students with Disabilities',
     '31': 'Socioeconomically Disadvantaged', '031': 'Socioeconomically Disadvantaged',
     '160': 'English Learners',
+    '250': 'Long-Term English Learner',
     '240': 'Foster Youth',
     '52': 'Homeless', '052': 'Homeless',
     '28': 'Migrant Education', '028': 'Migrant Education',
@@ -135,6 +281,7 @@ _CDE_GROUP_NAME_TO_CANONICAL: dict[str, str] = {
     'homeless': 'Homeless',
     'foster youth': 'Foster Youth',
     'english learner excluding rfep': 'English Learners',
+    'long-term english learner': 'Long-Term English Learner',
     'reported disabilities': 'Students with Disabilities',
     'american indian or alaska native': 'American Indian or Alaska Native',
     'asian': 'Asian',
@@ -149,9 +296,22 @@ _CDE_GROUP_NAME_TO_CANONICAL: dict[str, str] = {
 _CDE_GROUP_NAME_SQL = ', '.join(
     f"'{name.replace(chr(39), chr(39) * 2)}'" for name in _CDE_GROUP_NAME_TO_CANONICAL
 )
+def _official_report_group_names() -> list[str]:
+    """BTRIM ``student_group_name`` values; id 250 uses plural in file labels."""
+    seen: set[str] = set()
+    names: list[str] = []
+    for label in dict.fromkeys(_GROUP_LABELS.values()):
+        if label == 'Long-Term English Learner':
+            label = 'Long-Term English Learners'
+        if label in seen:
+            continue
+        seen.add(label)
+        names.append(label)
+    return names
+
+
 _REPORT_GROUP_NAME_SQL = ', '.join(
-    f"'{label.replace(chr(39), chr(39) * 2)}'"
-    for label in dict.fromkeys(_GROUP_LABELS.values())
+    f"'{label.replace(chr(39), chr(39) * 2)}'" for label in _official_report_group_names()
 )
 _RACE_GROUP_NAME_SQL = ', '.join(
     f"'{label.replace(chr(39), chr(39) * 2)}'" for label in RACE_GROUP_ORDER
@@ -1087,27 +1247,165 @@ ORDER BY sort_key, v
 """
 
 
+PAGE_FILTER_WIDGETS = [
+    {
+        'id': 'school',
+        'label': 'School',
+        'source_col': 'school_name',
+        'source_table': SOURCE_TABLE,
+        'widget': 'select',
+        'default_val': DISTRICT_TOTAL_SCHOOL,
+        'hidden': False,
+    },
+]
+
+
+def full_page_filters() -> list[dict]:
+  sql = _page_filter_school_sql()
+  return [{**flt, 'source_distinct_sql': sql} for flt in PAGE_FILTER_WIDGETS]
+
+
+def chart_storage_name(short_name: str) -> str:
+    return f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / {short_name}'
+
+
+def apply_live_tuning(spec: dict) -> dict:
+    tune = CHART_LIVE_TUNING.get(spec['name'])
+    if not tune:
+        return spec
+    out = dict(spec)
+    if tune.get('source_filters') is not None:
+        out['source_filters'] = dict(tune['source_filters'])
+    if tune.get('config'):
+        out['config'] = {**out.get('config', {}), **tune['config']}
+    return out
+
+
+# Layout on live ``official-assessment-results`` page (33 charts, 5 tabs).
+PAGE_LAYOUT_ROWS = [
+    {'tab': 'Smarter Balanced', 'label': 'ELA and Math by year', 'sections': [
+        {'chart': 'Official • Smarter Balanced ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'ELA by race and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'ELA by program and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'Math by race and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'Math by program and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'ELA by grade and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'Math by grade and year', 'sections': [
+        {'chart': 'Official • Smarter Balanced Math PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'Smarter Balanced', 'label': 'School results', 'sections': [
+        {'chart': 'Official • Smarter Balanced School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+    ]},
+    {'tab': 'CAA', 'label': 'ELA and Math by year', 'sections': [
+        {'chart': 'Official • CAA ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'CAA', 'label': 'ELA by race and year', 'sections': [
+        {'chart': 'Official • CAA ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'ELA by program and year', 'sections': [
+        {'chart': 'Official • CAA ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'Math by race and year', 'sections': [
+        {'chart': 'Official • CAA Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'Math by program and year', 'sections': [
+        {'chart': 'Official • CAA Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'ELA by grade and year', 'sections': [
+        {'chart': 'Official • CAA ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'Math by grade and year', 'sections': [
+        {'chart': 'Official • CAA Math PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA', 'label': 'School results', 'sections': [
+        {'chart': 'Official • CAA School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+    ]},
+    {'tab': 'CAST', 'label': 'Multi-year performance levels', 'sections': [
+        {'chart': 'Official • CAST PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'CAST', 'label': 'By race and year', 'sections': [
+        {'chart': 'Official • CAST PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAST', 'label': 'By program and year', 'sections': [
+        {'chart': 'Official • CAST PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAST', 'label': 'Grade and year', 'sections': [
+        {'chart': 'Official • CAST PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAST', 'label': 'Science domains and year', 'sections': [
+        {'chart': 'Official • CAST Science Domain PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAST', 'label': 'School results', 'sections': [
+        {'chart': 'Official • CAST School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+    ]},
+    {'tab': 'CAA Science', 'label': 'Multi-year performance levels', 'sections': [
+        {'chart': 'Official • CAA Science PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
+    ]},
+    {'tab': 'CAA Science', 'label': 'By race and year', 'sections': [
+        {'chart': 'Official • CAA Science PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA Science', 'label': 'By program and year', 'sections': [
+        {'chart': 'Official • CAA Science PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA Science', 'label': 'Grade and year', 'sections': [
+        {'chart': 'Official • CAA Science PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'CAA Science', 'label': 'School results', 'sections': [
+        {'chart': 'Official • CAA Science School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Assessment and year comparison', 'sections': [
+        {'chart': 'Official • ELPAC PL by Assessment and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Summative: by race and year', 'sections': [
+        {'chart': 'Official • ELPAC Summative PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Summative: by program and year', 'sections': [
+        {'chart': 'Official • ELPAC Summative PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Summative: grade and year', 'sections': [
+        {'chart': 'Official • ELPAC Summative PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Summative: domains and year', 'sections': [
+        {'chart': 'Official • ELPAC Summative Domain PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
+    ]},
+    {'tab': 'ELPAC', 'label': 'Summative school results', 'sections': [
+        {'chart': 'Official • ELPAC Summative School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
+    ]},
+]
+
+_SEMANTIC_CFG_KEYS = (
+    'chart_type', 'chart_title', 'agg', 'x_col', 'y_col', 'stack_col', 'series_col',
+    'group_col', 'sort_col', 'sort_dir', 'bar_layout', 'bar_orientation', 'stack_order',
+    'show_percent', 'percent_decimals', 'y_axis_max', 'y_axis_min', 'color_map',
+    'skip_page_filters', 'multi_year_trend', 'group_order',
+    'compare_gap', 'center_group_labels', 'disable_drill',
+    'st_row_col', 'st_col_col', 'st_col_mode', 'st_agg_func', 'st_value_col',
+    'st_col_group_sep', 'st_col_order', 'show_axis_labels', 'show_axis_titles',
+    'district_total_school', 'ignore_school_filter_at_district', 'data_labels',
+)
+
+
 def _page_filters(_latest_year: str) -> list[dict]:
-    return [
-        {
-            'id': 'school',
-            'label': 'School',
-            'source_col': 'school_name',
-            'source_table': SOURCE_TABLE,
-            'source_distinct_sql': _page_filter_school_sql(),
-            'widget': 'select',
-            'default_val': DISTRICT_TOTAL_SCHOOL,
-            'hidden': False,
-        },
-    ]
+    return full_page_filters()
 
 
 def _page_spec(latest_year: str) -> dict:
     return {
         'title': 'Official Assessment Results',
-        'slug': 'official-assessment-results',
+        'slug': PAGE_SLUG,
         'folder': CHART_FOLDER,
-        'menu_order': 10,
+        'menu_order': SITE_MENU_ORDER,
         'description': (
             'Official CAASPP, CAST, CAA, and ELPAC results from official_data_db, '
             'using CAASPP Table A student groups and grade 13 (All Grades) rollup rows '
@@ -1123,113 +1421,15 @@ def _page_spec(latest_year: str) -> dict:
         ),
         'page_filters': _page_filters(latest_year),
         'tabs': ['Smarter Balanced', 'CAA', 'CAST', 'CAA Science', 'ELPAC'],
-        'rows': [
-            # ── Smarter Balanced ──────────────────────────────────────────
-            {'tab': 'Smarter Balanced', 'label': 'ELA and Math by year', 'sections': [
-                {'chart': 'Official • Smarter Balanced ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'ELA by race and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'ELA by program and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'Math by race and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'Math by program and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'ELA by grade and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'Math by grade and year', 'sections': [
-                {'chart': 'Official • Smarter Balanced Math PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'Smarter Balanced', 'label': 'School results', 'sections': [
-                {'chart': 'Official • Smarter Balanced School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
-            ]},
-            # ── CAA ───────────────────────────────────────────────────────
-            {'tab': 'CAA', 'label': 'ELA and Math by year', 'sections': [
-                {'chart': 'Official • CAA ELA and Math PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-            ]},
-            {'tab': 'CAA', 'label': 'ELA by race and year', 'sections': [
-                {'chart': 'Official • CAA ELA PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'ELA by program and year', 'sections': [
-                {'chart': 'Official • CAA ELA PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'Math by race and year', 'sections': [
-                {'chart': 'Official • CAA Math PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'Math by program and year', 'sections': [
-                {'chart': 'Official • CAA Math PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'ELA by grade and year', 'sections': [
-                {'chart': 'Official • CAA ELA PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'Math by grade and year', 'sections': [
-                {'chart': 'Official • CAA Math PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA', 'label': 'School results', 'sections': [
-                {'chart': 'Official • CAA School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
-            ]},
-            # ── CAST ──────────────────────────────────────────────────────
-            {'tab': 'CAST', 'label': 'Multi-year performance levels', 'sections': [
-                {'chart': 'Official • CAST PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-            ]},
-            {'tab': 'CAST', 'label': 'By race and year', 'sections': [
-                {'chart': 'Official • CAST PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAST', 'label': 'By program and year', 'sections': [
-                {'chart': 'Official • CAST PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAST', 'label': 'Grade and year', 'sections': [
-                {'chart': 'Official • CAST PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAST', 'label': 'Science domains and year', 'sections': [
-                {'chart': 'Official • CAST Science Domain PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAST', 'label': 'School results', 'sections': [
-                {'chart': 'Official • CAST School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
-            ]},
-            # ── CAA Science ───────────────────────────────────────────────
-            {'tab': 'CAA Science', 'label': 'Multi-year performance levels', 'sections': [
-                {'chart': 'Official • CAA Science PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 8},
-            ]},
-            {'tab': 'CAA Science', 'label': 'By race and year', 'sections': [
-                {'chart': 'Official • CAA Science PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA Science', 'label': 'By program and year', 'sections': [
-                {'chart': 'Official • CAA Science PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA Science', 'label': 'Grade and year', 'sections': [
-                {'chart': 'Official • CAA Science PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'CAA Science', 'label': 'School results', 'sections': [
-                {'chart': 'Official • CAA Science School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
-            ]},
-            # ── ELPAC ─────────────────────────────────────────────────────
-            {'tab': 'ELPAC', 'label': 'Assessment and year comparison', 'sections': [
-                {'chart': 'Official • ELPAC PL by Assessment and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'ELPAC', 'label': 'Summative: by race and year', 'sections': [
-                {'chart': 'Official • ELPAC Summative PL by Race', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'ELPAC', 'label': 'Summative: by program and year', 'sections': [
-                {'chart': 'Official • ELPAC Summative PL by Program', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'ELPAC', 'label': 'Summative: grade and year', 'sections': [
-                {'chart': 'Official • ELPAC Summative PL by Grade and Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'ELPAC', 'label': 'Summative: domains and year', 'sections': [
-                {'chart': 'Official • ELPAC Summative Domain PL by Year', 'gs_x': 0, 'gs_w': 12, 'gs_h': 9},
-            ]},
-            {'tab': 'ELPAC', 'label': 'Summative school results', 'sections': [
-                {'chart': 'Official • ELPAC Summative School Results Table', 'gs_x': 0, 'gs_w': 12, 'gs_h': 12},
-            ]},
-        ],
+        'rows': PAGE_LAYOUT_ROWS,
     }
+
+
+OFFICIAL_PAGE_TABS = ['Smarter Balanced', 'CAA', 'CAST', 'CAA Science', 'ELPAC']
+
+
+def _prepare_chart_specs(year_order: list[str]) -> list[dict]:
+    return [apply_live_tuning(s) for s in _chart_specs(year_order)]
 
 
 def bootstrap_django() -> str:
@@ -1330,8 +1530,7 @@ def upsert_dataset(spec, owner):
 def upsert_chart(spec, datasets, owner):
     from dataviz.models import SavedChart
 
-    raw_name = spec['name']
-    folder_name = f'{CHART_ROOT_FOLDER} / {CHART_FOLDER} / {raw_name}'
+    folder_name = chart_storage_name(spec['name'])
     dataset = datasets[spec['dataset']]
     chart = SavedChart.objects.filter(name=folder_name).order_by('id').first()
     if chart is None:
@@ -1426,7 +1625,7 @@ def qa_dataviz() -> int:
     failures = []
     latest = _latest_year()
     order = _year_order()
-    charts = _chart_specs(order)
+    charts = _prepare_chart_specs(order)
 
     print('=== QA: dataset rows ===')
     for spec in DATASET_SPECS:
@@ -1567,6 +1766,117 @@ def qa_dataviz() -> int:
     return 0
 
 
+def verify_live_state() -> int:
+    """Compare live DB page/charts/datasets to this script (layout + configs + SQL)."""
+    import hashlib
+
+    from dataviz.models import DataVizPage, DataVizPageSection, Dataset, SavedChart
+
+    failures: list[str] = []
+
+    def fail(msg: str):
+        failures.append(msg)
+        print(f'  FAIL {msg}')
+
+    page = DataVizPage.objects.filter(slug=PAGE_SLUG).first()
+    if not page:
+        fail(f'DataVizPage slug={PAGE_SLUG!r} not found')
+        return 1
+
+    live_tabs = list(page.tabs.order_by('position').values_list('name', flat=True))
+    if live_tabs != OFFICIAL_PAGE_TABS:
+        fail(f'tabs: live={live_tabs} expected={OFFICIAL_PAGE_TABS}')
+
+    live_rows = []
+    for row in page.rows.order_by('position'):
+        tab_name = row.tab.name if row.tab_id else ''
+        for sec in DataVizPageSection.objects.filter(row=row).select_related('chart'):
+            short = (sec.chart.name.rsplit(' / ', 1)[-1] if sec.chart else '')
+            live_rows.append({
+                'tab': tab_name,
+                'label': row.label,
+                'chart': short,
+                'gs_w': sec.gs_w,
+                'gs_h': sec.gs_h,
+                'gs_x': sec.gs_x,
+            })
+
+    expected_rows = []
+    for row_spec in PAGE_LAYOUT_ROWS:
+        for sec in row_spec['sections']:
+            expected_rows.append({
+                'tab': row_spec['tab'],
+                'label': row_spec['label'],
+                'chart': sec['chart'],
+                'gs_w': sec['gs_w'],
+                'gs_h': sec['gs_h'],
+                'gs_x': sec.get('gs_x', 0),
+            })
+    if len(live_rows) != len(expected_rows):
+        fail(f'layout row count: live={len(live_rows)} expected={len(expected_rows)}')
+    else:
+        for idx, (live, exp) in enumerate(zip(live_rows, expected_rows)):
+            if live != exp:
+                fail(f'layout row {idx}: live={live} expected={exp}')
+
+    for flt in PAGE_FILTER_WIDGETS:
+        fid = flt['id']
+        db_match = next((f for f in (page.page_filters or []) if f.get('id') == fid), None)
+        if not db_match:
+            fail(f'page filter missing in DB: {fid}')
+        elif {k: db_match.get(k) for k in flt} != flt:
+            fail(f'page filter {fid} widget fields differ from PAGE_FILTER_WIDGETS')
+
+    prepared = {s['name']: s for s in _prepare_chart_specs(_year_order())}
+    skip_cfg_keys = {'category_order', 'x_value_map', 'group_order'}
+
+    for short_name, expected_id in LIVE_CHART_IDS.items():
+        chart = SavedChart.objects.filter(pk=expected_id).first()
+        if not chart:
+            fail(f'chart id {expected_id} ({short_name}) missing')
+            continue
+        if chart.name != chart_storage_name(short_name):
+            fail(
+                f'chart {expected_id} name {chart.name!r} != '
+                f'{chart_storage_name(short_name)!r}'
+            )
+        spec = prepared.get(short_name)
+        if not spec:
+            fail(f'no script spec for {short_name}')
+            continue
+        for key, expected in (spec.get('config') or {}).items():
+            if key in skip_cfg_keys:
+                continue
+            db_cfg = chart.config or {}
+            if key not in db_cfg:
+                continue
+            if db_cfg.get(key) != expected:
+                fail(f'chart {short_name}: config[{key!r}] drift')
+        if (chart.source_filters or {}) != (spec.get('source_filters') or {}):
+            fail(f'chart {short_name}: source_filters drift')
+
+    for ds_name, expected_id in LIVE_DATASET_IDS.items():
+        ds = Dataset.objects.filter(pk=expected_id).first()
+        if not ds:
+            fail(f'dataset id {expected_id} ({ds_name}) missing')
+            continue
+        if ds.name != ds_name:
+            fail(f'dataset {expected_id} name {ds.name!r} != {ds_name!r}')
+        spec = next((s for s in DATASET_SPECS if s['name'] == ds_name), None)
+        if not spec:
+            fail(f'no script DATASET_SPECS entry for {ds_name}')
+            continue
+        norm = lambda s: re.sub(r'\s+', ' ', (s or '').strip())
+        if norm(ds.source_sql) != norm(spec['sql']):
+            fail(f'dataset {ds_name}: source_sql drift')
+
+    if failures:
+        print(f'\nVERIFY FAILED ({len(failures)} issue(s)).')
+        return 1
+    print('VERIFY PASSED: page, 33 charts, and 2 datasets match this script.')
+    return 0
+
+
 def cleanup_official_assets(owner, charts):
     from dataviz.models import Dataset, SavedChart
 
@@ -1596,9 +1906,15 @@ def main():
     parser = argparse.ArgumentParser(description='Create the Official Assessment Results page.')
     parser.add_argument('--owner', default='')
     parser.add_argument('--qa', action='store_true')
+    parser.add_argument(
+        '--verify', action='store_true',
+        help='Compare live page/chart/dataset inventory to this script (no writes).',
+    )
     args = parser.parse_args()
 
     bootstrap_django()
+    if args.verify:
+        raise SystemExit(verify_live_state())
     if args.qa:
         raise SystemExit(qa_dataviz())
 
@@ -1610,10 +1926,11 @@ def main():
 
     enable_dataset_tables()
     datasets = {spec['name']: upsert_dataset(spec, owner) for spec in DATASET_SPECS}
-    charts = {spec['name']: upsert_chart(spec, datasets, owner) for spec in _chart_specs(order)}
+    chart_specs = _prepare_chart_specs(order)
+    charts = {spec['name']: upsert_chart(spec, datasets, owner) for spec in chart_specs}
     cleanup_official_assets(owner, charts)
     page = upsert_page(_page_spec(latest), charts, owner)
-    attach_to_menu(page, 10)
+    attach_to_menu(page, SITE_MENU_ORDER)
     print('Official Assessment Results page ready.')
 
 

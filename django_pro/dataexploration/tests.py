@@ -2770,6 +2770,37 @@ class StudentIncidentsTests(TestCase):
 		}
 		self.assertEqual(incident_suspension_days_for_item(item), 2)
 
+	def test_incident_expulsion_flags_for_item(self):
+		from dataexploration.incident_columns import incident_expulsion_flags_for_item
+
+		item = {
+			'dispositions': [
+				{'disposition': 'Recommended for Expulsion'},
+				{'disposition': 'Expulsion'},
+			],
+		}
+		recommended, expelled = incident_expulsion_flags_for_item(item)
+		self.assertTrue(recommended)
+		self.assertTrue(expelled)
+
+	def test_incident_expulsion_flags_district_disposition_labels(self):
+		from dataexploration.incident_columns import incident_expulsion_flags_for_item
+
+		referred = incident_expulsion_flags_for_item({
+			'dispositions': [{'disposition': 'Referred for Expulsion Hearing'}],
+		})
+		self.assertEqual(referred, (True, False))
+
+		board = incident_expulsion_flags_for_item({
+			'dispositions': [{'disposition': 'Expulsion by Board of Education (200)'}],
+		})
+		self.assertEqual(board, (False, True))
+
+		enforcement = incident_expulsion_flags_for_item({
+			'dispositions': [{'disposition': '"Expelled, Suspended Enforcement" (300)'}],
+		})
+		self.assertEqual(enforcement, (False, True))
+
 	def test_format_incident_date_display(self):
 		from dataexploration.incident_columns import format_incident_date_display
 

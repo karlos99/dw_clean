@@ -65,6 +65,13 @@ function chartBuilderUIMethods() {
       this.dynColCols = [...this.dynColCols];
       this._schedulePreview(true);
     },
+    toggleSkValue(listKey, value) {
+      const current = Array.isArray(this[listKey]) ? this[listKey].slice() : [];
+      const idx = current.indexOf(value);
+      if (idx >= 0) current.splice(idx, 1); else current.push(value);
+      this[listKey] = current;
+      this._schedulePreview(true);
+    },
     addDynCalculation() {
       this._dynCalcSeq = (this._dynCalcSeq || 0) + 1;
       this.dynCalculations.push({
@@ -468,7 +475,40 @@ function chartBuilderUIMethods() {
       dataProps.forEach(prop => this.$watch(prop, () => this._scheduleDataPreview()));
       styleProps.forEach(prop => this.$watch(prop, () => this._scheduleStylePreview()));
       this.$watch('explorerSelected', () => { this._explorerKeySetVersion = (this._explorerKeySetVersion || 0) + 1; });
+      this.$watch('chartType', (val) => {
+        if (val === 'sankey') {
+          this.suggestSankeyPath();
+          if (!this.containerHeight) this.containerHeight = 900;
+        }
+      });
+      this.suggestSankeyPath();
       this._explorerKeySetVersion = 0;
+    },
+
+    suggestSankeyPath() {
+      if (this.chartType !== 'sankey') return;
+      const cols = Array.isArray(this.activeCols) ? this.activeCols : [];
+      const norm = (c) => String(c).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      if (!this.skPathCol) {
+        const preferred = ['school_and_college_history', 'post_hs_college_path', 'college_path', 'pathway', 'path'];
+        let pathHit = '';
+        for (const p of preferred) {
+          const hit = cols.find((c) => norm(c) === p);
+          if (hit) { pathHit = hit; break; }
+        }
+        if (!pathHit) {
+          pathHit = cols.find((c) => {
+            const n = norm(c);
+            return n.endsWith('_path') || n.includes('college_history') || n.includes('school_history');
+          }) || '';
+        }
+        if (pathHit) this.skPathCol = pathHit;
+      }
+      if (!this.skStageColsText) {
+        const wanted = ['grade_5_school', 'grade_8_school', 'high_school_name'];
+        const found = wanted.filter((w) => cols.some((c) => norm(c) === w));
+        if (found.length === wanted.length) this.skStageColsText = found.join(', ');
+      }
     },
 
     _schedulePreview(forData) {
@@ -580,7 +620,7 @@ function chartBuilderUIMethods() {
         opt.dataZoom = curOpt.dataZoom.map(dz => ({ ...dz, show: !!this.showZoom }));
       }
 
-      const noAxis = ['pie','donut','funnel','treemap','radar','gauge'].includes(this.chartType);
+      const noAxis = ['pie','donut','funnel','treemap','radar','gauge','sankey'].includes(this.chartType);
       if (!noAxis) {
         const catLblShow = !!this.showCategories;
         const valLblShow = !!this.showAxisLabels;

@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
 from .constants import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403
 from .charts import *  # noqa: F401,F403
+from .sankey import *  # noqa: F401,F403
 from .tables import *  # noqa: F401,F403
 from .progress_growth import *  # noqa: F401,F403
 from .assessment_compare import *  # noqa: F401,F403
@@ -49,7 +50,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         x_cols_raw = [c.strip() for c in x_col.split(',') if c.strip()]
     y_col        = cfg.get('y_col', '')
     y_cols_raw   = cfg.get('y_cols', [])
-    stack_col    = cfg.get('stack_col', '')
+    stack_col    = cfg.get('stack_col', '') or cfg.get('series_col', '')
     group_col    = cfg.get('group_col', '')
     compare_pl_cols = cfg.get('compare_pl_cols', [])
     size_col     = cfg.get('size_col', '')
@@ -154,6 +155,23 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     y_cols_raw = [_resolve_cfg_col(c) for c in y_cols_raw] if isinstance(y_cols_raw, list) else y_cols_raw
     compare_pl_cols = [_resolve_cfg_col(c) for c in compare_pl_cols] if isinstance(compare_pl_cols, list) else compare_pl_cols
 
+    # Sankey pathway config columns (JSON path, stage columns, filter sources).
+    if chart_type == 'sankey':
+        _sk_cols = [
+            'sk_path_col', 'sk_college_type_source', 'sk_college_system_source',
+            'sk_college_control_source', 'sk_college_state_source',
+        ]
+        _sk_patch = {}
+        for _key in _sk_cols:
+            _val = cfg.get(_key)
+            if isinstance(_val, str) and _val:
+                _sk_patch[_key] = _resolve_cfg_col(_val)
+        _sk_stage_cols = cfg.get('sk_stage_cols')
+        if isinstance(_sk_stage_cols, list):
+            _sk_patch['sk_stage_cols'] = [_resolve_cfg_col(c) for c in _sk_stage_cols]
+        if _sk_patch:
+            cfg = {**cfg, **_sk_patch}
+
     _dyn_calcs = cfg.get('dyn_calculations') or []
     if isinstance(_dyn_calcs, list):
         _resolved_dyn = []
@@ -179,9 +197,12 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         cfg = dict(cfg)
         cfg['dyn_calculations'] = _resolved_dyn
 
-    # Composite x-axis
+    # Composite x-axis. Sankey keeps its multiple X columns as ordered stages.
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
-    if len(x_cols) > 1:
+    if chart_type == 'sankey':
+        if len(x_cols) == 1 and not x_col:
+            x_col = x_cols[0]
+    elif len(x_cols) > 1:
         df = df.with_columns(
             pl.concat_str(
                 [pl.col(c).fill_null('(Blank)').cast(pl.Utf8) for c in x_cols],
@@ -224,16 +245,19 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         return _message_option('All rows filtered out (no valid data)', cfg)
 
     # Unique per-field x values for alias UI (grade, year, … — not "K · 2024").
+    # Sankey paths are full JSON documents; they must never be sent back as
+    # category aliases.
     _alias_src_cols = x_cols if len(x_cols) > 1 else ([x_col] if x_col else [])
     x_alias_keys: list[str] = []
     _alias_seen: set[str] = set()
-    for _ac in _alias_src_cols:
-        if _ac not in df.columns:
-            continue
-        for _av in col_unique_str(df, _ac):
-            if _av not in _alias_seen:
-                _alias_seen.add(_av)
-                x_alias_keys.append(_av)
+    if chart_type != 'sankey':
+        for _ac in _alias_src_cols:
+            if _ac not in df.columns:
+                continue
+            for _av in col_unique_str(df, _ac):
+                if _av not in _alias_seen:
+                    _alias_seen.add(_av)
+                    x_alias_keys.append(_av)
 
     # ``__measure_label__`` is set by the ClickHouse aggregation pushdown, whose
     # rows carry the pre-computed measure in ``__dv_value``. It holds the label
@@ -275,6 +299,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'jitter':       lambda: _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels),
         'bubble':       lambda: _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=True),
         'heatmap':      lambda: _heatmap_option(df, x_col, y_col, agg, cfg, labels),
+        'sankey':       lambda: _sankey_option(df, x_col, x_cols, cfg, labels),
         'histogram':    lambda: _histogram_option(df, x_col, stack_col, cfg, labels),
         'box':          lambda: _boxplot_option(df, x_col, y_col, cfg, labels),
         'funnel':       lambda: _funnel_option(df, x_col, y_col, agg, cfg),
