@@ -654,3 +654,5 @@ class StudentIncidentsAnalyticsTests(SimpleTestCase):
         self.assertEqual(rows[0][18], 28)
         self.assertEqual(rows[0][22], 'School B')
         self.assertEqual(rows[0][23], 'Classroom')
+        self.assertEqual(rows[0][24], 0)
+        self.assertEqual(rows[0][25], 0)

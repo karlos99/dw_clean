@@ -1,8 +1,39 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
+from unittest.mock import patch
 
-from ca_dash.services.loader import format_cds, normalize_row
+from ca_dash.services.loader import (
+    _better_school_label,
+    format_cds,
+    normalize_row,
+    school_display_name,
+)
+
+
+class SchoolDisplayNameTests(SimpleTestCase):
+    def test_unknown_short_loses_to_valid_label(self):
+        self.assertEqual(_better_school_label('Unknown', 'Washington'), 'Washington')
+        self.assertEqual(_better_school_label('Washington', 'Unknown'), 'Washington')
+
+    def test_display_name_falls_back_to_cde_schoolname(self):
+        with patch('ca_dash.services.loader._load_school_display_labels', return_value={}):
+            self.assertEqual(
+                school_display_name('33670586031959', 'George Washington Charter'),
+                'George Washington Charter',
+            )
+
+    def test_normalize_row_uses_cde_when_short_would_be_unknown(self):
+        with patch(
+            'ca_dash.services.loader._load_school_display_labels',
+            return_value={'6031959': 'Unknown'},
+        ):
+            row = normalize_row({
+                'cds': '33670586031959',
+                'rtype': 'S',
+                'schoolname': 'George Washington Charter',
+            })
+        self.assertEqual(row['school_short_name'], 'George Washington Charter')
 
 
 class NormalizeRowLabelTests(TestCase):

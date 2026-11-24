@@ -1368,6 +1368,44 @@ main {
   margin-bottom: 0.75rem;
 }
 
+.overlay-section-title-inline {
+  margin: 0;
+}
+
+.overlay-sg-section {
+  margin-top: 1.25rem;
+}
+
+.overlay-sg-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.overlay-sg-summary {
+  margin: 0 0 0.65rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.overlay-sg-empty {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.overlay-sg-toggle .toggle-label {
+  font-size: 0.78rem;
+}
+
+.overlay-flags-minimal {
+  margin-top: 0.75rem;
+}
+
 .subgroup-table {
   width: 100%;
   border-collapse: separate;

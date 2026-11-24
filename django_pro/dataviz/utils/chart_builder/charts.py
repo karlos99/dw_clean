@@ -806,6 +806,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         series = [make_series(sv, [_line_value(raw_lookup[sv], xv) for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
+        _truncate_current_year_at_last_data(series, categories, raw_lookup, cfg)
         _update_chart_axes(option, categories, series, labels['y'] or 'Count', labels, cfg, ax, x_lbl)
         axis_cats = option.get('__category_names__', categories)
         option.update({

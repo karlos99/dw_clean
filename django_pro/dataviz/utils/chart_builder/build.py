@@ -50,7 +50,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         x_cols_raw = [c.strip() for c in x_col.split(',') if c.strip()]
     y_col        = cfg.get('y_col', '')
     y_cols_raw   = cfg.get('y_cols', [])
-    stack_col    = cfg.get('stack_col', '')
+    stack_col    = cfg.get('stack_col', '') or cfg.get('series_col', '')
     group_col    = cfg.get('group_col', '')
     compare_pl_cols = cfg.get('compare_pl_cols', [])
     size_col     = cfg.get('size_col', '')

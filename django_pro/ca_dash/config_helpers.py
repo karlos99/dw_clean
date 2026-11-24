@@ -114,6 +114,13 @@ def district_full_name() -> str:
     return name or DEFAULT_DISTRICT_FULL
 
 
+def discover_reporting_years_in_data() -> list[int]:
+    """Reporting years present in dash_indi_* (ignores project allowlist)."""
+    from ca_dash.services.loader import PostgresIndicatorLoader
+
+    return PostgresIndicatorLoader.discover_all_reporting_years()
+
+
 def enabled_reporting_years() -> list[int]:
     cfg = _project_config()
     raw = getattr(cfg, 'ca_dash_enabled_reporting_years', None) or []

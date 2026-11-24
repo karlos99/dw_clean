@@ -44,7 +44,7 @@ def _parse_studentgroups(request) -> list[str] | None:
         return None
     raw = request.GET.get('studentgroups', '')
     if not raw.strip():
-        return []
+        return None
     return [s.strip() for s in raw.split(',') if s.strip()]
 
 
@@ -265,6 +265,7 @@ def api_report(request):
                 entity_label='Student Group',
                 tag_field='name',
                 template_key=tkey,
+                reporting_years=reporting_years,
             )
             school_grids = [school_grid]
             school_detail = build_school_detail(all_row, primary_rows, ind.indicator_code)
@@ -319,6 +320,7 @@ def api_report(request):
             title=d_short,
             entity_label='District',
             template_key=district_tkey,
+            reporting_years=reporting_years,
         )
 
         return JsonResponse(

@@ -555,6 +555,7 @@ COLUMN_WHITELIST = {
         'review_status', 'description', 'suspension_days', 'is_suspended',
         'school_week', 'week_start_date', 'week_end_date', 'week_label',
         'incident_school', 'incident_location',
+        'is_expulsion_recommended', 'is_expelled',
     },
     'analytics_student_attendance_weekly': {
         'ssid', 'stu_annual_key', 'student_name', 'grade', 'grade_label', 'school',

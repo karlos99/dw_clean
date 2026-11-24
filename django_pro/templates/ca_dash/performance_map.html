@@ -23,32 +23,41 @@
 
   <section class="ca-dash-toolbar" aria-label="Map filters">
     <div class="ca-dash-toolbar-row">
-      <div class="ca-dash-filter">
+      <div class="ca-dash-filter ca-dash-filter-indicator">
         <label class="ca-dash-filter-label" for="indicator">Indicator</label>
         <select id="indicator" class="ca-dash-select"></select>
       </div>
 
-      <div class="ca-dash-filter">
+      <div class="ca-dash-filter ca-dash-filter-school">
         <label class="ca-dash-filter-label" for="school-select">School</label>
         <select id="school-select" class="ca-dash-select"></select>
       </div>
 
-      <div class="ca-dash-filter" id="subgroup-section">
+      <div class="ca-dash-filter ca-dash-filter-subgroups" id="subgroup-section">
         <span class="ca-dash-filter-label" id="subgroup-label">Student group</span>
         <select id="subgroup-select" class="ca-dash-select"></select>
-        <div id="subgroup-multi" class="multi-filter hidden">
-          <div class="multi-filter-toolbar">
-            <span id="subgroup-count" class="multi-filter-count"></span>
-            <div class="multi-filter-actions">
-              <button type="button" id="subgroup-select-all" class="multi-filter-action">All</button>
-              <button type="button" id="subgroup-select-none" class="multi-filter-action">None</button>
+        <div id="subgroup-multi" class="subgroup-dropdown hidden">
+          <button type="button" id="subgroup-dropdown-btn" class="year-dropdown-btn" aria-expanded="false"
+                  aria-haspopup="listbox" aria-labelledby="subgroup-label subgroup-dropdown-summary">
+            <span id="subgroup-dropdown-summary">Student groups</span>
+            <span class="year-dropdown-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div id="subgroup-dropdown-panel" class="year-checkbox-panel subgroup-dropdown-panel is-hidden"
+               role="listbox" aria-multiselectable="true" aria-labelledby="subgroup-label">
+            <div class="multi-filter-toolbar">
+              <span id="subgroup-count" class="multi-filter-count"></span>
+              <div class="multi-filter-actions">
+                <button type="button" id="subgroup-select-all" class="multi-filter-action">All</button>
+                <button type="button" id="subgroup-select-none" class="multi-filter-action">None</button>
+              </div>
             </div>
+            <div id="subgroup-chips" class="multi-filter-chips subgroup-chips-panel" role="group"
+                 aria-label="Student groups"></div>
           </div>
-          <div id="subgroup-chips" class="multi-filter-chips" role="group" aria-label="Student groups"></div>
         </div>
       </div>
 
-      <div class="ca-dash-filter ca-dash-year-dropdown-wrap" id="year-section">
+      <div class="ca-dash-filter ca-dash-filter-years ca-dash-year-dropdown-wrap" id="year-section">
         <span class="ca-dash-filter-label" id="year-dropdown-label">Reporting years</span>
         <div class="year-dropdown" id="year-dropdown">
           <button type="button" id="year-dropdown-btn" class="year-dropdown-btn" aria-expanded="false"
@@ -59,14 +68,10 @@
           <div id="year-checkbox-panel" class="year-checkbox-panel is-hidden" role="listbox"
                aria-multiselectable="true" aria-labelledby="year-dropdown-label">
             <div id="year-checkboxes" class="year-checkboxes"></div>
+            <div id="year-legend-toolbar" class="year-legend year-legend-toolbar hidden" aria-label="Year color key"></div>
           </div>
         </div>
       </div>
-    </div>
-
-    <div id="current-view" class="ca-dash-view-bar">
-      <span class="view-type" id="view-type-badge">District Map</span>
-      <span class="view-name" id="view-name"></span>
     </div>
   </section>
 
@@ -76,11 +81,16 @@
 
       <article class="grid-panel grid-panel-district" id="district-grid-panel">
         <header class="grid-panel-header">
+          <div class="grid-panel-header-main district-header-main">
           <button type="button" id="district-toggle" class="district-toggle" aria-expanded="true">
             <span class="toggle-icon">▼</span>
-            <h2 id="district-grid-title">{{ district_short }}</h2>
-            <span class="grid-panel-meta">District · expand full width</span>
+            <div class="district-toggle-titles">
+              <h2 id="district-grid-title">{{ district_short }}</h2>
+              <p id="district-grid-context" class="grid-panel-context"></p>
+            </div>
+            <span class="grid-panel-meta district-toggle-meta">District · expand full width</span>
           </button>
+          </div>
           <div class="grid-panel-header-actions">
             <button type="button" id="district-save-jpg" class="btn-ghost grid-save-jpg-btn" title="Download this chart as JPEG">Save JPG</button>
             <label class="toggle-switch" id="subgroup-toggle-container">
@@ -127,5 +137,5 @@
 {% block extra_scripts %}
 <script>window.CA_DASH_API_BASE = "/ca_dash/api";</script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" crossorigin="anonymous"></script>
-<script src="{% static 'js/ca_dash/dashboard.js' %}"></script>
+<script src="{% static 'js/ca_dash/dashboard.js' %}?v=20260321c"></script>
 {% endblock %}

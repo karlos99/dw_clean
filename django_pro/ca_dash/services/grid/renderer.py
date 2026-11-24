@@ -121,6 +121,51 @@ def _subgroup_base_code(indicator_code: str) -> str:
     return "EL" if str(indicator_code).upper() == "ELPI" else "ALL"
 
 
+def _coerce_entity_year(entity: dict) -> int | None:
+    raw = entity.get("reportingyear")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        digits = "".join(ch for ch in str(raw) if ch.isdigit())
+        if not digits:
+            return None
+        try:
+            return int(digits)
+        except ValueError:
+            return None
+
+
+def _filter_entities_for_years(
+    entities: list[dict], reporting_years: list[int] | None
+) -> list[dict]:
+    """Keep one entity per (code/cds, reporting year) and sort for multi-year charts."""
+    if not reporting_years:
+        return entities
+    allowed = {int(y) for y in reporting_years}
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for entity in entities:
+        year = _coerce_entity_year(entity)
+        if year is None or year not in allowed:
+            continue
+        key = (entity.get("cds"), entity.get("code"), year)
+        if key in seen:
+            continue
+        seen.add(key)
+        e = {**entity, "reportingyear": year}
+        out.append(e)
+    out.sort(
+        key=lambda e: (
+            int(_coerce_entity_year(e) or 0),
+            str(e.get("name") or ""),
+            str(e.get("code") or ""),
+        )
+    )
+    return out
+
+
 def _entity_visible_on_chart(entity: dict, indicator_code: str) -> bool:
     """Hide student groups with no 5×5 placement or performance color. Schools always show if placed."""
     code = entity.get("code")
@@ -194,6 +239,7 @@ def build_grid_payload(
     entity_label: str = "School",
     tag_field: str = "name",
     template_key: str | None = None,
+    reporting_years: list[int] | None = None,
 ) -> dict[str, Any]:
     variant = None
     rtype = "S"
@@ -228,7 +274,7 @@ def build_grid_payload(
                     "cds": e.get("cds"),
                     "code": e.get("code"),
                     "name": e.get(tag_field) or e.get("name"),
-                    "reportingyear": e.get("reportingyear"),
+                    "reportingyear": _coerce_entity_year(e) or e.get("reportingyear"),
                     "box": e.get("box"),
                     "highlighted": (
                         (highlight_code and e.get("code") == highlight_code)
@@ -238,6 +284,7 @@ def build_grid_payload(
                 for e in cell_entities
                 if _entity_visible_on_chart(e, indicator.indicator_code)
             ]
+            schools = _filter_entities_for_years(schools, reporting_years)
             row_cells.append(
                 {
                     "row": ri,
@@ -357,6 +404,7 @@ def build_typed_grids(
                 title=title,
                 entity_label="School",
                 template_key=tkey,
+                reporting_years=reporting_years,
             )
         )
     return grids

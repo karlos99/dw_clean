@@ -11,6 +11,7 @@ from clickhouse_utils.student_incidents_sync import (
     pg_student_incidents_columns,
 )
 from dataexploration.incident_columns import (
+    incident_expulsion_flags_for_item,
     incident_suspension_days_for_item,
     incidents_list_for_severity,
     parse_incidents_payload,
@@ -42,6 +43,8 @@ ANALYTICS_STUDENT_INCIDENTS_COLUMNS = [
     'week_label',
     'incident_school',
     'incident_location',
+    'is_expulsion_recommended',
+    'is_expelled',
 ]
 
 
@@ -211,6 +214,9 @@ def build_analytics_student_incidents_rows(
                     except (TypeError, ValueError):
                         susp_f = 0.0
                     is_suspended = 1 if susp_f > 0 else 0
+                    exp_rec, expelled = incident_expulsion_flags_for_item(raw_item or {})
+                    is_expulsion_recommended = 1 if exp_rec else 0
+                    is_expelled = 1 if expelled else 0
                     incident_date = (item.get('date') or '').strip()[:10]
                     week_meta = _week_fields_for_date(
                         lookup, base['school_year'], incident_date,
@@ -241,6 +247,8 @@ def build_analytics_student_incidents_rows(
                         week_meta['week_label'],
                         (item.get('school') or '').strip() or None,
                         (item.get('location') or '').strip() or None,
+                        is_expulsion_recommended,
+                        is_expelled,
                     ))
     return out
 

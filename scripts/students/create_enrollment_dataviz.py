@@ -685,6 +685,7 @@ def _chart_specs() -> list[dict]:
                 stack_order=years, show_grid=False, show_points=True,
                 data_labels=False, color_map=YEAR_COLORS,
                 sparse_series=True, zero_as_gap=True, connect_nulls=True,
+                truncate_current_year_at_last_data=True,
                 skip_page_filters=['school_year'],
             ),
         },

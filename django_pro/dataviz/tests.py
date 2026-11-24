@@ -1956,6 +1956,35 @@ class DatasetDrillThroughTests(TestCase):
         self.assertIsNotNone(s_spline.get('areaStyle'))
         self.assertEqual(s_spline.get('smooth'), True)
 
+    def test_line_truncates_current_school_year_after_last_data_week(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school_week': '1', 'school_year': '2024-2025', 'incident_id': 'a'},
+            {'school_week': '8', 'school_year': '2024-2025', 'incident_id': 'b'},
+            {'school_week': '1', 'school_year': '2025-2026', 'incident_id': 'c'},
+            {'school_week': '4', 'school_year': '2025-2026', 'incident_id': 'd'},
+            {'school_week': '6', 'school_year': '2025-2026', 'incident_id': 'e'},
+        ]
+        cfg = {
+            'chart_type': 'line',
+            'x_col': 'school_week',
+            'y_col': 'incident_id',
+            'stack_col': 'school_year',
+            'agg': 'count',
+            'sparse_series': True,
+            'zero_as_gap': True,
+            'connect_nulls': True,
+            'truncate_current_year_at_last_data': True,
+            'current_school_year': '2025-2026',
+            'sort_col': '__manual__',
+            'category_order': ['1', '4', '6', '8', '10'],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt.get('series', [])}
+        self.assertIsNone(by_name['2025-2026'][-1])
+        self.assertEqual(by_name['2024-2025'][-1], 1.0)
+
     @patch('dataviz.views.api.chart_api.is_project_admin', return_value=True)
     @patch('dataviz.utils.data_loader.run_saved_query')
     def test_chart_preview_api_returns_columns(self, mock_run_query, mock_is_admin):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -16,35 +17,126 @@ from ca_dash.services.grid.templates import resolve_template_key
 from ca_dash.services.grid.thresholds import change_level_from_value, resolve_thresholds
 from ca_dash.services.indicators.registry import INDICATORS, IndicatorConfig, get_indicator
 
-def _load_school_short_names() -> dict[str, str]:
+_SCHOOL_LABEL_CACHE_KEY = "ca_dash:school_display_labels_v2"
+
+_PLACEHOLDER_SCHOOL_LABELS = frozenset({
+    "unknown",
+    "unknown school",
+    "n/a",
+    "na",
+    "-",
+    "out of district school",
+})
+
+
+def _is_placeholder_school_label(label: str | None) -> bool:
+    text = str(label or "").strip()
+    if not text:
+        return True
+    return text.casefold() in _PLACEHOLDER_SCHOOL_LABELS
+
+
+def _label_from_school_row(short_name: str | None, school_name: str | None) -> str:
+    short = str(short_name or "").strip()
+    full = str(school_name or "").strip()
+    if short and not _is_placeholder_school_label(short):
+        return short
+    return full or short
+
+
+def _better_school_label(current: str | None, new: str | None) -> str:
+    new_s = str(new or "").strip()
+    if not new_s:
+        return str(current or "").strip()
+    cur_s = str(current or "").strip()
+    if not cur_s:
+        return new_s
+    cur_bad = _is_placeholder_school_label(cur_s)
+    new_bad = _is_placeholder_school_label(new_s)
+    if cur_bad and not new_bad:
+        return new_s
+    if not cur_bad and new_bad:
+        return cur_s
+    if not cur_bad and not new_bad and len(new_s) < len(cur_s):
+        return new_s
+    return cur_s
+
+
+def _code_variants(value: str | None) -> set[str]:
+    raw = str(value or "").strip()
+    if not raw or raw.casefold() in {"unknown"}:
+        return set()
+    variants = {raw}
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if digits:
+        variants.add(digits)
+        full = digits.zfill(14)[:14]
+        variants.add(full)
+        if len(full) >= 7:
+            variants.add(full[-7:])
+        if len(digits) >= 7:
+            variants.add(digits[-7:].zfill(7))
+    stripped = raw.lstrip("0")
+    if stripped:
+        variants.add(stripped)
+    return variants
+
+
+def _cds_lookup_keys(cds: str | None) -> list[str]:
+    keys: list[str] = []
+    for variant in _code_variants(cds):
+        if variant not in keys:
+            keys.append(variant)
+    full = format_cds(cds)
+    if full:
+        for variant in (full, full[-7:]):
+            if variant not in keys:
+                keys.append(variant)
+    return keys
+
+
+def _load_school_display_labels() -> dict[str, str]:
     from django.core.cache import cache
     from studata.models import School
 
-    key = "ca_dash:school_short_names"
-    cached = cache.get(key)
+    cached = cache.get(_SCHOOL_LABEL_CACHE_KEY)
     if cached is not None:
         return cached
     mapping: dict[str, str] = {}
-    qs = (
-        School.objects.exclude(state_id__isnull=True)
-        .exclude(state_id="")
-        .exclude(short_name__isnull=True)
-        .exclude(short_name="")
-        .values_list("state_id", "short_name")
+    qs = School.objects.values_list(
+        "state_id", "assessment_school_code", "sis_key", "short_name", "school_name"
     )
-    for sid, short in qs:
-        full = format_cds(sid)
-        if len(full) >= 7 and short:
-            mapping[full[-7:]] = short.strip()
-    cache.set(key, mapping, 3600)
+    for state_id, assessment_code, sis_key, short_name, school_name in qs:
+        label = _label_from_school_row(short_name, school_name)
+        if not label or _is_placeholder_school_label(label):
+            continue
+        for code in (state_id, assessment_code, sis_key):
+            for key in _code_variants(code):
+                mapping[key] = _better_school_label(mapping.get(key), label)
+    cache.set(_SCHOOL_LABEL_CACHE_KEY, mapping, 3600)
     return mapping
 
 
 def school_short_name(cds: str) -> str | None:
-    mapping = _load_school_short_names()
-    if not cds or len(cds) < 7:
-        return None
-    return mapping.get(cds[-7:])
+    """Backward-compatible alias for :func:`school_display_name`."""
+    return school_display_name(cds)
+
+
+def school_display_name(cds: str | None, cde_schoolname: str | None = None) -> str | None:
+    """District display label for a school CDS, never a placeholder like ``Unknown``."""
+    mapping = _load_school_display_labels()
+    for key in _cds_lookup_keys(cds):
+        hit = mapping.get(key)
+        if hit and not _is_placeholder_school_label(hit):
+            return hit
+    cde = str(cde_schoolname or "").strip()
+    if cde and not _is_placeholder_school_label(cde):
+        return cde
+    for key in _cds_lookup_keys(cds):
+        hit = mapping.get(key)
+        if hit:
+            return hit
+    return cde or None
 
 
 def format_cds(cds) -> str:
@@ -209,12 +301,33 @@ def _subgroup_list_eligible(row: dict[str, Any]) -> bool:
     return box > 0 and color > 0
 
 
+def _coerce_reporting_year(val: Any) -> int | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    digits = re.sub(r"[^0-9]", "", s)
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
 def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     out = {k: _json_val(v) for k, v in row.items()}
     out["cds"] = format_cds(out.get("cds"))
-    short = school_short_name(out["cds"])
-    if short:
-        out["school_short_name"] = short
+    coerced_year = _coerce_reporting_year(out.get("reportingyear"))
+    if coerced_year is not None:
+        out["reportingyear"] = coerced_year
+    if str(out.get("rtype") or "").upper() == "S" or out.get("schoolname"):
+        display = school_display_name(out.get("cds"), out.get("schoolname"))
+        if display:
+            out["school_short_name"] = display
+            if _is_placeholder_school_label(out.get("schoolname")) or not out.get("name"):
+                out["name"] = display
     if "changeLevel" in out and out.get("changelevel") is None:
         out["changelevel"] = out["changeLevel"]
     out = normalize_grid_placement(out)
@@ -313,6 +426,43 @@ class PostgresIndicatorLoader:
         if not allow:
             return years
         return [y for y in years if y in allow]
+
+    @classmethod
+    def discover_all_reporting_years(cls) -> list[int]:
+        """Union of years in dash_indi_* tables (before project allowlist)."""
+        years: set[int] = set()
+        for key, ind in INDICATORS.items():
+            table_name = f"dash_indi_{ind.key}"
+            if not table_exists(table_name):
+                continue
+            rel = f'"{table_name}"'
+            excluded = set(ind.exclude_reporting_years)
+            sql = f"""
+                SELECT DISTINCT {_REPORTING_YEAR} AS y
+                FROM {rel}
+                WHERE reportingyear IS NOT NULL AND trim(reportingyear::text) <> ''
+                ORDER BY y
+            """
+            try:
+                for row in cls._query_class(sql):
+                    y = row.get("y")
+                    if y is None:
+                        continue
+                    yi = int(y)
+                    if yi not in excluded:
+                        years.add(yi)
+            except Exception:
+                continue
+        return cls._sort_reporting_years(list(years))
+
+    @classmethod
+    def _query_class(cls, sql: str, params: list | None = None) -> list[dict]:
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params or [])
+            cols = [c[0] for c in cursor.description] if cursor.description else []
+            return [normalize_row(dict(zip(cols, row))) for row in cursor.fetchall()]
 
     def get_reporting_years(self, indicator_key: str) -> list[int]:
         ind = get_indicator(indicator_key)

@@ -65,7 +65,7 @@
     <!-- ══ Tab Navigation Bar ═══════════════════════════════════════════════ -->
     <div class="mb-6">
         <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 p-2">
-            <nav class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5" aria-label="Settings Sections">
+            <nav class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5" aria-label="Settings Sections">
 
                 <!-- Tab 1: General -->
                 <button type="button" @click="setTab('general')"
@@ -131,7 +131,23 @@
                     </div>
                 </button>
 
-                <!-- Tab 5: Student Summary -->
+                <!-- Tab 5: CA Dashboard -->
+                <button type="button" @click="setTab('ca_dash')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none"
+                        :class="currentTab === 'ca_dash' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'ca_dash' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2m10 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 7h6"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'ca_dash' ? 'text-white' : 'text-slate-900'">CA Dashboard</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'ca_dash' ? 'text-slate-300' : 'text-slate-400'">
+                            {% if ca_dash_all_reporting_years_enabled %}All CA years{% else %}{{ ca_dash_enabled_years|length }} years{% endif %}
+                        </span>
+                    </div>
+                </button>
+
+                <!-- Tab 6: Student Summary -->
                 <button type="button" @click="setTab('summary')"
                         class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none col-span-2 sm:col-span-1"
                         :class="currentTab === 'summary' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
@@ -932,6 +948,108 @@
                     <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                     <span>Previous: Data Explorer</span>
                 </button>
+                <button type="button" @click="setTab('ca_dash')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                    <span>Next: CA Dashboard</span>
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 5: CA DASHBOARD — PERFORMANCE MAP                              -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'ca_dash'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            CDE 5×5 Performance Map
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">CA Dashboard</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            Control which reporting years appear in the
+                            <a href="{% url 'ca_dash:performance_map' %}" class="text-slate-800 font-semibold underline hover:no-underline">Performance Map</a>
+                            year selector and API. Unchecked years are hidden from the app (data stays in <code class="text-[11px] bg-slate-100 px-1 rounded">dash_indi_*</code> tables).
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Available reporting years</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Checked years are offered in the map. Leave all checked to allow every year found in indicator tables.</p>
+                        </div>
+                    </div>
+                    <div class="relative w-full sm:w-64">
+                        <input type="text" x-model="caDashYearSearch" placeholder="Search years…"
+                               class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                        <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+                </div>
+                <div class="p-6">
+                    {% if ca_dash_data_years %}
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {% for y in ca_dash_data_years %}
+                        <label x-show="!caDashYearSearch || '{{ y }}'.includes(caDashYearSearch)"
+                               class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer select-none">
+                            <input type="checkbox" name="ca_dash_enabled_reporting_years" value="{{ y }}"
+                                   {% if ca_dash_all_reporting_years_enabled or y in ca_dash_enabled_years %}checked{% endif %}
+                                   class="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-slate-700">
+                            <span class="text-sm font-semibold text-slate-800">{{ y }}</span>
+                            <span class="ml-auto text-[10px] font-medium text-slate-400">Reporting</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-xs text-slate-400 italic py-4">No reporting years found in <code>dash_indi_*</code> tables.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100">
+                    <h3 class="text-base font-bold text-slate-900">District labels (optional)</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Override district CDS and display names on the map. Leave blank to use defaults.</p>
+                </div>
+                <div class="p-6 grid md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="ca_dash_district_cds" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">District CDS</label>
+                        <input type="text" id="ca_dash_district_cds" name="ca_dash_district_cds" maxlength="14"
+                               value="{{ cfg.ca_dash_district_cds }}"
+                               class="block w-full rounded-xl border-slate-300 shadow-sm text-sm py-2.5 px-3.5 focus:border-slate-800 focus:ring-slate-800"
+                               placeholder="14-digit CDS">
+                    </div>
+                    <div>
+                        <label for="ca_dash_district_short_name" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Short name</label>
+                        <input type="text" id="ca_dash_district_short_name" name="ca_dash_district_short_name" maxlength="50"
+                               value="{{ cfg.ca_dash_district_short_name }}"
+                               class="block w-full rounded-xl border-slate-300 shadow-sm text-sm py-2.5 px-3.5 focus:border-slate-800 focus:ring-slate-800"
+                               placeholder="e.g. DSUSD">
+                    </div>
+                    <div>
+                        <label for="ca_dash_district_full_name" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Full name</label>
+                        <input type="text" id="ca_dash_district_full_name" name="ca_dash_district_full_name" maxlength="255"
+                               value="{{ cfg.ca_dash_district_full_name }}"
+                               class="block w-full rounded-xl border-slate-300 shadow-sm text-sm py-2.5 px-3.5 focus:border-slate-800 focus:ring-slate-800"
+                               placeholder="Desert Sands Unified">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+                <button type="button" @click="setTab('datasets')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-500 hover:text-slate-800 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    Dataset Builder
+                </button>
                 <button type="button" @click="setTab('summary')"
                         class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
                     <span>Next: Student Summary</span>
@@ -941,7 +1059,7 @@
         </div>
 
         <!-- ══════════════════════════════════════════════════════════════════ -->
-        <!-- TAB 5: STUDENT SUMMARY                                             -->
+        <!-- TAB 6: STUDENT SUMMARY                                             -->
         <!-- ══════════════════════════════════════════════════════════════════ -->
         <div x-show="currentTab === 'summary'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
 
@@ -1294,7 +1412,7 @@ const SUMMARY_ACCESS_RULES  = {{ summary_access_rules_json|safe }};
 const AVAILABLE_ROLES       = {{ available_roles_json|safe }};
 
 function settingsPage() {
-    const validTabs = ['general', 'home', 'explorer', 'datasets', 'summary'];
+    const validTabs = ['general', 'home', 'explorer', 'datasets', 'ca_dash', 'summary'];
     const hash = window.location.hash.replace('#', '');
     const savedTab = localStorage.getItem('dw_project_settings_tab');
     const initialTab = (hash && validTabs.includes(hash))
@@ -1308,6 +1426,7 @@ function settingsPage() {
 
         // Search inputs
         yearSearch: '',
+        caDashYearSearch: '',
         forcedSearch: '',
         defaultColSearch: '',
         enabledColSearch: '',

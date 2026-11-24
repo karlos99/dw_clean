@@ -233,6 +233,7 @@ def upsert_page(spec: dict, charts: dict, owner):
             tab_map[tab_name] = DataVizPageTab.objects.create(
                 page=page, name=tab_name, position=t_idx,
             )
+        default_show_title = spec.get('show_chart_titles', True)
         for r_idx, row_spec in enumerate(spec['rows']):
             row = DataVizPageRow.objects.create(
                 page=page,
@@ -246,7 +247,7 @@ def upsert_page(spec: dict, charts: dict, owner):
                     row=row,
                     element_type=DataVizPageSection.TYPE_CHART,
                     chart=charts[sec_spec['chart']],
-                    show_title=sec_spec.get('show_title', True),
+                    show_title=sec_spec.get('show_title', default_show_title),
                     gs_x=sec_spec.get('gs_x', 0),
                     gs_y=sec_spec.get('gs_y', 0),
                     gs_w=sec_spec.get('gs_w', 6),
@@ -320,6 +321,8 @@ def base_chart_cfg(chart_type: str, title: str, **overrides) -> dict:
         'label_position': 'top',
         'x_label_rotation': 0,
     }
+    if chart_type == 'line':
+        cfg['smooth'] = True
     cfg.update(overrides)
     return cfg
 

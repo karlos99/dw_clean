@@ -10,7 +10,15 @@ class ProjectConfigAdminForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label="Allowed Dataset Tables",
-        help_text="Select the tables that are allowed to be used in the Dataset Builder. Leave all unchecked to allow all tables."
+        help_text="Select the tables that are allowed to be used in the Dataset Builder. Leave all unchecked to allow all tables.",
+    )
+
+    ca_dash_reporting_years = forms.MultipleChoiceField(
+        choices=[],
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label="CA Dashboard reporting years",
+        help_text="Years shown on the Performance Map. Leave all unchecked to allow every year in dash_indi_* tables.",
     )
 
     class Meta:
@@ -30,11 +38,32 @@ class ProjectConfigAdminForm(forms.ModelForm):
         else:
             self.fields['enabled_tables'].initial = []
 
+        try:
+            from ca_dash.config_helpers import discover_reporting_years_in_data
+
+            year_choices = [(str(y), str(y)) for y in discover_reporting_years_in_data()]
+            self.fields['ca_dash_reporting_years'].choices = year_choices
+            stored = self.instance.ca_dash_enabled_reporting_years or []
+            if stored:
+                self.fields['ca_dash_reporting_years'].initial = [str(y) for y in stored]
+            elif year_choices:
+                self.fields['ca_dash_reporting_years'].initial = [c[0] for c in year_choices]
+        except Exception:
+            pass
+
     def save(self, commit=True):
         instance = super().save(commit=False)
         selected = self.cleaned_data.get('enabled_tables')
         # If no tables are checked, save as None (allows all)
         instance.enabled_dataset_tables = selected if selected else None
+
+        ca_years = self.cleaned_data.get('ca_dash_reporting_years') or []
+        all_ca = [c[0] for c in self.fields['ca_dash_reporting_years'].choices]
+        if not ca_years or set(ca_years) >= set(all_ca):
+            instance.ca_dash_enabled_reporting_years = []
+        else:
+            instance.ca_dash_enabled_reporting_years = sorted(int(y) for y in ca_years)
+
         if commit:
             instance.save()
         return instance
@@ -67,7 +96,7 @@ class ProjectConfigAdmin(admin.ModelAdmin):
                 'ca_dash_district_cds',
                 'ca_dash_district_short_name',
                 'ca_dash_district_full_name',
-                'ca_dash_enabled_reporting_years',
+                'ca_dash_reporting_years',
             ),
         }),
         ('Student Summary — Content tabs', {
